@@ -107,31 +107,52 @@ def plot_peak_region(wavelength, flux, center, margin, fit):
 def calc_SNR(params, flux, wavelength, margin):
     scaling, gamma, shift, slope, height, eta = params
     wlmargin = np.abs(wavelength[0] - wavelength[margin])
-    flux = np.abs(flux - slope * wavelength - height)
+    flux = flux - slope * wavelength - height
     sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
 
-    slicedwl, loind, upind = slicearr(wavelength, shift - sigma, shift+sigma)
-    signalstrength = simpson(flux[loind:upind], slicedwl)/(2*sigma)
+    slicedwl, loind, upind = slicearr(wavelength, shift - 2*sigma, shift+2*sigma)
+    signalstrength = np.mean(np.square(flux[loind:upind]))
 
-    # slicedwl, loind, upind = slicearr(wavelength, shift - sigma, shift + sigma)
-    # signalstrength = np.abs(simpson(pseudo_voigt(slicedwl, scaling, gamma, shift, 0, 0, eta), slicedwl)) / (
-    #         2 * sigma)
+    slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - 2*sigma)
+    slicedwl, uloind, uupind = slicearr(wavelength, shift + 2*sigma, shift + wlmargin)
 
-    slicedwl, loind, upind = slicearr(wavelength, shift - wlmargin, shift - sigma)
-    noisestrength = simpson(flux[loind:upind], slicedwl)
-    first_sec_width = slicedwl[-1] - slicedwl[0]
+    noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist()+flux[uloind:uupind].tolist())))
 
-    slicedwl, loind, upind = slicearr(wavelength, shift + sigma, shift + wlmargin)
-    noisestrength += simpson(flux[loind:upind], slicedwl)
+    SNR = signalstrength/noisestrength
 
-    noise_width = first_sec_width + slicedwl[-1] - slicedwl[0]
-    noisestrength /= noise_width
-
-    print(noise_width, 2 * sigma)
-
-    print(signalstrength, noisestrength, signalstrength / noisestrength, 10 * np.log10(signalstrength / noisestrength))
+    print(signalstrength, noisestrength, SNR, 10 * np.log10(signalstrength / noisestrength))
     print("")
     return signalstrength, noisestrength
+
+
+# def calc_SNR(params, flux, wavelength, margin):
+#     scaling, gamma, shift, slope, height, eta = params
+#     wlmargin = np.abs(wavelength[0] - wavelength[margin])
+#     flux = np.abs(flux - slope * wavelength - height)
+#     sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
+#
+#     slicedwl, loind, upind = slicearr(wavelength, shift - sigma, shift+sigma)
+#     signalstrength = simpson(flux[loind:upind], slicedwl)/(2*sigma)
+#
+#     # slicedwl, loind, upind = slicearr(wavelength, shift - sigma, shift + sigma)
+#     # signalstrength = np.abs(simpson(pseudo_voigt(slicedwl, scaling, gamma, shift, 0, 0, eta), slicedwl)) / (
+#     #         2 * sigma)
+#
+#     slicedwl, loind, upind = slicearr(wavelength, shift - wlmargin, shift - sigma)
+#     noisestrength = simpson(flux[loind:upind], slicedwl)
+#     first_sec_width = slicedwl[-1] - slicedwl[0]
+#
+#     slicedwl, loind, upind = slicearr(wavelength, shift + sigma, shift + wlmargin)
+#     noisestrength += simpson(flux[loind:upind], slicedwl)
+#
+#     noise_width = first_sec_width + slicedwl[-1] - slicedwl[0]
+#     noisestrength /= noise_width
+#
+#     print(noise_width, 2 * sigma)
+#
+#     print(signalstrength, noisestrength, signalstrength / noisestrength, 10 * np.log10(signalstrength / noisestrength))
+#     print("")
+#     return signalstrength, noisestrength
 
 
 if __name__ == "__main__":
