@@ -3,10 +3,13 @@
 
 import pandas as pd
 import numpy as np
+import warnings
 from matplotlib import pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.integrate import simpson
 from scipy.special import erf
+
+FILENAME = "random.csv"
 
 lines = {
     "H_alpha": 6562,
@@ -19,6 +22,10 @@ lines = {
     "He_II_4686": 4686,
     "He_II_5412": 5412
 }
+
+
+class NoiseWarning(UserWarning):
+    pass
 
 
 def slicearr(arr, lower, upper):
@@ -66,42 +73,12 @@ def load_spectrum(filename):
     return wavelength, flux
 
 
-def plot_peak_region(wavelength, flux, center, margin, fit):
-    slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
-    fig = plt.plot(slicedwl, flux[loind:upind])
-    sucess = True
-
-    if fit:
-        initial_h = np.mean(flux[loind:upind])
-        initial_s = np.abs((initial_h - np.min(flux[
-                                               round(loind + abs(upind - loind) / 2 - abs(upind - loind) / 20):round(
-                                                   loind + abs(upind - loind) / 2 + abs(
-                                                       upind - loind) / 20)])) / 0.71725216658522349)
-        if initial_s == np.nan:
-            initial_s = 1
-        try:
-            params, errs = curve_fit(pseudo_voigt,
-                                     slicedwl,
-                                     flux[loind:upind],
-                                     [initial_s, 1, center, 0, initial_h, 0.5],
-                                     bounds=(
-                                         [0, 0, center - margin / 2, -np.inf, 0, 0],
-                                         [np.inf, np.inf, center + margin / 2, np.inf, np.inf, 1]
-                                     )
-                                     )
-            errs = np.sqrt(np.diag(errs))
-
-            print("Wavelenght", center, ":", params, end="\n\n")
-            # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
-            sstr, nstr = calc_SNR(params, flux, wavelength, margin)
-            plt.annotate(f"Signal strength: {sstr}\nNoise strength: {nstr}", (10, 10), xycoords="figure pixels")
-            plt.plot(slicedwl,
-                     pseudo_voigt(slicedwl, params[0], params[1], params[2], params[3], params[4], params[5]))
-        except RuntimeError:
-            sucess = False
-            plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, center, 0, initial_h, 0.5))
-    plt.show()
-    return sucess
+def verify_peak(wavelength, sigma):
+    d_wl = wavelength[1]-wavelength[0]
+    if sigma < d_wl:
+        return False
+    else:
+        return True
 
 
 def calc_SNR(params, flux, wavelength, margin):
@@ -118,11 +95,9 @@ def calc_SNR(params, flux, wavelength, margin):
 
     noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist()+flux[uloind:uupind].tolist())))
 
-    SNR = signalstrength/noisestrength
+    SNR = 10 * np.log10(signalstrength/noisestrength)
 
-    print(signalstrength, noisestrength, SNR, 10 * np.log10(signalstrength / noisestrength))
-    print("")
-    return signalstrength, noisestrength
+    return signalstrength, noisestrength, SNR
 
 
 # def calc_SNR(params, flux, wavelength, margin):
@@ -155,8 +130,52 @@ def calc_SNR(params, flux, wavelength, margin):
 #     return signalstrength, noisestrength
 
 
+def plot_peak_region(wavelength, flux, center, margin, fit):
+    slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
+    fig = plt.plot(slicedwl, flux[loind:upind])
+    sucess = True
+
+    if fit:
+        initial_h = np.mean(flux[loind:upind])
+        initial_s = np.abs((initial_h - np.min(flux[
+                                               round(loind + abs(upind - loind) / 2 - abs(upind - loind) / 20):round(
+                                                   loind + abs(upind - loind) / 2 + abs(
+                                                       upind - loind) / 20)])) / 0.71725216658522349)
+        if initial_s == np.nan:
+            initial_s = 1
+        try:
+            params, errs = curve_fit(pseudo_voigt,
+                                     slicedwl,
+                                     flux[loind:upind],
+                                     [initial_s, 1, center, 0, initial_h, 0.5],
+                                     bounds=(
+                                         [0, 0, center - margin / 2, -np.inf, 0, 0],
+                                         [np.inf, np.inf, center + margin / 2, np.inf, np.inf, 1]
+                                     )
+                                     )
+            errs = np.sqrt(np.diag(errs))
+
+            print("Wavelenght", center, ":", params, end="\n\n")
+            # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
+            if not verify_peak(wavelength, params[1] / (2 * np.sqrt(2 * np.log(2)))):
+                warnings.warn("Peak seems to be fitted to Noise, SNR and peak may not be accurate.", NoiseWarning)
+            sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin)
+            plt.annotate(f"Signal to Noise Ratio: {SNR}dB ", (10, 10), xycoords="figure pixels")
+            plt.plot(slicedwl,
+                     pseudo_voigt(slicedwl, params[0], params[1], params[2], params[3], params[4], params[5]))
+        except RuntimeError:
+            sucess = False
+            plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, center, 0, initial_h, 0.5))
+        except ValueError as e:
+            print("No peak found:", e)
+            sucess = False
+            plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, center, 0, initial_h, 0.5))
+    plt.show()
+    return sucess
+
+
 if __name__ == "__main__":
-    wl, flx = load_spectrum("testspec.csv")
+    wl, flx = load_spectrum(FILENAME)
     for line in lines.items():
         loc = line[1]
         plot_peak_region(wl, flx, loc, 100, True)
