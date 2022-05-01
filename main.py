@@ -8,8 +8,10 @@ from matplotlib import pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.integrate import simpson
 from scipy.special import erf
+from astropy.io import fits
 
-FILENAME = "random.csv"
+FILENAME = "sdss_spec.fits"
+PLOTOVERVIEW = False
 
 lines = {
     "H_alpha": 6562,
@@ -42,7 +44,12 @@ def slicearr(arr, lower, upper):
     except AssertionError as e:
         print("Lower bound larger than upper bound!")
         exit()
-    return newarr, np.where(arr == newarr[0])[0][0], np.where(arr == newarr[-1])[0][0] + 1
+    if len(newarr) == 0:
+        loind = np.where(arr == arr[arr > lower][0])[0][0]
+        upind = loind + 1
+    else:
+        loind, upind = np.where(arr == newarr[0])[0][0], np.where(arr == newarr[-1])[0][0] + 1
+    return newarr, loind, upind
 
 
 def faddeeva(z):
@@ -64,12 +71,22 @@ def load_spectrum(filename):
     :param filename: Spectrum File location
     :return: Spectrum Wavelengths, Corresponding flux
     """
-    data = pd.read_csv(filename)
-    data = data.to_numpy()
+    if filename.endswith(".csv"):
+        data = pd.read_csv(filename)
+        data = data.to_numpy()
 
-    wavelength = data[:, 0]
-    flux = data[:, 1]
-
+        wavelength = data[:, 0]
+        flux = data[:, 1]
+    elif filename.endswith(".fits"):
+        hdul = fits.open(filename)
+        data = hdul[1].data
+        flux = data["flux"]
+        wavelength = 10**data["loglam"]
+    else:
+        raise FileNotFoundError
+    if PLOTOVERVIEW:
+        plt.plot(wavelength, flux)
+        plt.show()
     return wavelength, flux
 
 
