@@ -1,6 +1,7 @@
 # TODO: Fit single Peak by doing continuum fit and gauss-Lorentz fit
 # TODO: Error Estimation via monte-Carlo method
 
+import os
 import pandas as pd
 import numpy as np
 import warnings
@@ -8,6 +9,7 @@ from matplotlib import pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.integrate import simpson
 from scipy.special import erf
+from scipy.constants import c
 from astropy.io import fits
 
 FILENAME = "sdss_spec.fits"
@@ -69,15 +71,41 @@ def gaussian(x, gamma, x_0):
     return 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp((-(x - x_0) ** 2) / (2 * sigma ** 2))
 
 
+def v_from_doppler(f_o, f_s):
+    """
+    :param f_o: Observed Frequency
+    :param f_s: Source Frequency
+    :return: Velocity Shift calculated from relativistic doppler effect
+    """
+    return c * (f_o ** 2 - f_s ** 2) / (f_o ** 2 + f_s ** 2)
+
+
+def v_from_doppler_err(f_o, f_s, u_f_o, u_f_s):
+    """
+    :param f_o: Observed Frequency
+    :param f_s: Source Frequency
+    :param u_f_o: Uncertainty of Observed Frequency
+    :param u_f_s: Uncertainty of Source Frequency
+    :return: Uncertainty for Velocity Shift calculated from relativistic doppler effect
+    """
+    return c * ((4 * f_o ** 2 * f_s) / ((f_o ** 2 + f_s ** 2) ** 2) * u_f_s + (4 * f_o * f_s ** 2) / (
+            (f_o ** 2 + f_s ** 2) ** 2) * u_f_o)
+
+
+def to_sigma(gamma):
+    return gamma/(2*np.sqrt(2*np.log(2)))
+
+
+def height_err(eta, sigma, gamma, scaling, u_eta, u_sigma, u_gamma, u_scaling):
+    return u_scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (gamma * np.pi)) + \
+           u_sigma * eta * scaling / (sigma ** 2 * np.sqrt(2 * np.pi)) + \
+           u_eta * scaling* ( 1/ (sigma * np.sqrt(2 * np.pi)) - 2 / (gamma * np.pi)) + \
+           u_gamma * scaling * (1 - eta) * 2 / (gamma**2 * np.pi)
+
+
 def pseudo_voigt(x, scaling, gamma, shift, slope, height, eta):
-    # sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
     # z = (x + 1.j * gamma) / (sigma * np.sqrt(2))
     # return -scaling * (np.real(faddeeva(z)) / (sigma * np.sqrt(2 * np.pi))) + slope * (x - shift) + height
-    # return scaling * (
-    #         (1 - eta) / np.pi * (-gamma / (gamma ** 2 + (x - shift) ** 2))
-    #         - eta / (np.sqrt(2 * np.pi * sigma ** 2))
-    #         * np.exp(-(x - shift) ** 2 / (2 * sigma ** 2))
-    # ) + slope * x + height
     return -scaling * (eta * gaussian(x, gamma, shift) + (1 - eta) * lorentzian(x, gamma, shift)) + slope * x + height
 
 
@@ -232,24 +260,50 @@ def plot_peak_region(wavelength, flux, center, margin, fit):
         return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False]
 
 
-if __name__ == "__main__":
-    wl, flx = load_spectrum(FILENAME)
+def print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc):
+    if sucess:
+        sigma = to_sigma(gamma)
+        sigma_err = to_sigma(errs[1])
+        print("######################## FIT RESULTS ########################")
+        print(f"Result for line {lstr} @ {round(loc)}Å:")
+        print(f"\nPeak Height I={scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))}±{height_err(eta,sigma,gamma,scaling,errs[5],sigma_err,errs[1],errs[0])}")
+        print(f"Standard deviation σ={sigma}±{sigma_err}")
+        print(f"Peak location x_0={shift}±{errs[2]}")
+        print("#############################################################\n\n")
+    else:
+        print("######################## FIT RESULTS ########################")
+        print(f"Result for line {lstr} @ {round(loc)}Å:")
+        print(f"FIT FAILED!")
+        print("#############################################################\n\n")
+
+
+def print_single_spec_results(complete_v_shift, v_std, filename):
+    print("\n\n##################### SPECTRUM RESULTS ######################")
+    print(f"Result for Spectrum {os.path.basename(filename)}:")
+    print(f"Velocity: [{round(complete_v_shift/1000, 2)}±{round(v_std/1000, 2)}]km/s")
+    print("#############################################################\n\n")
+
+
+def single_spec_shift(filename):
+    wl, flx = load_spectrum(filename)
+    velocities = []
+    verrs = []
     for lstr, loc in lines.items():
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
         sucess, errs, [scaling, gamma, shift, slope, height, eta] = plot_peak_region(wl, flx, loc, 100, True)
+        print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
-            sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
-            print("######################## FIT RESULTS ########################")
-            print(f"Result for line {lstr} @ {round(loc)}Å:")
-            print(f"\nPeak Height I={scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))}")
-            print(f"Standard deviation σ={sigma}")
-            print(f"Peak location x_0={shift}")
-            print("#############################################################\n\n")
-        else:
-            sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
-            print("######################## FIT RESULTS ########################")
-            print(f"Result for line {lstr} @ {round(loc)}Å:")
-            print(f"FIT FAILED!")
-            print("#############################################################\n\n")
+            velocities.append(v_from_doppler(shift, loc))
+            verrs.append(v_from_doppler_err(shift, loc, errs[2], 0))
+    velocities = np.array(velocities)
+    verrs = np.array(verrs)
+    v_std = np.sqrt(np.std(velocities) ** 2 + np.sum(verrs ** 2))  # ?????
+    # v_std = np.sqrt(np.sum(verrs ** 2)) ?????
+    complete_v_shift = np.mean(velocities)
+    print_single_spec_results(complete_v_shift, v_std, filename)
+
+
+if __name__ == "__main__":
+    single_spec_shift(FILENAME)
