@@ -30,6 +30,10 @@ class NoiseWarning(UserWarning):
     pass
 
 
+class FitUnsuccessfulWarning(UserWarning):
+    pass
+
+
 def slicearr(arr, lower, upper):
     """
     :param arr: array to be sliced into parts
@@ -81,17 +85,20 @@ def load_spectrum(filename):
         hdul = fits.open(filename)
         data = hdul[1].data
         flux = data["flux"]
-        wavelength = 10**data["loglam"]
+        wavelength = 10 ** data["loglam"]
     else:
         raise FileNotFoundError
     if PLOTOVERVIEW:
+        plt.title("Full Spectrum Overview")
+        plt.ylabel("Flux [ergs/s/cm^2/Å]")
+        plt.xlabel("Wavelength [Å]")
         plt.plot(wavelength, flux)
         plt.show()
     return wavelength, flux
 
 
 def verify_peak(wavelength, sigma):
-    d_wl = wavelength[1]-wavelength[0]
+    d_wl = wavelength[1] - wavelength[0]
     if sigma < d_wl:
         return False
     else:
@@ -104,15 +111,15 @@ def calc_SNR(params, flux, wavelength, margin):
     flux = flux - slope * wavelength - height
     sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
 
-    slicedwl, loind, upind = slicearr(wavelength, shift - 2*sigma, shift+2*sigma)
+    slicedwl, loind, upind = slicearr(wavelength, shift - 2 * sigma, shift + 2 * sigma)
     signalstrength = np.mean(np.square(flux[loind:upind]))
 
-    slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - 2*sigma)
-    slicedwl, uloind, uupind = slicearr(wavelength, shift + 2*sigma, shift + wlmargin)
+    slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - 2 * sigma)
+    slicedwl, uloind, uupind = slicearr(wavelength, shift + 2 * sigma, shift + wlmargin)
 
-    noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist()+flux[uloind:uupind].tolist())))
+    noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist() + flux[uloind:uupind].tolist())))
 
-    SNR = 10 * np.log10(signalstrength/noisestrength)
+    SNR = 10 * np.log10(signalstrength / noisestrength)
 
     return signalstrength, noisestrength, SNR
 
@@ -175,26 +182,45 @@ def plot_peak_region(wavelength, flux, center, margin, fit):
             print("Wavelenght", center, ":", params, end="\n\n")
             # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
             if not verify_peak(wavelength, params[1] / (2 * np.sqrt(2 * np.log(2)))):
-                warnings.warn("Peak seems to be fitted to Noise, SNR and peak may not be accurate.", NoiseWarning)
+                plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
+                            horizontalalignment='right',
+                            verticalalignment='bottom',
+                            color="red")
+                warnings.warn(f"WL {center}Å: Peak seems to be fitted to Noise, SNR and peak may not be accurate.",
+                              NoiseWarning)
             sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin)
-            plt.annotate(f"Signal to Noise Ratio: {SNR}dB ", (10, 10), xycoords="figure pixels")
+            plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}dB ", (10, 10), xycoords="figure pixels")
             plt.plot(slicedwl,
-                     pseudo_voigt(slicedwl, params[0], params[1], params[2], params[3], params[4], params[5]))
+                     pseudo_voigt(slicedwl, params[0], params[1], params[2], params[3], params[4], params[5]), zorder=5)
         except RuntimeError:
             sucess = False
-            plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, center, 0, initial_h, 0.5))
+            warnings.warn("Could not find a good Fit!", FitUnsuccessfulWarning)
+            plt.figtext(0.3, 0.95, f"FIT FAILED!",
+                        horizontalalignment='right',
+                        verticalalignment='bottom',
+                        color="red")
+            plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, center, 0, initial_h, 0.5), zorder=5)
         except ValueError as e:
             print("No peak found:", e)
+            plt.figtext(0.3, 0.95, f"FIT FAILED!",
+                        horizontalalignment='right',
+                        verticalalignment='bottom',
+                        color="red")
             sucess = False
-            plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, center, 0, initial_h, 0.5))
+            plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, center, 0, initial_h, 0.5), zorder=5)
+    plt.axvline(center, linewidth=0.5, color='lightgrey', linestyle='dashed', zorder=1)
+    plt.legend(["Flux", "Best Fit"])
+    plt.savefig(f"output/plot_{center}Å", dpi=250)
     plt.show()
     return sucess
 
 
 if __name__ == "__main__":
     wl, flx = load_spectrum(FILENAME)
-    for line in lines.items():
-        loc = line[1]
+    for lstr, loc in lines.items():
+        plt.ylabel("Flux [ergs/s/cm^2/Å]")
+        plt.xlabel("Wavelength [Å]")
+        plt.title(f"Fit for Line {lstr} @ {loc}Å")
         plot_peak_region(wl, flx, loc, 100, True)
     # x = np.linspace(-50, 50, 100)
     # plt.plot(x, pseudo_voigt(x, 1, 1, 1, 0, 0, 0))
