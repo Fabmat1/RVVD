@@ -1,7 +1,10 @@
 # TODO: Fit single Peak by doing continuum fit and gauss-Lorentz fit
 # TODO: Error Estimation via monte-Carlo method
-
+import glob
 import os
+from datetime import datetime
+from pprint import pprint
+
 import pandas as pd
 import numpy as np
 import warnings
@@ -11,8 +14,11 @@ from scipy.integrate import simpson
 from scipy.special import erf
 from scipy.constants import c
 from astropy.io import fits
+import astropy.time as atime
 
-FILENAME = "sdss_spec.fits"
+FILE_LOC = "data/sdss_spec.fits"
+DAT_TYPE = "numeric"  # dict, numeric
+OUTLIER_MAX_SIGMA = 2
 PLOTOVERVIEW = False
 
 lines = {
@@ -29,6 +35,10 @@ lines = {
 
 
 class NoiseWarning(UserWarning):
+    pass
+
+
+class InaccurateDateWarning(UserWarning):
     pass
 
 
@@ -123,6 +133,14 @@ def load_spectrum(filename):
     elif filename.endswith(".fits"):
         hdul = fits.open(filename)
         data = hdul[1].data
+        # pprint(hdul[0].header)
+        try:
+            tai = hdul[0].header["TAI"]
+            time = atime.Time(tai+atime.Time(datetime.strptime("17/11/1858", '%d/%m/%Y')).to_value(format="unix_tai"), format="unix_tai")
+        except KeyError:
+            warnings.warn("Could not get TAI timestamp, trying MJD...", NoiseWarning)
+            mjd = hdul[0].header["MJD"]
+            time = atime.Time(mjd, format="mjd")
         flux = data["flux"]
         wavelength = 10 ** data["loglam"]
     else:
@@ -133,7 +151,7 @@ def load_spectrum(filename):
         plt.xlabel("Wavelength [Å]")
         plt.plot(wavelength, flux)
         plt.show()
-    return wavelength, flux
+    return wavelength, flux, time
 
 
 def verify_peak(wavelength, sigma):
@@ -186,7 +204,7 @@ def calc_SNR(params, flux, wavelength, margin):
     return signalstrength, noisestrength, SNR
 
 
-def plot_peak_region(wavelength, flux, center, margin, fit):
+def plot_peak_region(wavelength, flux, center, margin, fit, time):
     slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
     fig = plt.plot(slicedwl, flux[loind:upind])
     sucess = True
@@ -206,8 +224,8 @@ def plot_peak_region(wavelength, flux, center, margin, fit):
                                      [initial_s, 5, center, 0, initial_h, 0.5],
                                      # scaling, gamma, shift, slope, height, eta
                                      bounds=(
-                                         [0, 0, center - 25, -np.inf, 0, 0],
-                                         [np.inf, np.sqrt(2 * np.log(2)) * margin / 4, center + 25, np.inf, np.inf, 1]
+                                         [0, 0, center - 15, -np.inf, 0, 0],
+                                         [np.inf, np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
                                      ))
             errs = np.sqrt(np.diag(errs))
 
@@ -252,7 +270,10 @@ def plot_peak_region(wavelength, flux, center, margin, fit):
             plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, center, 0, initial_h, 0.5), zorder=5)
     plt.axvline(center, linewidth=0.5, color='lightgrey', linestyle='dashed', zorder=1)
     plt.legend(["Flux", "Best Fit"])
-    plt.savefig(f"output/plot_{round(center)}Å", dpi=500)
+    outtimestr = time.to_datetime().strftime("%m_%d_%Y__%H_%M_%S")
+    if not os.path.isdir(f'output/spec_{outtimestr}/'):
+        os.mkdir(f"output/spec_{outtimestr}/")
+    plt.savefig(f"output/spec_{outtimestr}/plot_{round(center)}Å", dpi=500)
     plt.show()
     if sucess:
         return sucess, errs, params
@@ -284,26 +305,73 @@ def print_single_spec_results(complete_v_shift, v_std, filename):
     print("#############################################################\n\n")
 
 
+def check_for_outliers(array):
+    mean = np.mean(array)
+    standard_deviation = np.std(array)
+    distance_from_mean = abs(array - mean)
+    outlierloc = distance_from_mean < OUTLIER_MAX_SIGMA * standard_deviation
+    print(distance_from_mean, OUTLIER_MAX_SIGMA * standard_deviation)
+    return np.array(outlierloc)
+
+
 def single_spec_shift(filename):
-    wl, flx = load_spectrum(filename)
+    wl, flx, time = load_spectrum(filename)
     velocities = []
     verrs = []
     for lstr, loc in lines.items():
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
-        sucess, errs, [scaling, gamma, shift, slope, height, eta] = plot_peak_region(wl, flx, loc, 100, True)
+        sucess, errs, [scaling, gamma, shift, slope, height, eta] = plot_peak_region(wl, flx, loc, 100, True, time)
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
             velocities.append(v_from_doppler(shift, loc))
             verrs.append(v_from_doppler_err(shift, loc, errs[2], 0))
     velocities = np.array(velocities)
     verrs = np.array(verrs)
+    outloc = check_for_outliers(velocities)
+    if np.invert(outloc).sum() != 0:
+        print(f"! DETECTED OUTLIER CANDIDATE (DEVIATION > {OUTLIER_MAX_SIGMA}σ), REMOVE OUTLIER? [Y/N]")
+        print(f"IN ARRAY: {velocities}")
+        del_outlier = input()
+        if del_outlier.lower() == "y":
+            velocities = velocities[outloc]
+            verrs = verrs[outloc]
+
     v_std = np.sqrt(np.std(velocities) ** 2 + np.sum(verrs ** 2))  # ?????
     # v_std = np.sqrt(np.sum(verrs ** 2)) ?????
     complete_v_shift = np.mean(velocities)
     print_single_spec_results(complete_v_shift, v_std, filename)
+    return complete_v_shift, v_std, time
+
+
+def open_spec_files(loc, ftype):
+    flist = []
+    if ftype == "dict":
+        for file in os.listdir(loc):
+            if file.endswith(".csv") or file.endswith(".fits"):
+                flist.append(os.path.join(loc, file))
+    elif ftype == "numeric":
+        pstart, pend = loc.split(".")
+        flist = glob.glob(pstart+"*"+pend)
+    return flist
 
 
 if __name__ == "__main__":
-    single_spec_shift(FILENAME)
+    files = open_spec_files(FILE_LOC, DAT_TYPE)
+    spectimes = []
+    specvels = []
+    specverrs = []
+    for file in files:
+        complete_v_shift, v_std, time = single_spec_shift(file)
+        spectimes.append(time.to_datetime())
+        specvels.append(complete_v_shift)
+        specverrs.append(v_std)
+    specvels = np.array(specvels)/1000
+    specverrs = np.array(specverrs)/1000
+    plt.title("Radial Velocity over Time")
+    plt.ylabel("Radial Velocity [km/s]")
+    plt.xlabel("Date")
+    plt.plot_date(spectimes, specvels, xdate=True)
+    plt.errorbar(spectimes, specvels, yerr=specverrs)
+    plt.show()

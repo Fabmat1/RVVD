@@ -1,5 +1,6 @@
 /venv
 .idea
-random.csv!/sdss_spec.fits
+*.fits
+*.csv
 output/*
 !output/.gitkeep

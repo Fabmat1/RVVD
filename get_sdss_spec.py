@@ -7,4 +7,5 @@ xid = SDSS.query_region(pos, spectro=True)
 
 sp = SDSS.get_spectra(matches=xid)
 
-sp[0].writeto("sdss_spec.fits")
+for s in sp:
+    s.writeto(f"data/sdss_spec{sp.index(s)}.fits")
