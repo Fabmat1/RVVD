@@ -1,16 +1,18 @@
-# TODO: Fit single Peak by doing continuum fit and gauss-Lorentz fit
-# TODO: Error Estimation via monte-Carlo method
+# TODO: First fit all lines individually, then together
+# TODO: Print pdf of individual RVs
+# TODO: Input list of 100-200 brightest sdV and sdOB Stars
+
 import glob
 import os
 from datetime import datetime
 from pprint import pprint
 
+import logging
 import pandas as pd
 import numpy as np
 import warnings
 from matplotlib import pyplot as plt
 from scipy.optimize import curve_fit
-from scipy.integrate import simpson
 from scipy.special import erf
 from scipy.constants import c
 from astropy.io import fits
@@ -26,11 +28,16 @@ lines = {
     "H_beta": 4861.35,
     "H_gamma": 4340.472,
     "H_delta": 4101.734,
-    "He_I_4472": 4471.4802,  # ?
+   # "H_3889": 3889.0,  # not based on anything
+    "He_I_4026": 4026,
+    "He_I_4472": 4471.4802,
     "He_I_4922": 4921.9313,
-    "He_II_4541": 4541,  # ???
+    "He_I_5016": 5016,
+    "He_I_5876": 5876,
+    "He_I_6678": 6678,
+   # "He_II_4541": 4541.59,
     "He_II_4686": 4685.70,
-    "He_II_5412": 5411.52
+   # "He_II_5412": 5411.52
 }
 
 

@@ -4,3 +4,4 @@
 *.csv
 output/*
 !output/.gitkeep
+*.txt
