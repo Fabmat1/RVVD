@@ -28,16 +28,16 @@ lines = {
     "H_beta": 4861.35,
     "H_gamma": 4340.472,
     "H_delta": 4101.734,
-   # "H_3889": 3889.0,  # not based on anything
-    "He_I_4026": 4026,
+    # "H_3889": 3889.0,  # not based on anything
+    "He_I_4026": 4026.19,
     "He_I_4472": 4471.4802,
     "He_I_4922": 4921.9313,
-    "He_I_5016": 5016,
-    "He_I_5876": 5876,
-    "He_I_6678": 6678,
-   # "He_II_4541": 4541.59,
+    "He_I_5016": 5015.678,
+    "He_I_5876": 5875.6,
+    "He_I_6678": 6678.15,
+    # "He_II_4541": 4541.59,
     "He_II_4686": 4685.70,
-   # "He_II_5412": 5411.52
+    # "He_II_5412": 5411.52
 }
 
 
@@ -110,14 +110,14 @@ def v_from_doppler_err(f_o, f_s, u_f_o, u_f_s):
 
 
 def to_sigma(gamma):
-    return gamma/(2*np.sqrt(2*np.log(2)))
+    return gamma / (2 * np.sqrt(2 * np.log(2)))
 
 
 def height_err(eta, sigma, gamma, scaling, u_eta, u_sigma, u_gamma, u_scaling):
     return u_scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (gamma * np.pi)) + \
            u_sigma * eta * scaling / (sigma ** 2 * np.sqrt(2 * np.pi)) + \
-           u_eta * scaling* ( 1/ (sigma * np.sqrt(2 * np.pi)) - 2 / (gamma * np.pi)) + \
-           u_gamma * scaling * (1 - eta) * 2 / (gamma**2 * np.pi)
+           u_eta * scaling * (1 / (sigma * np.sqrt(2 * np.pi)) - 2 / (gamma * np.pi)) + \
+           u_gamma * scaling * (1 - eta) * 2 / (gamma ** 2 * np.pi)
 
 
 def pseudo_voigt(x, scaling, gamma, shift, slope, height, eta):
@@ -143,7 +143,8 @@ def load_spectrum(filename):
         # pprint(hdul[0].header)
         try:
             tai = hdul[0].header["TAI"]
-            time = atime.Time(tai+atime.Time(datetime.strptime("17/11/1858", '%d/%m/%Y')).to_value(format="unix_tai"), format="unix_tai")
+            time = atime.Time(tai + atime.Time(datetime.strptime("17/11/1858", '%d/%m/%Y')).to_value(format="unix_tai"),
+                              format="unix_tai")
         except KeyError:
             warnings.warn("Could not get TAI timestamp, trying MJD...", NoiseWarning)
             mjd = hdul[0].header["MJD"]
@@ -294,7 +295,8 @@ def print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc):
         sigma_err = to_sigma(errs[1])
         print("######################## FIT RESULTS ########################")
         print(f"Result for line {lstr} @ {round(loc)}Å:")
-        print(f"\nPeak Height I={scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))}±{height_err(eta,sigma,gamma,scaling,errs[5],sigma_err,errs[1],errs[0])}")
+        print(f"\nPeak Height I={scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))}"
+              f"±{height_err(eta, sigma, gamma, scaling, errs[5], sigma_err, errs[1], errs[0])}")
         print(f"Standard deviation σ={sigma}±{sigma_err}")
         print(f"Peak location x_0={shift}±{errs[2]}")
         print("#############################################################\n\n")
@@ -308,7 +310,7 @@ def print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc):
 def print_single_spec_results(complete_v_shift, v_std, filename):
     print("\n\n##################### SPECTRUM RESULTS ######################")
     print(f"Result for Spectrum {os.path.basename(filename)}:")
-    print(f"Velocity: [{round(complete_v_shift/1000, 2)}±{round(v_std/1000, 2)}]km/s")
+    print(f"Velocity: [{round(complete_v_shift / 1000, 2)}±{round(v_std / 1000, 2)}]km/s")
     print("#############################################################\n\n")
 
 
@@ -339,14 +341,13 @@ def single_spec_shift(filename):
     outloc = check_for_outliers(velocities)
     if np.invert(outloc).sum() != 0:
         print(f"! DETECTED OUTLIER CANDIDATE (DEVIATION > {OUTLIER_MAX_SIGMA}σ), REMOVE OUTLIER? [Y/N]")
-        print(f"IN ARRAY: {velocities}")
+        print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
         del_outlier = input()
         if del_outlier.lower() == "y":
             velocities = velocities[outloc]
             verrs = verrs[outloc]
 
-    v_std = np.sqrt(np.std(velocities) ** 2 + np.sum(verrs ** 2))  # ?????
-    # v_std = np.sqrt(np.sum(verrs ** 2)) ?????
+    v_std = np.sqrt(np.sum(verrs ** 2))
     complete_v_shift = np.mean(velocities)
     print_single_spec_results(complete_v_shift, v_std, filename)
     return complete_v_shift, v_std, time
@@ -360,7 +361,7 @@ def open_spec_files(loc, ftype):
                 flist.append(os.path.join(loc, file))
     elif ftype == "numeric":
         pstart, pend = loc.split(".")
-        flist = glob.glob(pstart+"*"+pend)
+        flist = glob.glob(pstart + "*" + pend)
     return flist
 
 
@@ -374,8 +375,8 @@ if __name__ == "__main__":
         spectimes.append(time.to_datetime())
         specvels.append(complete_v_shift)
         specverrs.append(v_std)
-    specvels = np.array(specvels)/1000
-    specverrs = np.array(specverrs)/1000
+    specvels = np.array(specvels) / 1000
+    specverrs = np.array(specverrs) / 1000
     plt.title("Radial Velocity over Time")
     plt.ylabel("Radial Velocity [km/s]")
     plt.xlabel("Date")
