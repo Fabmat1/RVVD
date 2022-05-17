@@ -54,6 +54,7 @@ for star in startable:
             file = star["File"]
         except IndexError:
             continue
+
     stardata = {
         "source_id": [source_id],
         "file": [file],
