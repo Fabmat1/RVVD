@@ -27,6 +27,7 @@ OUTLIER_MAX_SIGMA = 2
 CUT_MARGIN = 20
 SHOW_PLOTS = True
 PLOTOVERVIEW = False
+AUTO_REMOVE_OUTLIERS = True
 
 lines = {
     "H_alpha": 6562.79,
@@ -296,18 +297,33 @@ def sanitise_flux(flux, wavelength_pov, wls):
     return clean_flux, cut_flux, mask
 
 
-def cosmic_ray(slicedwl, param, params, errs):
-    pass
+def cosmic_ray(slicedwl, flux, params, errs):
+    if np.sum(np.abs(np.array((params[3], params[4]))/np.array((errs[3], errs[4]))) > 2) == 2:
+        scaling, gamma, shift, slope, height, eta = params
+        flux = flux - slope * slicedwl - height
+        m = np.mean(flux)
+        std = np.std(flux)
+        sigma = to_sigma(gamma)
+        h = scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))
+    else:
+        return False, []
+    diffarr = np.diff(flux, prepend=flux[0])
+    m_diffarr = np.mean(diffarr)
+    std_diffarr = np.std(diffarr)
+    if h > 2*std:
+        return True, np.where(np.logical_and(flux > m + 2 * h, diffarr > m_diffarr + 2 * std_diffarr))
+    else:
+        return True, np.where(np.logical_and(flux > m + 2 * std, diffarr > m_diffarr + 2 * std_diffarr))
 
 
 def plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sanitize=False):
+    for key, val in lines.items():
+        if round(val) == round(center):
+            lstr = key
+    if "lstr" not in locals():
+        lstr = "unknown"
+    plt.title(f"Fit for Line {lstr} @ {round(center)}Å")
     if sanitize:
-        for key, val in lines.items():
-            if round(val) == round(center):
-                lstr = key
-        if "lstr" not in locals():
-            lstr = "unknown"
-        plt.title(f"Fit for Line {lstr} @ {round(center)}Å")
         flux, cut_flux, mask = sanitise_flux(flux, center, wavelength)
     slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
     plt.plot(slicedwl, flux[loind:upind])
@@ -348,8 +364,15 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sani
 
             errs = np.sqrt(np.diag(errs))
 
-            if cosmic_ray(slicedwl, flux[loind:upind], params, errs):
-                pass
+            cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, errs)
+            if cr and np.sum(cr_ind) > 0:
+                cr_ind += loind
+                plt.cla()
+                for i in cr_ind[0]:
+                    plt.plot(wavelength[i-1:i+1], flux[i-1:i+1], color="lightgray", label='_nolegend_')
+                return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
+                                        np.delete(flux_std, cr_ind), center, margin, fit, time)
+
 
             # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
             if not verify_peak(wavelength, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs):
@@ -463,7 +486,7 @@ def single_spec_shift(filename):
     for lstr, loc in lines.items():
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
-        plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
+        # plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
         sucess, errs, [scaling, gamma, shift, slope, height, eta] = plot_peak_region(wl, flx, flx_std, loc, 100, True,
                                                                                      time)
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
@@ -474,9 +497,15 @@ def single_spec_shift(filename):
     verrs = np.array(verrs)
     outloc = check_for_outliers(velocities)
     if np.invert(outloc).sum() != 0:
-        print(f"! DETECTED OUTLIER CANDIDATE (DEVIATION > {OUTLIER_MAX_SIGMA}σ), REMOVE OUTLIER? [Y/N]")
-        print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
-        del_outlier = input()
+        if not AUTO_REMOVE_OUTLIERS:
+            print(f"! DETECTED OUTLIER CANDIDATE (DEVIATION > {OUTLIER_MAX_SIGMA}σ), REMOVE OUTLIER? [Y/N]")
+            print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
+            del_outlier = input()
+        else:
+            print(f"! DETECTED OUTLIER (DEVIATION > {OUTLIER_MAX_SIGMA}σ)")
+            print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
+            del_outlier = "y"
+
         if del_outlier.lower() == "y":
             velocities = velocities[outloc]
             verrs = verrs[outloc]
@@ -521,10 +550,11 @@ if __name__ == "__main__":
             specverrs.append(v_std)
         specvels = np.array(specvels) / 1000
         specverrs = np.array(specverrs) / 1000
+        if not SHOW_PLOTS:
+            plt.cla()
         plt.title("Radial Velocity over Time")
         plt.ylabel("Radial Velocity [km/s]")
         plt.xlabel("Date")
         plt.plot_date(spectimes, specvels, xdate=True)
-        plt.errorbar(spectimes, specvels, yerr=specverrs)
-        if SHOW_PLOTS:
-            plt.show()
+        plt.errorbar(spectimes, specvels, yerr=specverrs, capsize=3)
+        plt.show()

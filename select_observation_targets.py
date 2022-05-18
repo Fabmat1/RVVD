@@ -3,6 +3,7 @@ import pandas as pd
 from astropy.table import Table
 import numpy as np
 from astropy.io import fits
+from main import open_spec_files
 
 
 N_STARS = 100
@@ -36,7 +37,13 @@ for_selection = pd.DataFrame({
     "gmag": []
 })
 
+
+n = 0
+l = len(startable)
 for star in startable:
+    n += 1
+    if n % 100 == 0:
+        print(f"{n}/{l}")
     reference = reftable.loc[reftable['GAIA_DESIG'] == f'Gaia EDR3 {star["source_id"]}']
     try:
         spclass = reference["SPEC_CLASS"].to_numpy()[0]
@@ -55,26 +62,41 @@ for star in startable:
         except IndexError:
             continue
 
+    flist = open_spec_files("spectra/", file.split(".")[0])
+
     stardata = {
         "source_id": [source_id],
         "file": [file],
         "SPEC_CLASS": [spclass],
         "bp_rp": [bp_rp],
-        "gmag": [gmag]
+        "gmag": [gmag],
+        "nspec": [len(flist)]
     }
     for_selection = pd.concat([for_selection, pd.DataFrame(stardata)], ignore_index=True)
 
 
-for_selection["plot_color"] = "black"
+for_selection["plot_color"] = "darkgray"
 for_selection.loc[(["sdOB" in c for c in for_selection["SPEC_CLASS"]]), "plot_color"] = "darkred"
 for_selection.loc[(["sdO" in c and "sdOB" not in c for c in for_selection["SPEC_CLASS"]]), "plot_color"] = "red"
 for_selection.loc[(["sdB" in c for c in for_selection["SPEC_CLASS"]]), "plot_color"] = "gold"
 
 print(for_selection)
 
-ax = for_selection.plot.scatter("bp_rp", "gmag", color=list(for_selection["plot_color"]))
+ax = for_selection.plot.scatter("bp_rp", "gmag", "nspec", color=list(for_selection["plot_color"]), alpha=0.7)
+ax.set_title("Hot subdwarfs with single, non-coadded spectra")
+ax.set_xlim((-0.7, 0.6))
+ax.set_ylim((13, 21))
+plt.savefig("hotsdBs.png", dpi=250)
 plt.show()
 
 sdb_subset = for_selection.loc[["sdB" in c for c in for_selection["SPEC_CLASS"]]]
-final_table = sdb_subset.nsmallest(N_STARS, 'gmag')
+sdb_subset["gmag-nspec"] = sdb_subset["gmag"]-sdb_subset["nspec"]/2
+final_table = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
+
+ax = final_table.plot.scatter("bp_rp", "gmag", "nspec", color=list(final_table["plot_color"]), alpha=0.7)
+ax.set_title("Best subset of stars")
+ax.set_xlim((-0.7, 0.6))
+ax.set_ylim((13, 21))
+plt.savefig("subset.png", dpi=250)
+plt.show()
 final_table.drop("plot_color", axis=1).to_csv("selected_objects.csv", index=False)
