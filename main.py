@@ -25,9 +25,37 @@ FILE_LOC = "spectra/"
 DATA_TYPE = "numeric"  # dict, numeric
 OUTLIER_MAX_SIGMA = 2
 CUT_MARGIN = 20
-SHOW_PLOTS = True
+SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
+SAVE_IMGS = False
+
+output_table_cols = pd.DataFrame({
+    "subspectrum": [],
+    "line_name": [],
+    "line_loc": [],
+    "height": [],
+    "u_heigth": [],
+    "lambda_0": [],
+    "u_lambda_0": [],
+    "eta": [],
+    "u_eta": [],
+    "sigma": [],
+    "u_sigma": [],
+    "gamma": [],
+    "u_gamma": [],
+    "scaling": [],
+    "u_scaling": [],
+    "flux_0": [],
+    "u_flux_0": [],
+    "slope": [],
+    "u_slope": [],
+    "RV": [],
+    "u_RV": [],
+    "signal_strength": [],
+    "noise_strength": [],
+    "SNR": [],
+})
 
 lines = {
     "H_alpha": 6562.79,
@@ -92,8 +120,9 @@ def slicearr(arr, lower, upper):
         newarr = arr[arr > lower]
         newarr = newarr[newarr < upper]
     except AssertionError as e:
-        print("Lower bound larger than upper bound!")
-        exit()
+        loind = np.where(arr == arr[arr > lower][0])[0][0]
+        upind = loind + 1
+        newarr = np.empty([1])
     if len(newarr) == 0:
         loind = np.where(arr == arr[arr > lower][0])[0][0]
         upind = loind + 1
@@ -141,10 +170,10 @@ def to_sigma(gamma):
 
 
 def height_err(eta, sigma, gamma, scaling, u_eta, u_sigma, u_gamma, u_scaling):
-    return u_scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (gamma * np.pi)) + \
-           u_sigma * eta * scaling / (sigma ** 2 * np.sqrt(2 * np.pi)) + \
-           u_eta * scaling * (1 / (sigma * np.sqrt(2 * np.pi)) - 2 / (gamma * np.pi)) + \
-           u_gamma * scaling * (1 - eta) * 2 / (gamma ** 2 * np.pi)
+    return np.sqrt((u_scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (gamma * np.pi))) ** 2 + \
+                   (u_sigma * eta * scaling / (sigma ** 2 * np.sqrt(2 * np.pi))) ** 2 + \
+                   (u_eta * scaling * (1 / (sigma * np.sqrt(2 * np.pi)) - 2 / (gamma * np.pi))) ** 2 + \
+                   (u_gamma * scaling * (1 - eta) * 2 / (gamma ** 2 * np.pi)) ** 2)
 
 
 def voigt(x, scaling, gamma, shift, slope, height):
@@ -286,6 +315,15 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
     return signalstrength, noisestrength, SNR
 
 
+def expand_mask(mask):
+    """
+    :param mask: Boolean mask of an array
+    :return: Boolean mask, with
+    """
+    nmask = np.logical_and(np.logical_and(np.roll(mask, -1), np.roll(mask, 1)), mask)
+    return nmask
+
+
 def sanitise_flux(flux, wavelength_pov, wls):
     mask = np.full(np.shape(wls), True)
     for line in disturbing_lines.values():
@@ -293,12 +331,12 @@ def sanitise_flux(flux, wavelength_pov, wls):
             _, loind, upind = slicearr(wls, line - CUT_MARGIN, line + CUT_MARGIN)
             mask[loind:upind] = False
     clean_flux = np.ma.MaskedArray(flux, ~mask)
-    cut_flux = np.ma.MaskedArray(flux, mask)
+    cut_flux = np.ma.MaskedArray(flux, expand_mask(mask))
     return clean_flux, cut_flux, mask
 
 
 def cosmic_ray(slicedwl, flux, params, errs):
-    if np.sum(np.abs(np.array((params[3], params[4]))/np.array((errs[3], errs[4]))) > 2) == 2:
+    if np.sum(np.abs(np.array((params[3], params[4])) / np.array((errs[3], errs[4]))) > 2) == 2:
         scaling, gamma, shift, slope, height, eta = params
         flux = flux - slope * slicedwl - height
         m = np.mean(flux)
@@ -310,13 +348,13 @@ def cosmic_ray(slicedwl, flux, params, errs):
     diffarr = np.diff(flux, prepend=flux[0])
     m_diffarr = np.mean(diffarr)
     std_diffarr = np.std(diffarr)
-    if h > 2*std:
+    if h > 2 * std:
         return True, np.where(np.logical_and(flux > m + 2 * h, diffarr > m_diffarr + 2 * std_diffarr))
     else:
         return True, np.where(np.logical_and(flux > m + 2 * std, diffarr > m_diffarr + 2 * std_diffarr))
 
 
-def plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sanitize=False):
+def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=False):
     for key, val in lines.items():
         if round(val) == round(center):
             lstr = key
@@ -326,11 +364,17 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sani
     if sanitize:
         flux, cut_flux, mask = sanitise_flux(flux, center, wavelength)
     slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
-    plt.plot(slicedwl, flux[loind:upind])
+    plt.plot(slicedwl, flux[loind:upind], zorder=5)
+
+    fluxmin = flux[loind:upind].min()
+    fluxmax = flux[loind:upind].max()
+    pltrange = fluxmax - fluxmin
+    plt.ylim((fluxmin - 0.05 * pltrange, fluxmax + 0.05 * pltrange))
+
     sucess = True
 
     if sanitize:
-        plt.plot(slicedwl, cut_flux[loind:upind], color="lightgrey", label='_nolegend_')
+        plt.plot(slicedwl, cut_flux[loind:upind], color="lightgrey", label='_nolegend_', zorder=1)
         wavelength = wavelength[mask]
         flux = flux.compressed()
         flux_std = flux_std[mask]
@@ -338,121 +382,133 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sani
 
     flux_std[flux_std == 0] = np.mean(flux_std)
 
-    if fit:
-        initial_h = np.mean(flux[loind:upind])
-        initial_s = np.abs((initial_h - np.min(flux[
-                                               round(loind + abs(upind - loind) / 2 - abs(upind - loind) / 20):round(
-                                                   loind + abs(upind - loind) / 2 + abs(
-                                                       upind - loind) / 20)])) / 0.71725216658522349)
-        if initial_s == np.nan:
-            initial_s = 1
+    initial_h = np.mean(flux[loind:upind])
+    initial_s = np.abs((initial_h - np.min(flux[
+                                           round(loind + abs(upind - loind) / 2 - abs(upind - loind) / 20):round(
+                                               loind + abs(upind - loind) / 2 + abs(
+                                                   upind - loind) / 20)])) / 0.71725216658522349)
+    if initial_s == np.nan:
+        initial_s = 1
 
-        initial_params = [initial_s, 5, center, 0, initial_h, 0.5]
+    initial_params = [initial_s, 5, center, 0, initial_h, 0.5]
 
-        try:
-            params, errs = curve_fit(pseudo_voigt,
-                                     slicedwl,
-                                     flux[loind:upind],
-                                     initial_params,
-                                     # scaling, gamma, shift, slope, height, eta
-                                     bounds=(
-                                         [0, 0, center - 15, -np.inf, 0, 0],
-                                         [np.inf, np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
-                                     ),
-                                     sigma=flux_std[loind:upind]
-                                     )
+    try:
+        params, errs = curve_fit(pseudo_voigt,
+                                 slicedwl,
+                                 flux[loind:upind],
+                                 initial_params,
+                                 # scaling, gamma, shift, slope, height, eta
+                                 bounds=(
+                                     [0, 0, center - 15, -np.inf, 0, 0],
+                                     [np.inf, np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
+                                 ),
+                                 sigma=flux_std[loind:upind]
+                                 )
 
-            errs = np.sqrt(np.diag(errs))
+        errs = np.sqrt(np.diag(errs))
 
-            cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, errs)
-            if cr and np.sum(cr_ind) > 0:
-                cr_ind += loind
-                plt.cla()
-                for i in cr_ind[0]:
-                    plt.plot(wavelength[i-1:i+1], flux[i-1:i+1], color="lightgray", label='_nolegend_')
-                return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
-                                        np.delete(flux_std, cr_ind), center, margin, fit, time)
+        cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, errs)
+        if cr and np.sum(cr_ind) > 0:
+            cr_ind += loind
+            plt.cla()
+            for i in cr_ind[0]:
+                plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
+            return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
+                                    np.delete(flux_std, cr_ind), center, margin, file_prefix)
 
-
-            # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
-            if not verify_peak(wavelength, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs):
-                if sucess:
-                    warn_text = plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
-                                            horizontalalignment='right',
-                                            verticalalignment='bottom',
-                                            color="red")
-                    if not sanitize:
-                        warn_text.set_visible(False)
-                        plt.cla()
-                        return plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sanitize=True)
-                warnings.warn(f"WL {center}Å: Peak seems to be fitted to Noise, SNR and peak may not be accurate.",
-                              NoiseWarning)
-                sucess = False
-            sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin, sanitize)
-            plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}dB ", (10, 10), xycoords="figure pixels")
-            if SNR < 2:
-                if sucess:
-                    warn_text = plt.figtext(0.3, 0.95, f"BAD SIGNAL!",
-                                            horizontalalignment='right',
-                                            verticalalignment='bottom',
-                                            color="red")
-                    if not sanitize:
-                        warn_text.set_visible(False)
-                        plt.cla()
-                        return plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sanitize=True)
-                warnings.warn(f"WL {center}Å: Signal-to-Noise ratio out of bounds!",
-                              NoiseWarning)
-                sucess = False
-
-            plt.plot(slicedwl, pseudo_voigt(slicedwl, *params), zorder=5)
-        except RuntimeError:
+        # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
+        if not verify_peak(wavelength, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs):
+            if sucess:
+                warn_text = plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
+                                        horizontalalignment='right',
+                                        verticalalignment='bottom',
+                                        color="red")
+                if not sanitize:
+                    warn_text.set_visible(False)
+                    plt.cla()
+                    return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix,
+                                            sanitize=True)
+            warnings.warn(f"WL {center}Å: Peak seems to be fitted to Noise, SNR and peak may not be accurate.",
+                          NoiseWarning)
             sucess = False
-            warnings.warn("Could not find a good Fit!", FitUnsuccessfulWarning)
-            warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
-                                    horizontalalignment='right',
-                                    verticalalignment='bottom',
-                                    color="red")
-            if not sanitize:
-                warn_text.set_visible(False)
-                plt.cla()
-                return plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sanitize=True)
-            plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
-        except ValueError as e:
-            print("No peak found:", e)
-            warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
-                                    horizontalalignment='right',
-                                    verticalalignment='bottom',
-                                    color="red")
-            if not sanitize:
-                warn_text.set_visible(False)
-                plt.cla()
-                return plot_peak_region(wavelength, flux, flux_std, center, margin, fit, time, sanitize=True)
+        sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin, sanitize)
+        plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}dB ", (10, 10), xycoords="figure pixels")
+        if SNR < 2:
+            if sucess:
+                warn_text = plt.figtext(0.3, 0.95, f"BAD SIGNAL!",
+                                        horizontalalignment='right',
+                                        verticalalignment='bottom',
+                                        color="red")
+                if not sanitize:
+                    warn_text.set_visible(False)
+                    plt.cla()
+                    return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix,
+                                            sanitize=True)
+            warnings.warn(f"WL {center}Å: Signal-to-Noise ratio out of bounds!",
+                          NoiseWarning)
             sucess = False
-            plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
-    plt.axvline(center, linewidth=0.5, color='lightgrey', linestyle='dashed', zorder=1)
+
+        plt.plot(slicedwl, pseudo_voigt(slicedwl, *params), zorder=5)
+    except RuntimeError:
+        sucess = False
+        warnings.warn("Could not find a good Fit!", FitUnsuccessfulWarning)
+        warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
+                                horizontalalignment='right',
+                                verticalalignment='bottom',
+                                color="red")
+        if not sanitize:
+            warn_text.set_visible(False)
+            plt.cla()
+            return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
+        plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
+    except ValueError as e:
+        print("No peak found:", e)
+        warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
+                                horizontalalignment='right',
+                                verticalalignment='bottom',
+                                color="red")
+        if not sanitize:
+            warn_text.set_visible(False)
+            plt.cla()
+            return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
+        sucess = False
+        plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
+    plt.axvline(center, linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
     plt.legend(["Flux", "Best Fit"])
-    outtimestr = time.to_datetime().strftime("%m_%d_%Y__%H_%M_%S")
-    if not os.path.isdir(f'output/spec_{outtimestr}/'):
-        os.mkdir(f"output/spec_{outtimestr}/")
-    plt.savefig(f"output/spec_{outtimestr}/plot_{round(center)}Å", dpi=500)
+
+    if not os.path.isdir(f'output/{file_prefix}/'):
+        os.mkdir(f"output/{file_prefix}/")
+    if SAVE_IMGS:
+        plt.savefig(f"output/{file_prefix}/plot_{round(center)}Å", dpi=500)
     if SHOW_PLOTS:
         plt.show()
     else:
         plt.cla()
     if sucess:
-        return sucess, errs, params
+        return sucess, errs, params, [sstr, nstr, SNR]
     else:
-        return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False]
+        return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False],\
+               [False, False, False]
+
+
+def pseudo_voigt_height(errs, scaling, eta, gamma, sigma=False, sigma_err=False):
+    if not sigma:
+        sigma = to_sigma(gamma)
+    if not sigma_err:
+        sigma_err = to_sigma(errs[1])
+    heigth = scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))
+    err = height_err(eta, sigma, gamma, scaling, errs[5], sigma_err, errs[1], errs[0])
+    return heigth, err
 
 
 def print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc):
     if sucess:
         sigma = to_sigma(gamma)
         sigma_err = to_sigma(errs[1])
+        h, u_h = pseudo_voigt_height(errs, scaling, eta, gamma, sigma, sigma_err)
         print("######################## FIT RESULTS ########################")
         print(f"Result for line {lstr} @ {round(loc)}Å:")
-        print(f"\nPeak Height I={scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))}"
-              f"±{height_err(eta, sigma, gamma, scaling, errs[5], sigma_err, errs[1], errs[0])}")
+        print(f"\nPeak Height I={h}±{u_h}")
         print(f"Standard deviation σ={sigma}±{sigma_err}")
         print(f"Peak location x_0={shift}±{errs[2]}")
         print("#############################################################\n\n")
@@ -481,18 +537,57 @@ def check_for_outliers(array):
 
 def single_spec_shift(filename):
     wl, flx, time, flx_std = load_spectrum(filename)
+    file_prefix = filename.split("/")[-1].split("_")[0]
     velocities = []
     verrs = []
+    output_table = output_table_cols.copy()
+    subspec = int(filename.split("/")[-1].split("_")[1].split(".")[0])
+
     for lstr, loc in lines.items():
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         # plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
-        sucess, errs, [scaling, gamma, shift, slope, height, eta] = plot_peak_region(wl, flx, flx_std, loc, 100, True,
-                                                                                     time)
+        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr, SNR] = plot_peak_region(wl, flx, flx_std, loc, 100,
+                                                                                     file_prefix)
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
-            velocities.append(v_from_doppler(shift, loc))
-            verrs.append(v_from_doppler_err(shift, loc, errs[2], 0))
+            rv = v_from_doppler(shift, loc)
+            u_rv = v_from_doppler_err(shift, loc, errs[2], 0)
+            velocities.append(rv)
+            verrs.append(u_rv)
+
+            h, u_h = pseudo_voigt_height(errs, scaling, eta, gamma)
+            u_scaling, u_gamma, u_shift, u_slope, u_height, u_eta = errs
+
+            output_table_row = pd.DataFrame({
+                "subspectrum": [subspec],
+                "line_name": [lstr],
+                "line_loc": [loc],
+                "height": [h],
+                "u_heigth": [u_h],
+                "lambda_0": [shift],
+                "u_lambda_0": [u_shift],
+                "eta": [eta],
+                "u_eta": [u_eta],
+                "sigma": [to_sigma(gamma)],
+                "u_sigma": [to_sigma(u_gamma)],
+                "gamma": [gamma],
+                "u_gamma": [u_gamma],
+                "scaling": [scaling],
+                "u_scaling": [u_scaling],
+                "flux_0": [height],
+                "u_flux_0": [u_height],
+                "slope": [slope],
+                "u_slope": [u_slope],
+                "RV": [rv],
+                "u_RV": [u_rv],
+                "signal_strength": [sstr],
+                "noise_strength": [nstr],
+                "SNR": [SNR],
+            })
+
+            output_table = pd.concat([output_table, output_table_row], axis=0)
+
     velocities = np.array(velocities)
     verrs = np.array(verrs)
     outloc = check_for_outliers(velocities)
@@ -513,7 +608,8 @@ def single_spec_shift(filename):
     v_std = np.sqrt(np.sum(verrs ** 2))
     complete_v_shift = np.mean(velocities)
     print_single_spec_results(complete_v_shift, v_std, filename)
-    return complete_v_shift, v_std, time
+
+    return complete_v_shift, v_std, time, file_prefix, output_table
 
 
 def open_spec_files(loc, fpre, end=".txt"):
@@ -533,28 +629,53 @@ def open_spec_files(loc, fpre, end=".txt"):
 
 
 def files_from_catalogue(cat):
+    global catalogue
     catalogue = pd.read_csv(cat)
     return [a.split(".")[0] for a in catalogue["file"]]
 
 
 if __name__ == "__main__":
-    for file_prefix in files_from_catalogue(CATALOGUE):
+    file_prefixes = files_from_catalogue(CATALOGUE)
+    for file_prefix in file_prefixes:
         fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
         spectimes = []
+        spectimes_mjd = []
         specvels = []
         specverrs = []
+        output_table = output_table_cols.copy()
         for file in fileset:
-            complete_v_shift, v_std, time = single_spec_shift(file)
+            complete_v_shift, v_std, time, file_prefix, output_table_spec = single_spec_shift(file)
+            output_table = pd.concat([output_table, output_table_spec], axis=0)
             spectimes.append(time.to_datetime())
+            spectimes_mjd.append(time.mjd)
             specvels.append(complete_v_shift)
             specverrs.append(v_std)
+        output_table.to_csv(f"output/{file_prefix}/single_spec_vals.csv")
         specvels = np.array(specvels) / 1000
         specverrs = np.array(specverrs) / 1000
+        rvtable = pd.DataFrame({
+            "RV": specvels,
+            "u_RV": specverrs,
+            "mjd": spectimes_mjd,
+            "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
+        })
+        rvtable.to_csv(f"output/{file_prefix}/RV_variation.csv")
         if not SHOW_PLOTS:
             plt.cla()
-        plt.title("Radial Velocity over Time")
+        if "catalogue" in vars():
+            gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix)]
+        else:
+            gaia_id = file_prefix
+        plt.figure().clear()
+        plt.close()
+        plt.cla()
+        plt.clf()
+        plt.title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}")
         plt.ylabel("Radial Velocity [km/s]")
         plt.xlabel("Date")
-        plt.plot_date(spectimes, specvels, xdate=True)
-        plt.errorbar(spectimes, specvels, yerr=specverrs, capsize=3)
+        plt.xticks(rotation=90)
+        plt.plot_date(spectimes, specvels, xdate=True, zorder=5)
+        plt.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
+        plt.tight_layout()
+        plt.savefig(f"output/{file_prefix}/RV_variation.png", dpi=300)
         plt.show()
