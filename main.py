@@ -7,8 +7,7 @@ import os
 import re
 from datetime import datetime
 from pprint import pprint
-
-import logging
+from lmfit import Parameters, minimize, report_fit
 import pandas as pd
 import numpy as np
 import warnings
@@ -25,6 +24,7 @@ FILE_LOC = "spectra/"
 DATA_TYPE = "numeric"  # dict, numeric
 OUTLIER_MAX_SIGMA = 2
 CUT_MARGIN = 20
+MARGIN = 100
 SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
@@ -55,6 +55,7 @@ output_table_cols = pd.DataFrame({
     "signal_strength": [],
     "noise_strength": [],
     "SNR": [],
+    "sanitized": []
 })
 
 lines = {
@@ -485,7 +486,7 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
     else:
         plt.cla()
     if sucess:
-        return sucess, errs, params, [sstr, nstr, SNR]
+        return sucess, errs, params, [sstr, nstr, SNR], sanitize
     else:
         return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False],\
                [False, False, False]
@@ -547,7 +548,7 @@ def single_spec_shift(filename):
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         # plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
-        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr, SNR] = plot_peak_region(wl, flx, flx_std, loc, 100,
+        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr, SNR], sanitized = plot_peak_region(wl, flx, flx_std, loc, MARGIN,
                                                                                      file_prefix)
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
@@ -584,6 +585,7 @@ def single_spec_shift(filename):
                 "signal_strength": [sstr],
                 "noise_strength": [nstr],
                 "SNR": [SNR],
+                "sanitized": [sanitized],
             })
 
             output_table = pd.concat([output_table, output_table_row], axis=0)
@@ -610,6 +612,40 @@ def single_spec_shift(filename):
     print_single_spec_results(complete_v_shift, v_std, filename)
 
     return complete_v_shift, v_std, time, file_prefix, output_table
+
+
+def culumative_shift(output_table_spec, file):
+    wl, flx, time, flx_std = load_spectrum(file)
+    lines = output_table_spec["line_loc"]
+    flux_sanitized = output_table_spec["sanitized"]
+    wl_dataset = []
+    flux_dataset = []
+    flux_std_dataset = []
+
+    for line in lines:
+        if not flux_sanitized[lines.index(line)]:
+            wldata, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
+            wl_dataset.append(wldata)
+            flux_dataset.append(flx[loind:upind])
+            flux_std_dataset.append(flx_std[loind:upind])
+        else:
+            flx, cut_flux, mask = sanitise_flux(flx, line, wl)
+            wl = wl[mask]
+            flx = flx.compressed()
+            flx_std = flx_std[mask]
+            wldata, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
+            wl_dataset.append(wldata)
+            flux_dataset.append(flx[loind:upind])
+            flux_std_dataset.append(flx_std[loind:upind])
+
+    fit_params = Parameters()
+    for iwl, wl in enumerate(wl_dataset):
+        fit_params.add(f'amp_{ + 1}', value=0.5, min=0.0, max=200)
+
+
+
+
+    return culumv, culumv_errs
 
 
 def open_spec_files(loc, fpre, end=".txt"):
@@ -642,20 +678,28 @@ if __name__ == "__main__":
         spectimes_mjd = []
         specvels = []
         specverrs = []
+        culumvs = []
+        culumvs_errs =[]
         output_table = output_table_cols.copy()
         for file in fileset:
             complete_v_shift, v_std, time, file_prefix, output_table_spec = single_spec_shift(file)
+            culumv, culumv_errs = culumative_shift(output_table_spec, file)
             output_table = pd.concat([output_table, output_table_spec], axis=0)
+            culumvs.append(culumv)
+            culumvs_errs.append(culumv_errs)
             spectimes.append(time.to_datetime())
             spectimes_mjd.append(time.mjd)
             specvels.append(complete_v_shift)
             specverrs.append(v_std)
+        output_table.drop("sanitized", axis=1)
         output_table.to_csv(f"output/{file_prefix}/single_spec_vals.csv")
         specvels = np.array(specvels) / 1000
         specverrs = np.array(specverrs) / 1000
         rvtable = pd.DataFrame({
-            "RV": specvels,
-            "u_RV": specverrs,
+            "culum_fit_RV": culumvs,
+            "u_culum_fit_RV": culumvs_errs,
+            "single_fit_RV": specvels,
+            "u_single_fit_RV": specverrs,
             "mjd": spectimes_mjd,
             "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
         })
