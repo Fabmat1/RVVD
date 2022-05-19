@@ -89,7 +89,7 @@ ax.set_ylim((13, 21))
 plt.savefig("hotsdBs.png", dpi=250)
 plt.show()
 
-sdb_subset = for_selection.loc[["sdB" in c for c in for_selection["SPEC_CLASS"]]]
+sdb_subset = for_selection.loc[["sdB" in c or "sdOB" in c for c in for_selection["SPEC_CLASS"]]]
 sdb_subset["gmag-nspec"] = sdb_subset["gmag"]-sdb_subset["nspec"]/2
 final_table = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
 
