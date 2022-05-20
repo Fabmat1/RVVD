@@ -6,4 +6,6 @@ output/*
 !output/.gitkeep
 *.txt
 spectra/*
+!spectra/.gitkeep
 *.png
+*.zip

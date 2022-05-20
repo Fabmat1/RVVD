@@ -489,7 +489,7 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
         return sucess, errs, params, [sstr, nstr, SNR], sanitize
     else:
         return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False],\
-               [False, False, False]
+               [False, False, False], False
 
 
 def pseudo_voigt_height(errs, scaling, eta, gamma, sigma=False, sigma_err=False):
@@ -614,6 +614,30 @@ def single_spec_shift(filename):
     return complete_v_shift, v_std, time, file_prefix, output_table
 
 
+def make_voigt_dataset(params, ind, wl, lines):
+    scaling = params[f'scaling_{ind}']
+    gamma = params[f'gamma_{ind}']
+    shift = params[f'r_factor_{ind}']*list(lines)[ind]
+    slope = params[f'slope_{ind}']
+    height = params[f'height_{ind}']
+    eta = params[f'eta_{ind}']
+    return pseudo_voigt(wl, scaling, gamma, shift, slope, height, eta)
+
+
+def outer_fit(params, wl_dataset, flux_dataset, lines):
+    ndata = len(wl_dataset)
+    resids = []
+
+    for i in range(ndata):
+        resids.append(flux_dataset[i] - make_voigt_dataset(params, i, wl_dataset[i], lines))
+
+    return np.concatenate(resids)
+
+
+def v_from_doppler_rel(r_factor):
+    return c*(r_factor**2-1)/(r_factor**2+1)
+
+
 def culumative_shift(output_table_spec, file):
     wl, flx, time, flx_std = load_spectrum(file)
     lines = output_table_spec["line_loc"]
@@ -623,7 +647,7 @@ def culumative_shift(output_table_spec, file):
     flux_std_dataset = []
 
     for line in lines:
-        if not flux_sanitized[lines.index(line)]:
+        if list(flux_sanitized)[list(lines).index(line)] == 0:
             wldata, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
             wl_dataset.append(wldata)
             flux_dataset.append(flx[loind:upind])
@@ -639,11 +663,40 @@ def culumative_shift(output_table_spec, file):
             flux_std_dataset.append(flx_std[loind:upind])
 
     fit_params = Parameters()
+    wl_inds = []
     for iwl, wl in enumerate(wl_dataset):
-        fit_params.add(f'amp_{ + 1}', value=0.5, min=0.0, max=200)
+        wl_inds.append(iwl)
+        pred_scaling = list(output_table_spec["scaling"])[iwl]
+        pred_gamma = list(output_table_spec["gamma"])[iwl]
+        pred_r_factor = list(output_table_spec["lambda_0"])[iwl]/list(output_table_spec["line_loc"])[iwl]
+        pred_slope = list(output_table_spec["slope"])[iwl]
+        pred_height = list(output_table_spec["height"])[iwl]
+        pred_eta = list(output_table_spec["eta"])[iwl]
+        if pred_eta > .99 or pred_eta < .01:
+            pred_eta = .5
+        fit_params.add(f'scaling_{iwl}', value=pred_scaling, min=0, max=np.inf)
+        fit_params.add(f'gamma_{iwl}', value=pred_gamma, min=0, max=np.inf)
+        fit_params.add(f'r_factor_{iwl}', value=pred_r_factor, min=0.9, max=1.1)
+        fit_params.add(f'slope_{iwl}', value=pred_slope, min=-np.inf, max=np.inf)
+        fit_params.add(f'height_{iwl}', value=pred_height, min=0, max=np.inf)
+        fit_params.add(f'eta_{iwl}', value=pred_eta, min=0, max=1)
 
+    for i in range(len(wl_inds)-1):
+        i += 1
+        fit_params[f'r_factor_{i}'].expr = 'r_factor_0'
 
+    out = minimize(outer_fit, fit_params, args=(wl_dataset, flux_dataset, lines))
+    report_fit(out.params)
 
+    for i in range(len(wl_inds)-1):
+        plt.plot(wl_dataset[i], flux_dataset[i])
+        plt.plot(wl_dataset[i], make_voigt_dataset(out.params, i, wl_dataset[i], lines))
+        plt.show()
+
+    culumv = v_from_doppler_rel(out.params["r_factor_0"])
+    r_err_ind = out.var_names.index("r_factor_0")
+    errs = np.sqrt(np.diag(out.covar))
+    culumv_errs = v_from_doppler_rel(errs[r_err_ind])
 
     return culumv, culumv_errs
 
@@ -695,6 +748,8 @@ if __name__ == "__main__":
         output_table.to_csv(f"output/{file_prefix}/single_spec_vals.csv")
         specvels = np.array(specvels) / 1000
         specverrs = np.array(specverrs) / 1000
+        culumvs = np.array(culumvs) / 1000
+        culumvs_errs = np.array(culumvs_errs) / 1000
         rvtable = pd.DataFrame({
             "culum_fit_RV": culumvs,
             "u_culum_fit_RV": culumvs_errs,
@@ -719,7 +774,9 @@ if __name__ == "__main__":
         plt.xlabel("Date")
         plt.xticks(rotation=90)
         plt.plot_date(spectimes, specvels, xdate=True, zorder=5)
+        plt.plot_date(spectimes, culumvs, xdate=True, zorder=5)
         plt.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
+        plt.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
         plt.tight_layout()
         plt.savefig(f"output/{file_prefix}/RV_variation.png", dpi=300)
         plt.show()
