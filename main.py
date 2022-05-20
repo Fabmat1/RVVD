@@ -28,7 +28,8 @@ MARGIN = 100
 SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
-SAVE_IMGS = False
+SAVE_SINGLE_IMGS = False
+SAVE_COMPOSITE_IMG = True
 
 output_table_cols = pd.DataFrame({
     "subspectrum": [],
@@ -36,6 +37,8 @@ output_table_cols = pd.DataFrame({
     "line_loc": [],
     "height": [],
     "u_heigth": [],
+    "reduction_factor": [],
+    "u_reduction_factor": [],
     "lambda_0": [],
     "u_lambda_0": [],
     "eta": [],
@@ -356,6 +359,8 @@ def cosmic_ray(slicedwl, flux, params, errs):
 
 
 def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=False):
+    f_pre, subspec_ind = file_prefix.split("_")
+
     for key, val in lines.items():
         if round(val) == round(center):
             lstr = key
@@ -477,14 +482,17 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
     plt.axvline(center, linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
     plt.legend(["Flux", "Best Fit"])
 
-    if not os.path.isdir(f'output/{file_prefix}/'):
-        os.mkdir(f"output/{file_prefix}/")
-    if SAVE_IMGS:
-        plt.savefig(f"output/{file_prefix}/plot_{round(center)}Å", dpi=500)
+    if not os.path.isdir(f'output/{f_pre}/'):
+        os.mkdir(f"output/{f_pre}/")
+    if not os.path.isdir(f'output/{f_pre}/{subspec_ind}'):
+        os.mkdir(f"output/{f_pre}/{subspec_ind}")
+    if SAVE_SINGLE_IMGS:
+        plt.savefig(f"output/{f_pre}/{subspec_ind}/{round(center)}Å", dpi=500)
     if SHOW_PLOTS:
         plt.show()
     else:
         plt.cla()
+        plt.clf()
     if sucess:
         return sucess, errs, params, [sstr, nstr, SNR], sanitize
     else:
@@ -538,7 +546,7 @@ def check_for_outliers(array):
 
 def single_spec_shift(filename):
     wl, flx, time, flx_std = load_spectrum(filename)
-    file_prefix = filename.split("/")[-1].split("_")[0]
+    file_prefix = filename.split("/")[-1].split(".")[0]
     velocities = []
     verrs = []
     output_table = output_table_cols.copy()
@@ -566,6 +574,8 @@ def single_spec_shift(filename):
                 "line_loc": [loc],
                 "height": [h],
                 "u_heigth": [u_h],
+                "reduction_factor": [shift/loc],
+                "u_reduction_factor": [u_shift/loc],
                 "lambda_0": [shift],
                 "u_lambda_0": [u_shift],
                 "eta": [eta],
@@ -614,28 +624,37 @@ def single_spec_shift(filename):
     return complete_v_shift, v_std, time, file_prefix, output_table
 
 
-def make_voigt_dataset(params, ind, wl, lines):
+def make_dataset(params, ind, wl, lines, curvetypes):
     scaling = params[f'scaling_{ind}']
     gamma = params[f'gamma_{ind}']
     shift = params[f'r_factor_{ind}']*list(lines)[ind]
     slope = params[f'slope_{ind}']
     height = params[f'height_{ind}']
-    eta = params[f'eta_{ind}']
-    return pseudo_voigt(wl, scaling, gamma, shift, slope, height, eta)
+    if curvetypes[ind] == "voigt":
+        eta = params[f'eta_{ind}']
+        return pseudo_voigt(wl, scaling, gamma, shift, slope, height, eta)
+    elif curvetypes[ind] == "gauss":
+        return height+slope*wl-scaling*gaussian(wl, gamma, shift)
+    elif curvetypes[ind] == "lorentz":
+        return height+slope*wl-scaling*lorentzian(wl, gamma, shift)
 
 
-def outer_fit(params, wl_dataset, flux_dataset, lines):
+def outer_fit(params, wl_dataset, flux_dataset, lines, curvetypes):
     ndata = len(wl_dataset)
     resids = []
 
     for i in range(ndata):
-        resids.append(flux_dataset[i] - make_voigt_dataset(params, i, wl_dataset[i], lines))
+        resids.append(flux_dataset[i] - make_dataset(params, i, wl_dataset[i], lines, curvetypes))
 
     return np.concatenate(resids)
 
 
 def v_from_doppler_rel(r_factor):
     return c*(r_factor**2-1)/(r_factor**2+1)
+
+
+def v_from_doppler_rel_err(r_factor):
+    return 4*c*r_factor/(np.power((r_factor**2+1), 2))
 
 
 def culumative_shift(output_table_spec, file):
@@ -645,6 +664,7 @@ def culumative_shift(output_table_spec, file):
     wl_dataset = []
     flux_dataset = []
     flux_std_dataset = []
+    output_table = output_table_cols.copy()
 
     for line in lines:
         if list(flux_sanitized)[list(lines).index(line)] == 0:
@@ -664,41 +684,99 @@ def culumative_shift(output_table_spec, file):
 
     fit_params = Parameters()
     wl_inds = []
+    curvetypes = []
     for iwl, wl in enumerate(wl_dataset):
         wl_inds.append(iwl)
         pred_scaling = list(output_table_spec["scaling"])[iwl]
         pred_gamma = list(output_table_spec["gamma"])[iwl]
         pred_r_factor = list(output_table_spec["lambda_0"])[iwl]/list(output_table_spec["line_loc"])[iwl]
         pred_slope = list(output_table_spec["slope"])[iwl]
-        pred_height = list(output_table_spec["height"])[iwl]
+        pred_height = list(output_table_spec["flux_0"])[iwl]
         pred_eta = list(output_table_spec["eta"])[iwl]
-        if pred_eta > .99 or pred_eta < .01:
-            pred_eta = .5
+        if .01 < pred_eta < .99:
+            fit_params.add(f'eta_{iwl}', value=pred_eta, min=0, max=1)
+            curvetypes.append("voigt")
+        elif pred_eta > .99:
+            curvetypes.append("gauss")
+        elif pred_eta < .01:
+            curvetypes.append("lorentz")
         fit_params.add(f'scaling_{iwl}', value=pred_scaling, min=0, max=np.inf)
         fit_params.add(f'gamma_{iwl}', value=pred_gamma, min=0, max=np.inf)
         fit_params.add(f'r_factor_{iwl}', value=pred_r_factor, min=0.9, max=1.1)
         fit_params.add(f'slope_{iwl}', value=pred_slope, min=-np.inf, max=np.inf)
         fit_params.add(f'height_{iwl}', value=pred_height, min=0, max=np.inf)
-        fit_params.add(f'eta_{iwl}', value=pred_eta, min=0, max=1)
 
     for i in range(len(wl_inds)-1):
         i += 1
         fit_params[f'r_factor_{i}'].expr = 'r_factor_0'
 
-    out = minimize(outer_fit, fit_params, args=(wl_dataset, flux_dataset, lines))
+    out = minimize(outer_fit, fit_params, args=(wl_dataset, flux_dataset, lines, curvetypes))
     report_fit(out.params)
 
-    for i in range(len(wl_inds)-1):
-        plt.plot(wl_dataset[i], flux_dataset[i])
-        plt.plot(wl_dataset[i], make_voigt_dataset(out.params, i, wl_dataset[i], lines))
-        plt.show()
+    file_prefix, subspec_ind = file.split("/")[1].split(".")[0].split("_")
 
     culumv = v_from_doppler_rel(out.params["r_factor_0"])
     r_err_ind = out.var_names.index("r_factor_0")
     errs = np.sqrt(np.diag(out.covar))
-    culumv_errs = v_from_doppler_rel(errs[r_err_ind])
+    culumv_errs = v_from_doppler_rel_err(errs[r_err_ind])
 
-    return culumv, culumv_errs
+    for i in range(len(wl_inds)-1):
+        lname = list(output_table_spec['line_name'])[i]
+        lines = list(lines)
+        plt.ylabel("Flux [ergs/s/cm^2/Å]")
+        plt.xlabel("Wavelength [Å]")
+        plt.title(f"Culumative Fit for Line {lname} @ {round(lines[i])}Å")
+        plt.axvline(lines[i], linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
+        plt.plot(wl_dataset[i], flux_dataset[i])
+        plt.plot(wl_dataset[i], make_dataset(out.params, i, wl_dataset[i], lines, curvetypes))
+        if SAVE_SINGLE_IMGS:
+            plt.savefig(f"output/{file_prefix}/{subspec_ind}/culum_{round(lines[i])}Å.png", dpi=200)
+        if SHOW_PLOTS:
+            plt.show()
+        else:
+            plt.clf()
+            plt.cla()
+
+        try:
+            eta = out.params[f"eta_{i}"].value
+            u_eta = [errs[out.var_names.index(f"eta_{i}")]]
+        except KeyError:
+            eta = "--"
+            u_eta = "--"
+
+        output_table_row = pd.DataFrame({
+            "subspectrum": [list(output_table_spec["subspectrum"])[0]],
+            "line_name": [lname],
+            "line_loc": [lines[i]],
+            "height": ["--"],
+            "u_heigth": ["--"],
+            "reduction_factor": [out.params[f"r_factor_0"].value],
+            "u_reduction_factor": [errs[out.var_names.index(f"r_factor_0")]],
+            "lambda_0": [lines[i]*out.params[f"r_factor_{i}"].value],
+            "u_lambda_0": [lines[i]*errs[out.var_names.index(f"r_factor_0")]],
+            "eta": [eta],
+            "u_eta": [u_eta],
+            "sigma": [to_sigma(out.params[f"gamma_{i}"].value)],
+            "u_sigma": [to_sigma(errs[out.var_names.index(f"gamma_{i}")])],
+            "gamma": [out.params[f"gamma_{i}"].value],
+            "u_gamma": [errs[out.var_names.index(f"gamma_{i}")]],
+            "scaling": [out.params[f"scaling_{i}"].value],
+            "u_scaling": [errs[out.var_names.index(f"scaling_{i}")]],
+            "flux_0": [out.params[f"height_{i}"].value],
+            "u_flux_0": [errs[out.var_names.index(f"height_{i}")]],
+            "slope": [out.params[f"slope_{i}"].value],
+            "u_slope": [errs[out.var_names.index(f"slope_{i}")]],
+            "RV": [culumv],
+            "u_RV": [culumv_errs],
+            "signal_strength": ["--"],
+            "noise_strength": ["--"],
+            "SNR": ["--"],
+            "sanitized": ["--"],
+        })
+
+        output_table = pd.concat([output_table, output_table_row], axis=0)
+
+    return culumv, culumv_errs, output_table
 
 
 def open_spec_files(loc, fpre, end=".txt"):
@@ -733,19 +811,30 @@ if __name__ == "__main__":
         specverrs = []
         culumvs = []
         culumvs_errs =[]
-        output_table = output_table_cols.copy()
+        single_output_table = output_table_cols.copy()
+        culumative_output_table = output_table_cols.copy()
         for file in fileset:
             complete_v_shift, v_std, time, file_prefix, output_table_spec = single_spec_shift(file)
-            culumv, culumv_errs = culumative_shift(output_table_spec, file)
-            output_table = pd.concat([output_table, output_table_spec], axis=0)
+            single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
+            culumv, culumv_errs, output_table_spec = culumative_shift(output_table_spec, file)
+            culumative_output_table = pd.concat([culumative_output_table, output_table_spec], axis=0)
             culumvs.append(culumv)
             culumvs_errs.append(culumv_errs)
             spectimes.append(time.to_datetime())
             spectimes_mjd.append(time.mjd)
             specvels.append(complete_v_shift)
             specverrs.append(v_std)
-        output_table.drop("sanitized", axis=1)
-        output_table.to_csv(f"output/{file_prefix}/single_spec_vals.csv")
+
+        if "catalogue" in vars():
+            gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
+        else:
+            gaia_id = file_prefix
+
+        single_output_table.drop("sanitized", axis=1)
+        single_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/single_spec_vals.csv", index=False)
+        culumative_output_table.drop("sanitized", axis=1)
+        culumative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)
+
         specvels = np.array(specvels) / 1000
         specverrs = np.array(specverrs) / 1000
         culumvs = np.array(culumvs) / 1000
@@ -753,18 +842,14 @@ if __name__ == "__main__":
         rvtable = pd.DataFrame({
             "culum_fit_RV": culumvs,
             "u_culum_fit_RV": culumvs_errs,
-            "single_fit_RV": specvels,
+             "single_fit_RV": specvels,
             "u_single_fit_RV": specverrs,
             "mjd": spectimes_mjd,
             "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
         })
-        rvtable.to_csv(f"output/{file_prefix}/RV_variation.csv")
+        rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
         if not SHOW_PLOTS:
             plt.cla()
-        if "catalogue" in vars():
-            gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix)]
-        else:
-            gaia_id = file_prefix
         plt.figure().clear()
         plt.close()
         plt.cla()
@@ -772,11 +857,11 @@ if __name__ == "__main__":
         plt.title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}")
         plt.ylabel("Radial Velocity [km/s]")
         plt.xlabel("Date")
-        plt.xticks(rotation=90)
+        plt.gcf().autofmt_xdate()
         plt.plot_date(spectimes, specvels, xdate=True, zorder=5)
         plt.plot_date(spectimes, culumvs, xdate=True, zorder=5)
         plt.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
         plt.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
         plt.tight_layout()
-        plt.savefig(f"output/{file_prefix}/RV_variation.png", dpi=300)
+        plt.savefig(f"output/{file_prefix.split('_')[0]}/RV_variation.png", dpi=300)
         plt.show()
