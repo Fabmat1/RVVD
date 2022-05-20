@@ -28,8 +28,10 @@ MARGIN = 100
 SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
-SAVE_SINGLE_IMGS = False
+SAVE_SINGLE_IMGS = True
 SAVE_COMPOSITE_IMG = True
+COSMIC_RAY_DETECTION_LIM = (2, 1)   # minimum times peak height/flux std required to detect cr, minimum times diff
+# std required to detect cr
 
 output_table_cols = pd.DataFrame({
     "subspectrum": [],
@@ -58,8 +60,9 @@ output_table_cols = pd.DataFrame({
     "signal_strength": [],
     "noise_strength": [],
     "SNR": [],
-    "sanitized": []
-})
+    "sanitized": [],
+    "cr_ind": [],
+}, dtype=object)
 
 lines = {
     "H_alpha": 6562.79,
@@ -297,22 +300,19 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
     slicedwl, loind, upind = slicearr(wavelength, shift - 2 * sigma, shift + 2 * sigma)
     signalstrength = np.mean(np.square(flux[loind:upind]))
 
-    if not sanitized:
-        if 2 * sigma < wlmargin:
-            slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - 2 * sigma)
-            slicedwl, uloind, uupind = slicearr(wavelength, shift + 2 * sigma, shift + wlmargin)
-        else:
-            slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - sigma)
-            slicedwl, uloind, uupind = slicearr(wavelength, shift + sigma, shift + wlmargin)
-            warnings.warn("Sigma very large, Fit seems improbable!", NoiseWarning)
-            plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
-                        horizontalalignment='right',
-                        verticalalignment='bottom',
-                        color="red")
 
-        noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist() + flux[uloind:uupind].tolist())))
+    if 2 * sigma < wlmargin:
+        slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - 2 * sigma)
+        slicedwl, uloind, uupind = slicearr(wavelength, shift + 2 * sigma, shift + wlmargin)
     else:
-        noisestrength = np.mean(np.square(np.array(flux[:loind].tolist() + flux[upind:].tolist())))
+        slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - sigma)
+        slicedwl, uloind, uupind = slicearr(wavelength, shift + sigma, shift + wlmargin)
+        warnings.warn("Sigma very large, Fit seems improbable!", NoiseWarning)
+        plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
+                    horizontalalignment='right',
+                    verticalalignment='bottom',
+                    color="red")
+    noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist() + flux[uloind:uupind].tolist())))
 
     SNR = 10 * np.log10(signalstrength / noisestrength)
 
@@ -353,12 +353,15 @@ def cosmic_ray(slicedwl, flux, params, errs):
     m_diffarr = np.mean(diffarr)
     std_diffarr = np.std(diffarr)
     if h > 2 * std:
-        return True, np.where(np.logical_and(flux > m + 2 * h, diffarr > m_diffarr + 2 * std_diffarr))
+        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * h, diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
     else:
-        return True, np.where(np.logical_and(flux > m + 2 * std, diffarr > m_diffarr + 2 * std_diffarr))
+        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * std, diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
 
 
-def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=False):
+def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=False, used_cr_inds=None):
+    if used_cr_inds is None:
+        used_cr_inds = []
+
     f_pre, subspec_ind = file_prefix.split("_")
 
     for key, val in lines.items():
@@ -420,7 +423,7 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
             for i in cr_ind[0]:
                 plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
             return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
-                                    np.delete(flux_std, cr_ind), center, margin, file_prefix)
+                                    np.delete(flux_std, cr_ind), center, margin, file_prefix, used_cr_inds=cr_ind)
 
         # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
         if not verify_peak(wavelength, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs):
@@ -494,10 +497,10 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
         plt.cla()
         plt.clf()
     if sucess:
-        return sucess, errs, params, [sstr, nstr, SNR], sanitize
+        return sucess, errs, params, [sstr, nstr, SNR], sanitize, used_cr_inds
     else:
         return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False],\
-               [False, False, False], False
+               [False, False, False], False, False
 
 
 def pseudo_voigt_height(errs, scaling, eta, gamma, sigma=False, sigma_err=False):
@@ -556,7 +559,7 @@ def single_spec_shift(filename):
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         # plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
-        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr, SNR], sanitized = plot_peak_region(wl, flx, flx_std, loc, MARGIN,
+        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr, SNR], sanitized, cr_ind = plot_peak_region(wl, flx, flx_std, loc, MARGIN,
                                                                                      file_prefix)
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
@@ -596,6 +599,7 @@ def single_spec_shift(filename):
                 "noise_strength": [nstr],
                 "SNR": [SNR],
                 "sanitized": [sanitized],
+                "cr_ind": [cr_ind],
             })
 
             output_table = pd.concat([output_table, output_table_row], axis=0)
@@ -661,17 +665,25 @@ def culumative_shift(output_table_spec, file):
     wl, flx, time, flx_std = load_spectrum(file)
     lines = output_table_spec["line_loc"]
     flux_sanitized = output_table_spec["sanitized"]
+    cr_ind = output_table_spec["cr_ind"]
     wl_dataset = []
     flux_dataset = []
     flux_std_dataset = []
     output_table = output_table_cols.copy()
 
-    for line in lines:
-        if list(flux_sanitized)[list(lines).index(line)] == 0:
+    for i, line in enumerate(lines):
+        if not list(flux_sanitized)[i]:
+            line_cr_inds = list(cr_ind)[i]
+            if len(line_cr_inds) > 0:
+                wldata = np.delete(wl, line_cr_inds)
+                flx = np.delete(flx, line_cr_inds)
+                flx_std = np.delete(flx_std, line_cr_inds)
             wldata, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
+
             wl_dataset.append(wldata)
             flux_dataset.append(flx[loind:upind])
             flux_std_dataset.append(flx_std[loind:upind])
+
         else:
             flx, cut_flux, mask = sanitise_flux(flx, line, wl)
             wl = wl[mask]
@@ -689,20 +701,20 @@ def culumative_shift(output_table_spec, file):
         wl_inds.append(iwl)
         pred_scaling = list(output_table_spec["scaling"])[iwl]
         pred_gamma = list(output_table_spec["gamma"])[iwl]
-        pred_r_factor = list(output_table_spec["lambda_0"])[iwl]/list(output_table_spec["line_loc"])[iwl]
+        pred_r_factor = list(output_table_spec["reduction_factor"])[iwl]
         pred_slope = list(output_table_spec["slope"])[iwl]
         pred_height = list(output_table_spec["flux_0"])[iwl]
         pred_eta = list(output_table_spec["eta"])[iwl]
-        if .01 < pred_eta < .99:
-            fit_params.add(f'eta_{iwl}', value=pred_eta, min=0, max=1)
-            curvetypes.append("voigt")
-        elif pred_eta > .99:
-            curvetypes.append("gauss")
-        elif pred_eta < .01:
-            curvetypes.append("lorentz")
+        # if .01 < pred_eta < .99:
+        fit_params.add(f'eta_{iwl}', value=pred_eta, min=0, max=1)
+        curvetypes.append("voigt")
+        # elif pred_eta > .99:
+        #     curvetypes.append("gauss")
+        # elif pred_eta < .01:
+        #     curvetypes.append("lorentz")
         fit_params.add(f'scaling_{iwl}', value=pred_scaling, min=0, max=np.inf)
         fit_params.add(f'gamma_{iwl}', value=pred_gamma, min=0, max=np.inf)
-        fit_params.add(f'r_factor_{iwl}', value=pred_r_factor, min=0.9, max=1.1)
+        fit_params.add(f'r_factor_{iwl}', value=pred_r_factor, min=0, max=np.inf)
         fit_params.add(f'slope_{iwl}', value=pred_slope, min=-np.inf, max=np.inf)
         fit_params.add(f'height_{iwl}', value=pred_height, min=0, max=np.inf)
 
@@ -710,6 +722,7 @@ def culumative_shift(output_table_spec, file):
         i += 1
         fit_params[f'r_factor_{i}'].expr = 'r_factor_0'
 
+    # try:
     out = minimize(outer_fit, fit_params, args=(wl_dataset, flux_dataset, lines, curvetypes))
     report_fit(out.params)
 
@@ -719,6 +732,21 @@ def culumative_shift(output_table_spec, file):
     r_err_ind = out.var_names.index("r_factor_0")
     errs = np.sqrt(np.diag(out.covar))
     culumv_errs = v_from_doppler_rel_err(errs[r_err_ind])
+    # except AttributeError:
+    #     print("Fit failed, retrying...")
+    #     retry_table = output_table_spec.copy()
+    #     retry_table.reset_index(inplace=True, drop=True)
+    #     for i, row in retry_table.iterrows():
+    #         try:
+    #             retry_table.loc[i, "eta"] = out.params[f"eta_{i}"].value
+    #         except KeyError:
+    #             pass
+    #         retry_table.loc[i, "scaling"] = out.params[f"scaling_{i}"].value+0.1*out.params[f"scaling_{i}"].value
+    #         retry_table.loc[i, "gamma"] = out.params[f"gamma_{i}"].value+0.1*out.params[f"gamma_{i}"].value
+    #         retry_table.loc[i, "reduction_factor"] = out.params[f"r_factor_{i}"].value+0.1*out.params[f"r_factor_{i}"].value
+    #         retry_table.loc[i, "slope"] = out.params[f"slope_{i}"].value+0.1*out.params[f"slope_{i}"].value
+    #         retry_table.loc[i, "flux_0"] = out.params[f"height_{i}"].value+0.1*out.params[f"height_{i}"].value
+    #     return culumative_shift(retry_table, file)
 
     for i in range(len(wl_inds)-1):
         lname = list(output_table_spec['line_name'])[i]
@@ -772,6 +800,7 @@ def culumative_shift(output_table_spec, file):
             "noise_strength": ["--"],
             "SNR": ["--"],
             "sanitized": ["--"],
+            "cr_ind": ["--"]
         })
 
         output_table = pd.concat([output_table, output_table_row], axis=0)

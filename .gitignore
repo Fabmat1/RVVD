@@ -9,3 +9,4 @@ spectra/*
 !spectra/.gitkeep
 *.png
 *.zip
+test.py
