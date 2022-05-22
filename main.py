@@ -22,14 +22,17 @@ EXTENSION = ".txt"
 CATALOGUE = "selected_objects.csv"
 FILE_LOC = "spectra/"
 DATA_TYPE = "numeric"  # dict, numeric
-OUTLIER_MAX_SIGMA = 2
+VERBOSE = False
+OUTLIER_MAX_SIGMA = 1
 CUT_MARGIN = 20
 MARGIN = 100
+DESIREDERR = 50
 SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
-SAVE_SINGLE_IMGS = True
+SAVE_SINGLE_IMGS = False
 SAVE_COMPOSITE_IMG = True
+NOISE_STD_LIMIT = 1
 COSMIC_RAY_DETECTION_LIM = (2, 1)   # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 
@@ -38,7 +41,7 @@ output_table_cols = pd.DataFrame({
     "line_name": [],
     "line_loc": [],
     "height": [],
-    "u_heigth": [],
+    "u_height": [],
     "reduction_factor": [],
     "u_reduction_factor": [],
     "lambda_0": [],
@@ -262,16 +265,19 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
     return wavelength, flux, t, flux_std
 
 
-def verify_peak(wavelength, sigma, params, errs):
+def verify_peak(wavelength, sigma, params, errs, local_flux):
     """
     :param wavelength: Wavelength array
     :param sigma: Standard deviation of Fit Function
     :param params: Fit parameters
     :param errs: Fit errors
-    :return: Returns False if the Peak width is in the order of one step in the Wavelength array
+    :return: Returns False if the Peak width is in the order of one step in the Wavelength array and does not have a
+             significant amplitude relative to the std of the flux
     """
     d_wl = wavelength[1] - wavelength[0]
     if sigma < d_wl:
+        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > NOISE_STD_LIMIT*np.std(local_flux):
+            return True
         return False
     else:
         errs = np.array(errs)
@@ -331,7 +337,7 @@ def expand_mask(mask):
 def sanitise_flux(flux, wavelength_pov, wls):
     mask = np.full(np.shape(wls), True)
     for line in disturbing_lines.values():
-        if line != wavelength_pov:
+        if not round(line)-2 < round(wavelength_pov) < round(line)+2:
             _, loind, upind = slicearr(wls, line - CUT_MARGIN, line + CUT_MARGIN)
             mask[loind:upind] = False
     clean_flux = np.ma.MaskedArray(flux, ~mask)
@@ -426,7 +432,7 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
                                     np.delete(flux_std, cr_ind), center, margin, file_prefix, used_cr_inds=cr_ind)
 
         # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
-        if not verify_peak(wavelength, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs):
+        if not verify_peak(slicedwl, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs, flux[loind:upind]):
             if sucess:
                 warn_text = plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
                                         horizontalalignment='right',
@@ -508,34 +514,36 @@ def pseudo_voigt_height(errs, scaling, eta, gamma, sigma=False, sigma_err=False)
         sigma = to_sigma(gamma)
     if not sigma_err:
         sigma_err = to_sigma(errs[1])
-    heigth = scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))
+    height = scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))
     err = height_err(eta, sigma, gamma, scaling, errs[5], sigma_err, errs[1], errs[0])
-    return heigth, err
+    return height, err
 
 
 def print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc):
-    if sucess:
-        sigma = to_sigma(gamma)
-        sigma_err = to_sigma(errs[1])
-        h, u_h = pseudo_voigt_height(errs, scaling, eta, gamma, sigma, sigma_err)
-        print("######################## FIT RESULTS ########################")
-        print(f"Result for line {lstr} @ {round(loc)}Å:")
-        print(f"\nPeak Height I={h}±{u_h}")
-        print(f"Standard deviation σ={sigma}±{sigma_err}")
-        print(f"Peak location x_0={shift}±{errs[2]}")
-        print("#############################################################\n\n")
-    else:
-        print("######################## FIT RESULTS ########################")
-        print(f"Result for line {lstr} @ {round(loc)}Å:")
-        print(f"FIT FAILED!")
-        print("#############################################################\n\n")
+    if VERBOSE:
+        if sucess:
+            sigma = to_sigma(gamma)
+            sigma_err = to_sigma(errs[1])
+            h, u_h = pseudo_voigt_height(errs, scaling, eta, gamma, sigma, sigma_err)
+            print("######################## FIT RESULTS ########################")
+            print(f"Result for line {lstr} @ {round(loc)}Å:")
+            print(f"\nPeak Height I={h}±{u_h}")
+            print(f"Standard deviation σ={sigma}±{sigma_err}")
+            print(f"Peak location x_0={shift}±{errs[2]}")
+            print("#############################################################\n\n")
+        else:
+            print("######################## FIT RESULTS ########################")
+            print(f"Result for line {lstr} @ {round(loc)}Å:")
+            print(f"FIT FAILED!")
+            print("#############################################################\n\n")
 
 
 def print_single_spec_results(complete_v_shift, v_std, filename):
-    print("\n\n##################### SPECTRUM RESULTS ######################")
-    print(f"Result for Spectrum {os.path.basename(filename)}:")
-    print(f"Velocity: [{round(complete_v_shift / 1000, 2)}±{round(v_std / 1000, 2)}]km/s")
-    print("#############################################################\n\n")
+    if VERBOSE:
+        print("\n\n##################### SPECTRUM RESULTS ######################")
+        print(f"Result for Spectrum {os.path.basename(filename)}:")
+        print(f"Velocity: [{round(complete_v_shift / 1000, 2)}±{round(v_std / 1000, 2)}]km/s")
+        print("#############################################################\n\n")
 
 
 def check_for_outliers(array):
@@ -543,7 +551,6 @@ def check_for_outliers(array):
     standard_deviation = np.std(array)
     distance_from_mean = abs(array - mean)
     outlierloc = distance_from_mean < OUTLIER_MAX_SIGMA * standard_deviation
-    print(distance_from_mean, OUTLIER_MAX_SIGMA * standard_deviation)
     return np.array(outlierloc)
 
 
@@ -576,7 +583,7 @@ def single_spec_shift(filename):
                 "line_name": [lstr],
                 "line_loc": [loc],
                 "height": [h],
-                "u_heigth": [u_h],
+                "u_height": [u_h],
                 "reduction_factor": [shift/loc],
                 "u_reduction_factor": [u_shift/loc],
                 "lambda_0": [shift],
@@ -613,8 +620,9 @@ def single_spec_shift(filename):
             print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
             del_outlier = input()
         else:
-            print(f"! DETECTED OUTLIER (DEVIATION > {OUTLIER_MAX_SIGMA}σ)")
-            print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
+            if VERBOSE:
+                print(f"! DETECTED OUTLIER (DEVIATION > {OUTLIER_MAX_SIGMA}σ)")
+                print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
             del_outlier = "y"
 
         if del_outlier.lower() == "y":
@@ -661,7 +669,7 @@ def v_from_doppler_rel_err(r_factor):
     return 4*c*r_factor/(np.power((r_factor**2+1), 2))
 
 
-def culumative_shift(output_table_spec, file):
+def cumulative_shift(output_table_spec, file, n = 0):
     wl, flx, time, flx_std = load_spectrum(file)
     lines = output_table_spec["line_loc"]
     flux_sanitized = output_table_spec["sanitized"]
@@ -675,7 +683,7 @@ def culumative_shift(output_table_spec, file):
         if not list(flux_sanitized)[i]:
             line_cr_inds = list(cr_ind)[i]
             if len(line_cr_inds) > 0:
-                wldata = np.delete(wl, line_cr_inds)
+                wl = np.delete(wl, line_cr_inds)
                 flx = np.delete(flx, line_cr_inds)
                 flx_std = np.delete(flx_std, line_cr_inds)
             wldata, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
@@ -685,14 +693,15 @@ def culumative_shift(output_table_spec, file):
             flux_std_dataset.append(flx_std[loind:upind])
 
         else:
-            flx, cut_flux, mask = sanitise_flux(flx, line, wl)
-            wl = wl[mask]
-            flx = flx.compressed()
-            flx_std = flx_std[mask]
-            wldata, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
+            sanflx, cut_flux, mask = sanitise_flux(flx, line, wl)
+            sanwl = wl[mask]
+            sanflx = sanflx.compressed()
+            sanflx_std = flx_std[mask]
+            wldata, loind, upind = slicearr(sanwl, line - MARGIN, line + MARGIN)
+            plt.plot(sanwl[loind:upind], cut_flux[loind:upind], color="lightgrey", label='_nolegend_', zorder=1)
             wl_dataset.append(wldata)
-            flux_dataset.append(flx[loind:upind])
-            flux_std_dataset.append(flx_std[loind:upind])
+            flux_dataset.append(sanflx[loind:upind])
+            flux_std_dataset.append(sanflx_std[loind:upind])
 
     fit_params = Parameters()
     wl_inds = []
@@ -705,13 +714,13 @@ def culumative_shift(output_table_spec, file):
         pred_slope = list(output_table_spec["slope"])[iwl]
         pred_height = list(output_table_spec["flux_0"])[iwl]
         pred_eta = list(output_table_spec["eta"])[iwl]
-        # if .01 < pred_eta < .99:
-        fit_params.add(f'eta_{iwl}', value=pred_eta, min=0, max=1)
-        curvetypes.append("voigt")
-        # elif pred_eta > .99:
-        #     curvetypes.append("gauss")
-        # elif pred_eta < .01:
-        #     curvetypes.append("lorentz")
+        if .01 < pred_eta < .99:
+            fit_params.add(f'eta_{iwl}', value=pred_eta, min=0, max=1)
+            curvetypes.append("voigt")
+        elif pred_eta > .99:
+            curvetypes.append("gauss")
+        elif pred_eta < .01:
+            curvetypes.append("lorentz")
         fit_params.add(f'scaling_{iwl}', value=pred_scaling, min=0, max=np.inf)
         fit_params.add(f'gamma_{iwl}', value=pred_gamma, min=0, max=np.inf)
         fit_params.add(f'r_factor_{iwl}', value=pred_r_factor, min=0, max=np.inf)
@@ -722,38 +731,32 @@ def culumative_shift(output_table_spec, file):
         i += 1
         fit_params[f'r_factor_{i}'].expr = 'r_factor_0'
 
-    # try:
-    out = minimize(outer_fit, fit_params, args=(wl_dataset, flux_dataset, lines, curvetypes))
-    report_fit(out.params)
+    out = minimize(outer_fit, fit_params, args=(wl_dataset, flux_dataset, lines, curvetypes), method="least_squares", max_nfev=1200)
+    if VERBOSE:
+        report_fit(out.params)
 
     file_prefix, subspec_ind = file.split("/")[1].split(".")[0].split("_")
 
     culumv = v_from_doppler_rel(out.params["r_factor_0"])
     r_err_ind = out.var_names.index("r_factor_0")
-    errs = np.sqrt(np.diag(out.covar))
-    culumv_errs = v_from_doppler_rel_err(errs[r_err_ind])
-    # except AttributeError:
-    #     print("Fit failed, retrying...")
-    #     retry_table = output_table_spec.copy()
-    #     retry_table.reset_index(inplace=True, drop=True)
-    #     for i, row in retry_table.iterrows():
-    #         try:
-    #             retry_table.loc[i, "eta"] = out.params[f"eta_{i}"].value
-    #         except KeyError:
-    #             pass
-    #         retry_table.loc[i, "scaling"] = out.params[f"scaling_{i}"].value+0.1*out.params[f"scaling_{i}"].value
-    #         retry_table.loc[i, "gamma"] = out.params[f"gamma_{i}"].value+0.1*out.params[f"gamma_{i}"].value
-    #         retry_table.loc[i, "reduction_factor"] = out.params[f"r_factor_{i}"].value+0.1*out.params[f"r_factor_{i}"].value
-    #         retry_table.loc[i, "slope"] = out.params[f"slope_{i}"].value+0.1*out.params[f"slope_{i}"].value
-    #         retry_table.loc[i, "flux_0"] = out.params[f"height_{i}"].value+0.1*out.params[f"height_{i}"].value
-    #     return culumative_shift(retry_table, file)
+    try:
+        errs = np.sqrt(np.abs(np.diag(out.covar)))
+        culumv_errs = v_from_doppler_rel_err(errs[r_err_ind])
+    except AttributeError:
+        culumv_errs = 0
+        if n < len(output_table_spec.index)/2:
+            print(n)
+            output_table_spec = output_table_spec.drop(output_table_spec.nsmallest(1, "SNR").index)
+            if len(len(output_table_spec.index)) > 1:
+                return cumulative_shift(output_table_spec, file, n+1)
+
 
     for i in range(len(wl_inds)-1):
         lname = list(output_table_spec['line_name'])[i]
         lines = list(lines)
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
-        plt.title(f"Culumative Fit for Line {lname} @ {round(lines[i])}Å")
+        plt.title(f"cumulative Fit for Line {lname} @ {round(lines[i])}Å")
         plt.axvline(lines[i], linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
         plt.plot(wl_dataset[i], flux_dataset[i])
         plt.plot(wl_dataset[i], make_dataset(out.params, i, wl_dataset[i], lines, curvetypes))
@@ -767,33 +770,53 @@ def culumative_shift(output_table_spec, file):
 
         try:
             eta = out.params[f"eta_{i}"].value
-            u_eta = [errs[out.var_names.index(f"eta_{i}")]]
+            u_eta = errs[out.var_names.index(f"eta_{i}")]
         except KeyError:
             eta = "--"
             u_eta = "--"
+        except UnboundLocalError:
+            eta = out.params[f"eta_{i}"].value
+            u_eta = 0
+
+        try:
+            rfactorerr = errs[out.var_names.index(f"r_factor_0")]
+            shifterr = lines[i]*errs[out.var_names.index(f"r_factor_0")]
+            sigmaerr = to_sigma(errs[out.var_names.index(f"gamma_{i}")])
+            gammaerr = errs[out.var_names.index(f"gamma_{i}")]
+            scalingerr = errs[out.var_names.index(f"scaling_{i}")]
+            heighterr = errs[out.var_names.index(f"height_{i}")]
+            slopeerr = errs[out.var_names.index(f"slope_{i}")]
+        except UnboundLocalError:
+            rfactorerr = 0
+            shifterr = 0
+            sigmaerr = 0
+            gammaerr = 0
+            scalingerr = 0
+            heighterr = 0
+            slopeerr = 0
 
         output_table_row = pd.DataFrame({
             "subspectrum": [list(output_table_spec["subspectrum"])[0]],
             "line_name": [lname],
             "line_loc": [lines[i]],
             "height": ["--"],
-            "u_heigth": ["--"],
+            "u_height": ["--"],
             "reduction_factor": [out.params[f"r_factor_0"].value],
-            "u_reduction_factor": [errs[out.var_names.index(f"r_factor_0")]],
+            "u_reduction_factor": [rfactorerr],
             "lambda_0": [lines[i]*out.params[f"r_factor_{i}"].value],
-            "u_lambda_0": [lines[i]*errs[out.var_names.index(f"r_factor_0")]],
+            "u_lambda_0": [shifterr],
             "eta": [eta],
             "u_eta": [u_eta],
             "sigma": [to_sigma(out.params[f"gamma_{i}"].value)],
-            "u_sigma": [to_sigma(errs[out.var_names.index(f"gamma_{i}")])],
+            "u_sigma": [sigmaerr],
             "gamma": [out.params[f"gamma_{i}"].value],
-            "u_gamma": [errs[out.var_names.index(f"gamma_{i}")]],
+            "u_gamma": [gammaerr],
             "scaling": [out.params[f"scaling_{i}"].value],
-            "u_scaling": [errs[out.var_names.index(f"scaling_{i}")]],
+            "u_scaling": [scalingerr],
             "flux_0": [out.params[f"height_{i}"].value],
-            "u_flux_0": [errs[out.var_names.index(f"height_{i}")]],
+            "u_flux_0": [heighterr],
             "slope": [out.params[f"slope_{i}"].value],
-            "u_slope": [errs[out.var_names.index(f"slope_{i}")]],
+            "u_slope": [slopeerr],
             "RV": [culumv],
             "u_RV": [culumv_errs],
             "signal_strength": ["--"],
@@ -825,13 +848,22 @@ def open_spec_files(loc, fpre, end=".txt"):
 
 
 def files_from_catalogue(cat):
-    global catalogue
     catalogue = pd.read_csv(cat)
-    return [a.split(".")[0] for a in catalogue["file"]]
+    return [a.split(".")[0] for a in catalogue["file"]], catalogue
+
+
+def print_status(file, fileset, catalogue):
+    if "catalogue" in vars():
+        gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
+    else:
+        gaia_id = file_prefix
+    print(f"Doing Fits for System GAIA EDR3 {gaia_id}...  {(fileset.index(file)+1)}/{(len(fileset))}")
 
 
 if __name__ == "__main__":
-    file_prefixes = files_from_catalogue(CATALOGUE)
+    if not VERBOSE:
+        warnings.filterwarnings("ignore")
+    file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
     for file_prefix in file_prefixes:
         fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
         spectimes = []
@@ -841,12 +873,13 @@ if __name__ == "__main__":
         culumvs = []
         culumvs_errs =[]
         single_output_table = output_table_cols.copy()
-        culumative_output_table = output_table_cols.copy()
+        cumulative_output_table = output_table_cols.copy()
         for file in fileset:
+            print_status(file, fileset, catalogue)
             complete_v_shift, v_std, time, file_prefix, output_table_spec = single_spec_shift(file)
             single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
-            culumv, culumv_errs, output_table_spec = culumative_shift(output_table_spec, file)
-            culumative_output_table = pd.concat([culumative_output_table, output_table_spec], axis=0)
+            culumv, culumv_errs, output_table_spec = cumulative_shift(output_table_spec, file)
+            cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
             culumvs.append(culumv)
             culumvs_errs.append(culumv_errs)
             spectimes.append(time.to_datetime())
@@ -861,8 +894,8 @@ if __name__ == "__main__":
 
         single_output_table.drop("sanitized", axis=1)
         single_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/single_spec_vals.csv", index=False)
-        culumative_output_table.drop("sanitized", axis=1)
-        culumative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)
+        cumulative_output_table.drop("sanitized", axis=1)
+        cumulative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)
 
         specvels = np.array(specvels) / 1000
         specverrs = np.array(specverrs) / 1000
@@ -887,9 +920,9 @@ if __name__ == "__main__":
         plt.ylabel("Radial Velocity [km/s]")
         plt.xlabel("Date")
         plt.gcf().autofmt_xdate()
-        plt.plot_date(spectimes, specvels, xdate=True, zorder=5)
+        # plt.plot_date(spectimes, specvels, xdate=True, zorder=5)
         plt.plot_date(spectimes, culumvs, xdate=True, zorder=5)
-        plt.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
+        # plt.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
         plt.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
         plt.tight_layout()
         plt.savefig(f"output/{file_prefix.split('_')[0]}/RV_variation.png", dpi=300)
