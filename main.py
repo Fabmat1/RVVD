@@ -33,7 +33,8 @@ AUTO_REMOVE_OUTLIERS = True
 SAVE_SINGLE_IMGS = False
 SAVE_COMPOSITE_IMG = True
 NOISE_STD_LIMIT = 1
-COSMIC_RAY_DETECTION_LIM = (2, 1)   # minimum times peak height/flux std required to detect cr, minimum times diff
+CHECK_IF_EXISTS = True
+COSMIC_RAY_DETECTION_LIM = (2, 1)  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 
 output_table_cols = pd.DataFrame({
@@ -104,6 +105,9 @@ disturbing_lines = {
     "He_II_4686": 4685.70,
     "He_II_5412": 5411.52
 }
+
+wl_splitinds, flux_splitinds, flux_std_splitinds = [0, 0, 0]
+linelist = []
 
 
 class NoiseWarning(UserWarning):
@@ -276,7 +280,7 @@ def verify_peak(wavelength, sigma, params, errs, local_flux):
     """
     d_wl = wavelength[1] - wavelength[0]
     if sigma < d_wl:
-        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > NOISE_STD_LIMIT*np.std(local_flux):
+        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > NOISE_STD_LIMIT * np.std(local_flux):
             return True
         return False
     else:
@@ -305,7 +309,6 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
 
     slicedwl, loind, upind = slicearr(wavelength, shift - 2 * sigma, shift + 2 * sigma)
     signalstrength = np.mean(np.square(flux[loind:upind]))
-
 
     if 2 * sigma < wlmargin:
         slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - 2 * sigma)
@@ -337,7 +340,7 @@ def expand_mask(mask):
 def sanitise_flux(flux, wavelength_pov, wls):
     mask = np.full(np.shape(wls), True)
     for line in disturbing_lines.values():
-        if not round(line)-2 < round(wavelength_pov) < round(line)+2:
+        if not round(line) - 2 < round(wavelength_pov) < round(line) + 2:
             _, loind, upind = slicearr(wls, line - CUT_MARGIN, line + CUT_MARGIN)
             mask[loind:upind] = False
     clean_flux = np.ma.MaskedArray(flux, ~mask)
@@ -359,9 +362,11 @@ def cosmic_ray(slicedwl, flux, params, errs):
     m_diffarr = np.mean(diffarr)
     std_diffarr = np.std(diffarr)
     if h > 2 * std:
-        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * h, diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
+        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * h,
+                                             diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
     else:
-        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * std, diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
+        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * std,
+                                             diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
 
 
 def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=False, used_cr_inds=None):
@@ -505,7 +510,7 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
     if sucess:
         return sucess, errs, params, [sstr, nstr, SNR], sanitize, used_cr_inds
     else:
-        return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False],\
+        return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False], \
                [False, False, False], False, False
 
 
@@ -566,8 +571,12 @@ def single_spec_shift(filename):
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         # plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
-        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr, SNR], sanitized, cr_ind = plot_peak_region(wl, flx, flx_std, loc, MARGIN,
-                                                                                     file_prefix)
+        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,
+                                                                    SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
+                                                                                                               flx_std,
+                                                                                                               loc,
+                                                                                                               MARGIN,
+                                                                                                               file_prefix)
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
             rv = v_from_doppler(shift, loc)
@@ -584,8 +593,8 @@ def single_spec_shift(filename):
                 "line_loc": [loc],
                 "height": [h],
                 "u_height": [u_h],
-                "reduction_factor": [shift/loc],
-                "u_reduction_factor": [u_shift/loc],
+                "reduction_factor": [shift / loc],
+                "u_reduction_factor": [u_shift / loc],
                 "lambda_0": [shift],
                 "u_lambda_0": [u_shift],
                 "eta": [eta],
@@ -636,21 +645,6 @@ def single_spec_shift(filename):
     return complete_v_shift, v_std, time, file_prefix, output_table
 
 
-def make_dataset(params, ind, wl, lines, curvetypes):
-    scaling = params[f'scaling_{ind}']
-    gamma = params[f'gamma_{ind}']
-    shift = params[f'r_factor_{ind}']*list(lines)[ind]
-    slope = params[f'slope_{ind}']
-    height = params[f'height_{ind}']
-    if curvetypes[ind] == "voigt":
-        eta = params[f'eta_{ind}']
-        return pseudo_voigt(wl, scaling, gamma, shift, slope, height, eta)
-    elif curvetypes[ind] == "gauss":
-        return height+slope*wl-scaling*gaussian(wl, gamma, shift)
-    elif curvetypes[ind] == "lorentz":
-        return height+slope*wl-scaling*lorentzian(wl, gamma, shift)
-
-
 def outer_fit(params, wl_dataset, flux_dataset, lines, curvetypes):
     ndata = len(wl_dataset)
     resids = []
@@ -662,24 +656,49 @@ def outer_fit(params, wl_dataset, flux_dataset, lines, curvetypes):
 
 
 def v_from_doppler_rel(r_factor):
-    return c*(r_factor**2-1)/(r_factor**2+1)
+    return c * (r_factor ** 2 - 1) / (r_factor ** 2 + 1)
 
 
 def v_from_doppler_rel_err(r_factor):
-    return 4*c*r_factor/(np.power((r_factor**2+1), 2))
+    return 4 * c * r_factor / (np.power((r_factor ** 2 + 1), 2))
 
 
-def cumulative_shift(output_table_spec, file, n = 0):
+def make_dataset(wl, rfac, i, params):
+    shift = rfac * linelist[i]
+    scaling, gamma, slope, height, eta = params
+    return pseudo_voigt(wl, scaling, gamma, shift, slope, height, eta)
+
+
+def culum_fit_funciton(wl, r_factor, *args):
+    wl_dataset = np.split(wl, wl_splitinds)
+    resids = []
+
+    params = []
+    for a in args:
+        params.append(a)
+
+    params = np.array(params)
+    params = np.split(params, len(params)/5)
+
+    for i, paramset in enumerate(params):
+        resids.append(make_dataset(wl_dataset[i], r_factor, i, paramset))
+
+    return np.concatenate(resids)
+
+
+def cumulative_shift(output_table_spec, file, n=0):
+    global linelist
     wl, flx, time, flx_std = load_spectrum(file)
-    lines = output_table_spec["line_loc"]
+    linelist = output_table_spec["line_loc"]
     flux_sanitized = output_table_spec["sanitized"]
     cr_ind = output_table_spec["cr_ind"]
+    subspec_ind = list(output_table_spec["subspectrum"])[0]
     wl_dataset = []
     flux_dataset = []
     flux_std_dataset = []
     output_table = output_table_cols.copy()
 
-    for i, line in enumerate(lines):
+    for i, line in enumerate(linelist):
         if not list(flux_sanitized)[i]:
             line_cr_inds = list(cr_ind)[i]
             if len(line_cr_inds) > 0:
@@ -693,6 +712,11 @@ def cumulative_shift(output_table_spec, file, n = 0):
             flux_std_dataset.append(flx_std[loind:upind])
 
         else:
+            line_cr_inds = list(cr_ind)[i]
+            if len(line_cr_inds) > 0:
+                wl = np.delete(wl, line_cr_inds)
+                flx = np.delete(flx, line_cr_inds)
+                flx_std = np.delete(flx_std, line_cr_inds)
             sanflx, cut_flux, mask = sanitise_flux(flx, line, wl)
             sanwl = wl[mask]
             sanflx = sanflx.compressed()
@@ -703,97 +727,89 @@ def cumulative_shift(output_table_spec, file, n = 0):
             flux_dataset.append(sanflx[loind:upind])
             flux_std_dataset.append(sanflx_std[loind:upind])
 
-    fit_params = Parameters()
-    wl_inds = []
-    curvetypes = []
-    for iwl, wl in enumerate(wl_dataset):
-        wl_inds.append(iwl)
-        pred_scaling = list(output_table_spec["scaling"])[iwl]
-        pred_gamma = list(output_table_spec["gamma"])[iwl]
-        pred_r_factor = list(output_table_spec["reduction_factor"])[iwl]
-        pred_slope = list(output_table_spec["slope"])[iwl]
-        pred_height = list(output_table_spec["flux_0"])[iwl]
-        pred_eta = list(output_table_spec["eta"])[iwl]
-        if .01 < pred_eta < .99:
-            fit_params.add(f'eta_{iwl}', value=pred_eta, min=0, max=1)
-            curvetypes.append("voigt")
-        elif pred_eta > .99:
-            curvetypes.append("gauss")
-        elif pred_eta < .01:
-            curvetypes.append("lorentz")
-        fit_params.add(f'scaling_{iwl}', value=pred_scaling, min=0, max=np.inf)
-        fit_params.add(f'gamma_{iwl}', value=pred_gamma, min=0, max=np.inf)
-        fit_params.add(f'r_factor_{iwl}', value=pred_r_factor, min=0, max=np.inf)
-        fit_params.add(f'slope_{iwl}', value=pred_slope, min=-np.inf, max=np.inf)
-        fit_params.add(f'height_{iwl}', value=pred_height, min=0, max=np.inf)
 
-    for i in range(len(wl_inds)-1):
-        i += 1
-        fit_params[f'r_factor_{i}'].expr = 'r_factor_0'
+    global wl_splitinds, flux_splitinds, flux_std_splitinds
+    wl_splitinds = [len(wldata) for wldata in wl_dataset]
+    flux_splitinds = [len(flxdata) for flxdata in flux_dataset]
+    flux_std_splitinds = [len(flxstddata) for flxstddata in flux_std_dataset]
+    wl_splitinds = [sum(wl_splitinds[:ind+1]) for ind, wl in enumerate(wl_splitinds)]
+    flux_splitinds = [sum(flux_splitinds[:ind+1]) for ind, flx in enumerate(flux_splitinds)]
+    flux_std_splitinds = [sum(flux_std_splitinds[:ind+1]) for ind, flxstd in enumerate(flux_std_splitinds)]
 
-    out = minimize(outer_fit, fit_params, args=(wl_dataset, flux_dataset, lines, curvetypes), method="least_squares", max_nfev=1200)
-    if VERBOSE:
-        report_fit(out.params)
+    linelist = list(linelist)
 
-    file_prefix, subspec_ind = file.split("/")[1].split(".")[0].split("_")
+    p0 = [1]
+    bounds = [
+        [0],
+        [np.inf]
+    ]
+    # scaling, gamma, slope, height, eta
+    for i in range(len(wl_dataset)):
+        specparamrow = output_table_spec.loc[output_table_spec["line_loc"] == list(linelist)[i]]
+        p0 += [
+            specparamrow["scaling"][0],
+            specparamrow["gamma"][0],
+            specparamrow["slope"][0],
+            specparamrow["flux_0"][0],
+            specparamrow["eta"][0],
+        ]
+        bounds[0] += [0, 0, -np.inf, 0, 0]
+        bounds[1] += [np.inf, np.inf, np.inf, np.inf, 1]
 
-    culumv = v_from_doppler_rel(out.params["r_factor_0"])
-    r_err_ind = out.var_names.index("r_factor_0")
-    try:
-        errs = np.sqrt(np.abs(np.diag(out.covar)))
-        culumv_errs = v_from_doppler_rel_err(errs[r_err_ind])
-    except AttributeError:
-        culumv_errs = 0
-        if n < len(output_table_spec.index)/2:
-            print(n)
-            output_table_spec = output_table_spec.drop(output_table_spec.nsmallest(1, "SNR").index)
-            if len(len(output_table_spec.index)) > 1:
-                return cumulative_shift(output_table_spec, file, n+1)
+    wl_dataset = np.concatenate(wl_dataset, axis=0)
+    flux_dataset = np.concatenate(flux_dataset, axis=0)
+    flux_std_dataset = np.concatenate(flux_std_dataset, axis=0)
 
+    flux_std_dataset[flux_std_dataset == 0] = np.mean(flux_std_dataset) #Zeros in the std-dataset will raise exceptions (And are scientifically nonsensical)
 
-    for i in range(len(wl_inds)-1):
+    params, errs = curve_fit(
+        culum_fit_funciton,
+        wl_dataset,
+        flux_dataset,
+        p0=p0,
+        bounds=bounds,
+        #sigma=flux_std_dataset,
+        max_nfev=10000
+    )
+
+    errs = np.sqrt(np.diag(errs))
+
+    r_factor = params[0]
+    r_factor_err = errs[0]
+
+    culumv = v_from_doppler_rel(r_factor)
+    culumv_errs = v_from_doppler_rel_err(r_factor_err)
+
+    errs = np.split(np.array(errs)[1:], len(np.array(errs)[1:]) / 5)
+    params = np.split(np.array(params)[1:], len(np.array(params)[1:])/5)
+
+    wl_dataset = np.split(wl_dataset, wl_splitinds)
+    flux_dataset = np.split(flux_dataset, flux_splitinds)
+    flux_std_dataset = np.split(flux_std_dataset, flux_std_splitinds)
+
+    for i, paramset in enumerate(params):
         lname = list(output_table_spec['line_name'])[i]
-        lines = list(lines)
+        lines = list(linelist)
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         plt.title(f"cumulative Fit for Line {lname} @ {round(lines[i])}Å")
         plt.axvline(lines[i], linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
         plt.plot(wl_dataset[i], flux_dataset[i])
-        plt.plot(wl_dataset[i], make_dataset(out.params, i, wl_dataset[i], lines, curvetypes))
+        wllinspace = np.linspace(wl_dataset[i][0], wl_dataset[i][-1], 1000)
+        plt.plot(wllinspace, make_dataset(wllinspace, r_factor, i, paramset))
         if SAVE_SINGLE_IMGS:
-            plt.savefig(f"output/{file_prefix}/{subspec_ind}/culum_{round(lines[i])}Å.png", dpi=200)
+            subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0"+str(subspec_ind)
+            plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å.png", dpi=300)
         if SHOW_PLOTS:
             plt.show()
         else:
             plt.clf()
             plt.cla()
 
-        try:
-            eta = out.params[f"eta_{i}"].value
-            u_eta = errs[out.var_names.index(f"eta_{i}")]
-        except KeyError:
-            eta = "--"
-            u_eta = "--"
-        except UnboundLocalError:
-            eta = out.params[f"eta_{i}"].value
-            u_eta = 0
-
-        try:
-            rfactorerr = errs[out.var_names.index(f"r_factor_0")]
-            shifterr = lines[i]*errs[out.var_names.index(f"r_factor_0")]
-            sigmaerr = to_sigma(errs[out.var_names.index(f"gamma_{i}")])
-            gammaerr = errs[out.var_names.index(f"gamma_{i}")]
-            scalingerr = errs[out.var_names.index(f"scaling_{i}")]
-            heighterr = errs[out.var_names.index(f"height_{i}")]
-            slopeerr = errs[out.var_names.index(f"slope_{i}")]
-        except UnboundLocalError:
-            rfactorerr = 0
-            shifterr = 0
-            sigmaerr = 0
-            gammaerr = 0
-            scalingerr = 0
-            heighterr = 0
-            slopeerr = 0
+        scaling, gamma, slope, height, eta = paramset
+        shift = r_factor * lines[i]
+        scalingerr, gammaerr, slopeerr, heighterr, etaerr = errs[i]
+        shifterr = r_factor_err*lines[i]
 
         output_table_row = pd.DataFrame({
             "subspectrum": [list(output_table_spec["subspectrum"])[0]],
@@ -801,21 +817,21 @@ def cumulative_shift(output_table_spec, file, n = 0):
             "line_loc": [lines[i]],
             "height": ["--"],
             "u_height": ["--"],
-            "reduction_factor": [out.params[f"r_factor_0"].value],
-            "u_reduction_factor": [rfactorerr],
-            "lambda_0": [lines[i]*out.params[f"r_factor_{i}"].value],
+            "reduction_factor": [r_factor],
+            "u_reduction_factor": [r_factor_err],
+            "lambda_0": [shift],
             "u_lambda_0": [shifterr],
             "eta": [eta],
-            "u_eta": [u_eta],
-            "sigma": [to_sigma(out.params[f"gamma_{i}"].value)],
-            "u_sigma": [sigmaerr],
-            "gamma": [out.params[f"gamma_{i}"].value],
+            "u_eta": [etaerr],
+            "sigma": [to_sigma(gamma)],
+            "u_sigma": [to_sigma(gammaerr)],
+            "gamma": [gamma],
             "u_gamma": [gammaerr],
-            "scaling": [out.params[f"scaling_{i}"].value],
+            "scaling": [scaling],
             "u_scaling": [scalingerr],
-            "flux_0": [out.params[f"height_{i}"].value],
+            "flux_0": [height],
             "u_flux_0": [heighterr],
-            "slope": [out.params[f"slope_{i}"].value],
+            "slope": [slope],
             "u_slope": [slopeerr],
             "RV": [culumv],
             "u_RV": [culumv_errs],
@@ -857,7 +873,7 @@ def print_status(file, fileset, catalogue):
         gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
     else:
         gaia_id = file_prefix
-    print(f"Doing Fits for System GAIA EDR3 {gaia_id}...  {(fileset.index(file)+1)}/{(len(fileset))}")
+    print(f"Doing Fits for System GAIA EDR3 {gaia_id}...  {(fileset.index(file) + 1)}/{(len(fileset))}")
 
 
 if __name__ == "__main__":
@@ -866,12 +882,19 @@ if __name__ == "__main__":
     file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
     for file_prefix in file_prefixes:
         fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
+        if os.path.isdir(f'output/{file_prefix}') and CHECK_IF_EXISTS:
+            if os.path.isfile(f'output/{file_prefix}/RV_variation.csv'):
+                if not SAVE_SINGLE_IMGS:
+                    continue
+                nspec = len(fileset)
+                if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec))!=1 else "0"+str(nspec)}/'):
+                    continue
         spectimes = []
         spectimes_mjd = []
         specvels = []
         specverrs = []
         culumvs = []
-        culumvs_errs =[]
+        culumvs_errs = []
         single_output_table = output_table_cols.copy()
         cumulative_output_table = output_table_cols.copy()
         for file in fileset:
@@ -904,7 +927,7 @@ if __name__ == "__main__":
         rvtable = pd.DataFrame({
             "culum_fit_RV": culumvs,
             "u_culum_fit_RV": culumvs_errs,
-             "single_fit_RV": specvels,
+            "single_fit_RV": specvels,
             "u_single_fit_RV": specverrs,
             "mjd": spectimes_mjd,
             "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
@@ -916,14 +939,21 @@ if __name__ == "__main__":
         plt.close()
         plt.cla()
         plt.clf()
-        plt.title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}")
-        plt.ylabel("Radial Velocity [km/s]")
-        plt.xlabel("Date")
-        plt.gcf().autofmt_xdate()
-        # plt.plot_date(spectimes, specvels, xdate=True, zorder=5)
-        plt.plot_date(spectimes, culumvs, xdate=True, zorder=5)
-        # plt.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
-        plt.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
+        fig, [ax1, ax2] = plt.subplots(2, 1, sharex="col", sharey="col")
+        fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}")
+        ax1.set_ylabel("Radial Velocity [km/s]")
+        ax2.set_ylabel("Radial Velocity [km/s]")
+        ax2.set_xlabel("Date")
+        fig.autofmt_xdate()
+        ax1.plot_date(spectimes, specvels, xdate=True, zorder=5)
+        ax2.plot_date(spectimes, culumvs, xdate=True, zorder=5)
+        ax1.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
+        ax2.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
         plt.tight_layout()
         plt.savefig(f"output/{file_prefix.split('_')[0]}/RV_variation.png", dpi=300)
-        plt.show()
+        if SHOW_PLOTS:
+            plt.show()
+        else:
+            plt.cla()
+            plt.clf()
+            plt.close()
