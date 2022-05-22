@@ -769,7 +769,7 @@ def cumulative_shift(output_table_spec, file, n=0):
         p0=p0,
         bounds=bounds,
         #sigma=flux_std_dataset,
-        max_nfev=10000
+        max_nfev=100000
     )
 
     errs = np.sqrt(np.diag(errs))
@@ -873,7 +873,7 @@ def print_status(file, fileset, catalogue):
         gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
     else:
         gaia_id = file_prefix
-    print(f"Doing Fits for System GAIA EDR3 {gaia_id}...  {(fileset.index(file) + 1)}/{(len(fileset))}")
+    print(f"Doing Fits for System GAIA EDR3 {gaia_id}  [{(fileset.index(file) + 1)}/{(len(fileset))}]")
 
 
 if __name__ == "__main__":
@@ -883,7 +883,7 @@ if __name__ == "__main__":
     for file_prefix in file_prefixes:
         fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
         if os.path.isdir(f'output/{file_prefix}') and CHECK_IF_EXISTS:
-            if os.path.isfile(f'output/{file_prefix}/RV_variation.csv'):
+            if os.path.isfile(f'output/{file_prefix}/RV_variation.png'):
                 if not SAVE_SINGLE_IMGS:
                     continue
                 nspec = len(fileset)
@@ -939,16 +939,28 @@ if __name__ == "__main__":
         plt.close()
         plt.cla()
         plt.clf()
-        fig, [ax1, ax2] = plt.subplots(2, 1, sharex="col", sharey="col")
+        fig, [ax1, ax2] = plt.subplots(2, 1, sharex="col")
         fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}")
         ax1.set_ylabel("Radial Velocity [km/s]")
+        ax1.set_title("RV Curve determined by single Fit")
         ax2.set_ylabel("Radial Velocity [km/s]")
+        ax2.set_title("RV Curve determined by cumulative Fit")
         ax2.set_xlabel("Date")
         fig.autofmt_xdate()
+
         ax1.plot_date(spectimes, specvels, xdate=True, zorder=5)
         ax2.plot_date(spectimes, culumvs, xdate=True, zorder=5)
+
         ax1.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
         ax2.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
+
+        specvels_range = specvels.max() - specvels.min()
+        culumvs_range = culumvs.max() - culumvs.min()
+
+        if not pd.isnull(specvels_range) or pd.isnull(culumvs_range):
+            ax1.set_ylim((specvels.min()-0.5*specvels_range, specvels.max()+0.5*specvels_range))
+            ax2.set_ylim((culumvs.min()-0.5*culumvs_range, culumvs.max()+0.5*culumvs_range))
+
         plt.tight_layout()
         plt.savefig(f"output/{file_prefix.split('_')[0]}/RV_variation.png", dpi=300)
         if SHOW_PLOTS:
