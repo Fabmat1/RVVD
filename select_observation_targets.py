@@ -5,9 +5,7 @@ import numpy as np
 from astropy.io import fits
 from main import open_spec_files
 
-
 N_STARS = 100
-
 
 stars = []
 with open("specs_info.txt") as spinfo:
@@ -28,7 +26,6 @@ fits_reftable = fits.open("hotSD_gaia_edr3_catalogue.fits")
 fits_reftable = Table.read(fits_reftable[1])
 fits_reftable = fits_reftable.to_pandas()
 
-
 for_selection = pd.DataFrame({
     "source_id": [],
     "file": [],
@@ -36,7 +33,6 @@ for_selection = pd.DataFrame({
     "bp_rp": [],
     "gmag": []
 })
-
 
 n = 0
 l = len(startable)
@@ -47,7 +43,7 @@ for star in startable:
     reference = reftable.loc[reftable['GAIA_DESIG'] == f'Gaia EDR3 {star["source_id"]}']
     try:
         spclass = reference["SPEC_CLASS"].to_numpy()[0]
-        bp_rp = reference["BP_GAIA"].to_numpy()[0]-reference["RP_GAIA"].to_numpy()[0]
+        bp_rp = reference["BP_GAIA"].to_numpy()[0] - reference["RP_GAIA"].to_numpy()[0]
         gmag = reference["G_GAIA"].to_numpy()[0]
         source_id = str(star["source_id"])
         file = star["File"]
@@ -74,7 +70,6 @@ for star in startable:
     }
     for_selection = pd.concat([for_selection, pd.DataFrame(stardata)], ignore_index=True)
 
-
 for_selection["plot_color"] = "darkgray"
 for_selection.loc[(["sdOB" in c for c in for_selection["SPEC_CLASS"]]), "plot_color"] = "darkred"
 for_selection.loc[(["sdO" in c and "sdOB" not in c for c in for_selection["SPEC_CLASS"]]), "plot_color"] = "red"
@@ -82,21 +77,43 @@ for_selection.loc[(["sdB" in c for c in for_selection["SPEC_CLASS"]]), "plot_col
 
 print(for_selection)
 
-ax = for_selection.plot.scatter("bp_rp", "gmag", "nspec", color=list(for_selection["plot_color"]), alpha=0.7)
+ax = for_selection.plot.scatter("bp_rp", "gmag", "nspec", color=list(for_selection["plot_color"]), alpha=0.7,
+                                label="_nolegend_")
+plt.scatter([], [], color="darkred")
+plt.scatter([], [], color="red")
+plt.scatter([], [], color="gold")
+plt.scatter([], [], color="darkgray")
+
+plt.legend(["sdO", "sdOB", "sdB", "uncategorized"])
+
 ax.set_title("Hot subdwarfs with single, non-coadded spectra")
+ax.set_xlabel("BP-RP color [mag]")
+ax.set_ylabel("G band magnitude [mag]")
 ax.set_xlim((-0.7, 0.6))
 ax.set_ylim((13, 21))
+ax.grid(which='major', axis='y', linestyle='--')
 plt.savefig("hotsdBs.png", dpi=250)
 plt.show()
 
 sdb_subset = for_selection.loc[["sdB" in c or "sdOB" in c for c in for_selection["SPEC_CLASS"]]]
-sdb_subset["gmag-nspec"] = sdb_subset["gmag"]-sdb_subset["nspec"]/2
+sdb_subset["gmag-nspec"] = sdb_subset["gmag"] - sdb_subset["nspec"] / 2
 final_table = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
 
-ax = final_table.plot.scatter("bp_rp", "gmag", "nspec", color=list(final_table["plot_color"]), alpha=0.7)
+ax = final_table.plot.scatter("bp_rp", "gmag", "nspec", color=list(final_table["plot_color"]), alpha=0.7, label="_nolegend_")
+
+plt.scatter([], [], color="darkred")
+plt.scatter([], [], color="red")
+plt.scatter([], [], color="gold")
+plt.scatter([], [], color="darkgray")
+
+plt.legend(["sdO", "sdOB", "sdB", "uncategorized"])
+
 ax.set_title("Best subset of stars")
+ax.set_xlabel("BP-RP color [mag]")
+ax.set_ylabel("G band magnitude [mag]")
 ax.set_xlim((-0.7, 0.6))
 ax.set_ylim((13, 21))
+ax.grid(which='major', axis='y', linestyle='--')
 plt.savefig("subset.png", dpi=250)
 plt.show()
 final_table.drop("plot_color", axis=1).to_csv("selected_objects.csv", index=False)

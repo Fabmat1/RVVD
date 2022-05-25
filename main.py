@@ -2,12 +2,9 @@
 # TODO: Print pdf of individual RVs
 # TODO: Input list of 100-200 brightest sdV and sdOB Stars
 
-import glob
 import os
 import re
 from datetime import datetime
-from pprint import pprint
-from lmfit import Parameters, minimize, report_fit
 import pandas as pd
 import numpy as np
 import warnings
@@ -17,6 +14,9 @@ from scipy.special import erf
 from scipy.constants import c
 from astropy.io import fits
 import astropy.time as atime
+import matplotlib as mpl
+
+mpl.rcParams['figure.dpi'] = 300
 
 EXTENSION = ".txt"
 CATALOGUE = "selected_objects.csv"
@@ -27,10 +27,10 @@ OUTLIER_MAX_SIGMA = 1
 CUT_MARGIN = 20
 MARGIN = 100
 DESIREDERR = 50
-SHOW_PLOTS = False
+SHOW_PLOTS = True
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
-SAVE_SINGLE_IMGS = False
+SAVE_SINGLE_IMGS = True
 SAVE_COMPOSITE_IMG = True
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
@@ -93,8 +93,8 @@ disturbing_lines = {
     "H_gamma": 4340.472,
     "H_delta": 4101.734,
     "H_epsilon": 3970.075,
-    "H_zeta": 3888.052,
-    "H_eta": 3835.387,
+    "H_zeta": 3889.064,
+    "H_eta": 3835.397,
     "He_I_4026": 4026.19,
     "He_I_4472": 4471.4802,
     "He_I_4922": 4921.9313,
@@ -136,7 +136,7 @@ def slicearr(arr, lower, upper):
     except AssertionError as e:
         loind = np.where(arr == arr[arr > lower][0])[0][0]
         upind = loind + 1
-        newarr = np.empty([1])
+        newarr = np.array([])
     if len(newarr) == 0:
         loind = np.where(arr == arr[arr > lower][0])[0][0]
         upind = loind + 1
@@ -262,7 +262,7 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
         plt.title("Full Spectrum Overview")
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
-        plt.plot(wavelength, flux)
+        plt.plot(wavelength, flux, color="navy")
         plt.show()
     if "flux_std" not in vars():
         flux_std = np.zeros(np.shape(flux))
@@ -678,7 +678,7 @@ def culum_fit_funciton(wl, r_factor, *args):
         params.append(a)
 
     params = np.array(params)
-    params = np.split(params, len(params)/5)
+    params = np.split(params, len(params) / 5)
 
     for i, paramset in enumerate(params):
         resids.append(make_dataset(wl_dataset[i], r_factor, i, paramset))
@@ -727,18 +727,19 @@ def cumulative_shift(output_table_spec, file, n=0):
             flux_dataset.append(sanflx[loind:upind])
             flux_std_dataset.append(sanflx_std[loind:upind])
 
-
     global wl_splitinds, flux_splitinds, flux_std_splitinds
     wl_splitinds = [len(wldata) for wldata in wl_dataset]
     flux_splitinds = [len(flxdata) for flxdata in flux_dataset]
     flux_std_splitinds = [len(flxstddata) for flxstddata in flux_std_dataset]
-    wl_splitinds = [sum(wl_splitinds[:ind+1]) for ind, wl in enumerate(wl_splitinds)]
-    flux_splitinds = [sum(flux_splitinds[:ind+1]) for ind, flx in enumerate(flux_splitinds)]
-    flux_std_splitinds = [sum(flux_std_splitinds[:ind+1]) for ind, flxstd in enumerate(flux_std_splitinds)]
+    wl_splitinds = [sum(wl_splitinds[:ind + 1]) for ind, wl in enumerate(wl_splitinds)]
+    flux_splitinds = [sum(flux_splitinds[:ind + 1]) for ind, flx in enumerate(flux_splitinds)]
+    flux_std_splitinds = [sum(flux_std_splitinds[:ind + 1]) for ind, flxstd in enumerate(flux_std_splitinds)]
 
     linelist = list(linelist)
 
-    p0 = [1]
+    rmean = output_table_spec["reduction_factor"].mean()
+
+    p0 = [rmean]
     bounds = [
         [0],
         [np.inf]
@@ -760,7 +761,8 @@ def cumulative_shift(output_table_spec, file, n=0):
     flux_dataset = np.concatenate(flux_dataset, axis=0)
     flux_std_dataset = np.concatenate(flux_std_dataset, axis=0)
 
-    flux_std_dataset[flux_std_dataset == 0] = np.mean(flux_std_dataset) #Zeros in the std-dataset will raise exceptions (And are scientifically nonsensical)
+    flux_std_dataset[flux_std_dataset == 0] = np.mean(
+        flux_std_dataset)  # Zeros in the std-dataset will raise exceptions (And are scientifically nonsensical)
 
     params, errs = curve_fit(
         culum_fit_funciton,
@@ -768,7 +770,7 @@ def cumulative_shift(output_table_spec, file, n=0):
         flux_dataset,
         p0=p0,
         bounds=bounds,
-        #sigma=flux_std_dataset,
+        sigma=flux_std_dataset,
         max_nfev=100000
     )
 
@@ -781,7 +783,7 @@ def cumulative_shift(output_table_spec, file, n=0):
     culumv_errs = v_from_doppler_rel_err(r_factor_err)
 
     errs = np.split(np.array(errs)[1:], len(np.array(errs)[1:]) / 5)
-    params = np.split(np.array(params)[1:], len(np.array(params)[1:])/5)
+    params = np.split(np.array(params)[1:], len(np.array(params)[1:]) / 5)
 
     wl_dataset = np.split(wl_dataset, wl_splitinds)
     flux_dataset = np.split(flux_dataset, flux_splitinds)
@@ -798,7 +800,7 @@ def cumulative_shift(output_table_spec, file, n=0):
         wllinspace = np.linspace(wl_dataset[i][0], wl_dataset[i][-1], 1000)
         plt.plot(wllinspace, make_dataset(wllinspace, r_factor, i, paramset))
         if SAVE_SINGLE_IMGS:
-            subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0"+str(subspec_ind)
+            subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
             plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å.png", dpi=300)
         if SHOW_PLOTS:
             plt.show()
@@ -809,7 +811,7 @@ def cumulative_shift(output_table_spec, file, n=0):
         scaling, gamma, slope, height, eta = paramset
         shift = r_factor * lines[i]
         scalingerr, gammaerr, slopeerr, heighterr, etaerr = errs[i]
-        shifterr = r_factor_err*lines[i]
+        shifterr = r_factor_err * lines[i]
 
         output_table_row = pd.DataFrame({
             "subspectrum": [list(output_table_spec["subspectrum"])[0]],
@@ -839,7 +841,7 @@ def cumulative_shift(output_table_spec, file, n=0):
             "noise_strength": ["--"],
             "SNR": ["--"],
             "sanitized": ["--"],
-            "cr_ind": ["--"]
+            "cr_ind": [cr_ind]
         })
 
         output_table = pd.concat([output_table, output_table_row], axis=0)
@@ -887,7 +889,7 @@ if __name__ == "__main__":
                 if not SAVE_SINGLE_IMGS:
                     continue
                 nspec = len(fileset)
-                if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec))!=1 else "0"+str(nspec)}/'):
+                if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
                     continue
         spectimes = []
         spectimes_mjd = []
@@ -954,12 +956,12 @@ if __name__ == "__main__":
         ax1.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
         ax2.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
 
-        specvels_range = specvels.max() - specvels.min()
-        culumvs_range = culumvs.max() - culumvs.min()
+        specvels_range = specverrs.min()
+        culumvs_range = culumvs_errs.min()
 
         if not pd.isnull(specvels_range) or pd.isnull(culumvs_range):
-            ax1.set_ylim((specvels.min()-0.5*specvels_range, specvels.max()+0.5*specvels_range))
-            ax2.set_ylim((culumvs.min()-0.5*culumvs_range, culumvs.max()+0.5*culumvs_range))
+            ax1.set_ylim((specvels.min() - 2 * specvels_range, specvels.max() + 2 * specvels_range))
+            ax2.set_ylim((culumvs.min() - 2 * culumvs_range, culumvs.max() + 2 * culumvs_range))
 
         plt.tight_layout()
         plt.savefig(f"output/{file_prefix.split('_')[0]}/RV_variation.png", dpi=300)
