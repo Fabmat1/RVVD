@@ -1,6 +1,33 @@
 import os
 import numpy as np
 import pandas as pd
+from scipy import stats
+
+
+def vrad_pvalue(vrad, vrad_err):
+    """
+    :param vrad: Radial Velocity array
+    :param vrad_err: Array of corresponding Errors
+    :return: logp value
+    """
+    ndata = len(vrad)
+    if ndata < 2:
+        return np.nan
+    nfit = 1
+
+    vrad_wmean = np.sum(vrad/vrad_err) / np.sum(1/vrad_err)
+
+    chi = (vrad - vrad_wmean) / vrad_err
+
+    chisq = chi**2
+    chisq_sum = np.sum(chisq)
+
+    dof = ndata - nfit
+
+    pval = stats.chi2.sf(chisq_sum, dof)
+    logp = np.log10(pval)
+
+    return logp
 
 
 dirname = os.path.dirname(__file__)
@@ -30,9 +57,10 @@ for file in files:
     std_reduction.append(std_red)
     var_over_err = pd.concat([var_over_err, pd.DataFrame({
         "spec": [specname],
+        "logp": [vrad_pvalue(culumvs, culumv_errs)],
         "var_over_err": np.std(culumvs)/np.mean(culumv_errs)
     })])
 
-var_over_err = var_over_err.sort_values("var_over_err", axis=0)
-var_over_err.to_csv("var_over_err.csv", index=False)
+var_over_err = var_over_err.sort_values("logp", axis=0, ascending=False)
+var_over_err.to_csv("logps.csv", index=False)
 print(round(1-np.mean(np.array(std_reduction)), 3))

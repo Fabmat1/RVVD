@@ -1,7 +1,3 @@
-# TODO: First fit all lines individually, then together
-# TODO: Print pdf of individual RVs
-# TODO: Input list of 100-200 brightest sdV and sdOB Stars
-
 import os
 import re
 from datetime import datetime
@@ -23,7 +19,7 @@ CATALOGUE = "selected_objects.csv"
 FILE_LOC = "spectra/"
 DATA_TYPE = "numeric"  # dict, numeric
 VERBOSE = False
-OUTLIER_MAX_SIGMA = 1
+OUTLIER_MAX_SIGMA = 2
 CUT_MARGIN = 20
 MARGIN = 100
 DESIREDERR = 50
@@ -34,7 +30,8 @@ SAVE_SINGLE_IMGS = True
 SAVE_COMPOSITE_IMG = True
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
-COSMIC_RAY_DETECTION_LIM = (2, 1)  # minimum times peak height/flux std required to detect cr, minimum times diff
+MAX_ALLOWED_SNR = 1.5
+COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 
 output_table_cols = pd.DataFrame({
@@ -138,8 +135,12 @@ def slicearr(arr, lower, upper):
         upind = loind + 1
         newarr = np.array([])
     if len(newarr) == 0:
-        loind = np.where(arr == arr[arr > lower][0])[0][0]
-        upind = loind + 1
+        if np.array(arr == arr[arr > lower]).all():
+            loind = np.where(arr == arr[arr > lower][0])[0][0]
+            upind = loind + 1
+        else:
+            loind = 0
+            upind = 0
     else:
         loind, upind = np.where(arr == newarr[0])[0][0], np.where(arr == newarr[-1])[0][0] + 1
     return newarr, loind, upind
@@ -300,7 +301,7 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
     :param margin: index width of plotted area (arbitrary)
     :return:    Mean squared displacement(MSD) of signal area,
                 MSD of noise background,
-                Logarithmic Signal-to-Noise ratio
+                Signal-to-Noise ratio
     """
     scaling, gamma, shift, slope, height, eta = params
     wlmargin = np.abs(wavelength[0] - wavelength[margin])
@@ -323,7 +324,7 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
                     color="red")
     noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist() + flux[uloind:uupind].tolist())))
 
-    SNR = 10 * np.log10(signalstrength / noisestrength)
+    SNR = signalstrength / noisestrength
 
     return signalstrength, noisestrength, SNR
 
@@ -331,13 +332,20 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
 def expand_mask(mask):
     """
     :param mask: Boolean mask of an array
-    :return: Boolean mask, with
+    :return: Boolean mask, with False boolean values "expanded" by one
     """
     nmask = np.logical_and(np.logical_and(np.roll(mask, -1), np.roll(mask, 1)), mask)
     return nmask
 
 
 def sanitise_flux(flux, wavelength_pov, wls):
+    """
+    :param flux: flux array
+    :param wavelength_pov: Wavelength of line that is being fitted
+    :param wls: Wavelengths of all Lines that can be in the Spectrum
+    :return: [masked array, masked array, array] Masked array of flux without
+    disturbing lines, Masked array of flux that was cut out, mask of bools that was used
+    """
     mask = np.full(np.shape(wls), True)
     for line in disturbing_lines.values():
         if not round(line) - 2 < round(wavelength_pov) < round(line) + 2:
@@ -348,28 +356,40 @@ def sanitise_flux(flux, wavelength_pov, wls):
     return clean_flux, cut_flux, mask
 
 
-def cosmic_ray(slicedwl, flux, params, errs):
-    if np.sum(np.abs(np.array((params[3], params[4])) / np.array((errs[3], errs[4]))) > 2) == 2:
-        scaling, gamma, shift, slope, height, eta = params
-        flux = flux - slope * slicedwl - height
-        m = np.mean(flux)
-        std = np.std(flux)
-        sigma = to_sigma(gamma)
-        h = scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))
-    else:
-        return False, []
-    diffarr = np.diff(flux, prepend=flux[0])
-    m_diffarr = np.mean(diffarr)
-    std_diffarr = np.std(diffarr)
-    if h > 2 * std:
-        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * h,
-                                             diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
-    else:
-        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * std,
-                                             diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
+def cosmic_ray(slicedwl, flux, params, errs, wl_pov):
+    """
+    :param slicedwl: Wavelenght array for which cosmic ray locations should be found
+    :param flux: Corresponding flux
+    :param params: Fit parameters
+    :param errs: Fit errors
+    :return: [bool, array] Whether any cosmic rays could be found, Their index locations in slicedwl
+    """
+
+    scaling, gamma, shift, slope, height, eta = params
+    sigma = to_sigma(gamma)
+    flux = flux - slope * slicedwl - height
+    flux, _, _ = sanitise_flux(flux, wl_pov, slicedwl)
+
+    lwl_for_std, lloind, lupind = slicearr(slicedwl, shift - MARGIN, shift - 2 * sigma)
+    uwl_for_std, uloind, uupind = slicearr(slicedwl, shift + 2 * sigma, shift + MARGIN)
+
+    for_std = np.concatenate([flux[lloind:lupind], flux[uloind:uupind]])
+    std = np.std(for_std)
+
+    return True, np.where(flux > COSMIC_RAY_DETECTION_LIM*std)
 
 
-def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=False, used_cr_inds=None):
+def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False, used_cr_inds=[]):
+
+    wavelength = np.copy(wavelengthdata)
+    flux = np.copy(fluxdata)
+    flux_std = np.copy(flux_stddata)
+
+    for i in disturbing_lines.values():
+        if i != center:
+            if i-CUT_MARGIN < center+MARGIN or i+CUT_MARGIN > center-MARGIN:
+                sanitize = True
+
     if used_cr_inds is None:
         used_cr_inds = []
 
@@ -427,16 +447,17 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
 
         errs = np.sqrt(np.diag(errs))
 
-        cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, errs)
-        if cr and np.sum(cr_ind) > 0:
-            cr_ind += loind
-            plt.cla()
-            for i in cr_ind[0]:
-                plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
-            return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
-                                    np.delete(flux_std, cr_ind), center, margin, file_prefix, used_cr_inds=cr_ind)
+        if len(used_cr_inds) == 0:
+            cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, errs, center)
+            if cr and np.sum(cr_ind) > 0:
+                cr_ind += loind
+                cr_true_inds = wavelengthdata.searchsorted(wavelength[cr_ind])
+                plt.cla()
+                for i in cr_ind[0]:
+                    plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
+                return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
+                                        np.delete(flux_std, cr_ind), center, margin, file_prefix, used_cr_inds=cr_true_inds)
 
-        # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
         if not verify_peak(slicedwl, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs, flux[loind:upind]):
             if sucess:
                 warn_text = plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
@@ -452,8 +473,8 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
                           NoiseWarning)
             sucess = False
         sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin, sanitize)
-        plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}dB ", (10, 10), xycoords="figure pixels")
-        if SNR < 2:
+        plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}", (10, 10), xycoords="figure pixels")
+        if SNR < MAX_ALLOWED_SNR:
             if sucess:
                 warn_text = plt.figtext(0.3, 0.95, f"BAD SIGNAL!",
                                         horizontalalignment='right',
@@ -698,13 +719,21 @@ def cumulative_shift(output_table_spec, file, n=0):
     flux_std_dataset = []
     output_table = output_table_cols.copy()
 
+    cr_inds = cr_ind.to_numpy()
+    print(cr_inds)
+    new_cr_inds = []
+    for i in cr_inds:
+        if type(i) != list:
+            new_cr_inds.append(i)
+    cr_inds = np.array([cr[0] for cr in new_cr_inds])
+    cr_inds = np.concatenate(cr_inds)
+
+    wl = np.delete(wl, cr_inds)
+    flx = np.delete(flx, cr_inds)
+    flx_std = np.delete(flx_std, cr_inds)
+
     for i, line in enumerate(linelist):
         if not list(flux_sanitized)[i]:
-            line_cr_inds = list(cr_ind)[i]
-            if len(line_cr_inds) > 0:
-                wl = np.delete(wl, line_cr_inds)
-                flx = np.delete(flx, line_cr_inds)
-                flx_std = np.delete(flx_std, line_cr_inds)
             wldata, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
 
             wl_dataset.append(wldata)
@@ -712,17 +741,11 @@ def cumulative_shift(output_table_spec, file, n=0):
             flux_std_dataset.append(flx_std[loind:upind])
 
         else:
-            line_cr_inds = list(cr_ind)[i]
-            if len(line_cr_inds) > 0:
-                wl = np.delete(wl, line_cr_inds)
-                flx = np.delete(flx, line_cr_inds)
-                flx_std = np.delete(flx_std, line_cr_inds)
             sanflx, cut_flux, mask = sanitise_flux(flx, line, wl)
             sanwl = wl[mask]
             sanflx = sanflx.compressed()
             sanflx_std = flx_std[mask]
             wldata, loind, upind = slicearr(sanwl, line - MARGIN, line + MARGIN)
-            plt.plot(sanwl[loind:upind], cut_flux[loind:upind], color="lightgrey", label='_nolegend_', zorder=1)
             wl_dataset.append(wldata)
             flux_dataset.append(sanflx[loind:upind])
             flux_std_dataset.append(sanflx_std[loind:upind])
