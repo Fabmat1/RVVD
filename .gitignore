@@ -10,3 +10,4 @@ spectra/*
 *.png
 *.zip
 test.py
+*.xcf

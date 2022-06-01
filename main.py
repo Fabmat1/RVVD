@@ -1,13 +1,6 @@
-# TODO: First fit all lines individually, then together
-# TODO: Print pdf of individual RVs
-# TODO: Input list of 100-200 brightest sdV and sdOB Stars
-
-import glob
 import os
 import re
 from datetime import datetime
-from pprint import pprint
-from lmfit import Parameters, minimize, report_fit
 import pandas as pd
 import numpy as np
 import warnings
@@ -17,13 +10,16 @@ from scipy.special import erf
 from scipy.constants import c
 from astropy.io import fits
 import astropy.time as atime
+import matplotlib as mpl
+
+mpl.rcParams['figure.dpi'] = 300
 
 EXTENSION = ".txt"
 CATALOGUE = "selected_objects.csv"
 FILE_LOC = "spectra/"
 DATA_TYPE = "numeric"  # dict, numeric
 VERBOSE = False
-OUTLIER_MAX_SIGMA = 1
+OUTLIER_MAX_SIGMA = 2
 CUT_MARGIN = 20
 MARGIN = 100
 DESIREDERR = 50
@@ -31,10 +27,11 @@ SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
 SAVE_SINGLE_IMGS = False
-SAVE_COMPOSITE_IMG = True
+SAVE_COMPOSITE_IMG = False
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
-COSMIC_RAY_DETECTION_LIM = (2, 1)  # minimum times peak height/flux std required to detect cr, minimum times diff
+MAX_ALLOWED_SNR = 1.5
+COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 
 output_table_cols = pd.DataFrame({
@@ -93,8 +90,8 @@ disturbing_lines = {
     "H_gamma": 4340.472,
     "H_delta": 4101.734,
     "H_epsilon": 3970.075,
-    "H_zeta": 3888.052,
-    "H_eta": 3835.387,
+    "H_zeta": 3889.064,
+    "H_eta": 3835.397,
     "He_I_4026": 4026.19,
     "He_I_4472": 4471.4802,
     "He_I_4922": 4921.9313,
@@ -136,10 +133,14 @@ def slicearr(arr, lower, upper):
     except AssertionError as e:
         loind = np.where(arr == arr[arr > lower][0])[0][0]
         upind = loind + 1
-        newarr = np.empty([1])
+        newarr = np.array([])
     if len(newarr) == 0:
-        loind = np.where(arr == arr[arr > lower][0])[0][0]
-        upind = loind + 1
+        if np.array(arr == arr[arr > lower]).all():
+            loind = np.where(arr == arr[arr > lower][0])[0][0]
+            upind = loind + 1
+        else:
+            loind = 0
+            upind = 0
     else:
         loind, upind = np.where(arr == newarr[0])[0][0], np.where(arr == newarr[-1])[0][0] + 1
     return newarr, loind, upind
@@ -158,25 +159,41 @@ def gaussian(x, gamma, x_0):
     return 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp((-(x - x_0) ** 2) / (2 * sigma ** 2))
 
 
-def v_from_doppler(f_o, f_s):
+def v_from_doppler(lambda_o, lambda_s):
     """
-    :param f_o: Observed Frequency
-    :param f_s: Source Frequency
-    :return: Velocity Shift calculated from relativistic doppler effect
+    :param lambda_o: Observed Wavelength
+    :param lambda_s: Source Wavelength
+    :return: Radial Velocity calculated from relativistic doppler effect
     """
-    return c * (f_o ** 2 - f_s ** 2) / (f_o ** 2 + f_s ** 2)
+    return c * (lambda_s ** 2 - lambda_o ** 2) / (lambda_o ** 2 + lambda_s ** 2)
 
 
-def v_from_doppler_err(f_o, f_s, u_f_o, u_f_s):
+def v_from_doppler_err(lambda_o, lambda_s, u_lambda_o):
     """
-    :param f_o: Observed Frequency
-    :param f_s: Source Frequency
-    :param u_f_o: Uncertainty of Observed Frequency
-    :param u_f_s: Uncertainty of Source Frequency
-    :return: Uncertainty for Velocity Shift calculated from relativistic doppler effect
+    :param lambda_o: Observed Wavelength
+    :param lambda_s: Source Wavelength
+    :param u_lambda_o: Uncertainty of Observed Wavelength
+    :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
     """
-    return c * ((4 * f_o ** 2 * f_s) / ((f_o ** 2 + f_s ** 2) ** 2) * u_f_s + (4 * f_o * f_s ** 2) / (
-            (f_o ** 2 + f_s ** 2) ** 2) * u_f_o)
+    return c * ((4 * lambda_o * lambda_s ** 2) / (
+            (lambda_o ** 2 + lambda_s ** 2) ** 2) * u_lambda_o)
+
+
+def v_from_doppler_rel(r_factor):
+    """
+    :param r_factor: Wavelength reduction factor lambda_o/lambda_s
+    :return: Radial Velocity calculated from relativistic doppler effect
+    """
+    return c * (1 - r_factor ** 2) / (1 + r_factor ** 2)
+
+
+def v_from_doppler_rel_err(r_factor, u_r_factor):
+    """
+    :param r_factor: Wavelength reduction factor lambda_o/lambda_s
+    :param u_r_factor: Uncertainty for wavelength reduction factor
+    :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
+    """
+    return 4 * c * r_factor / (np.power((r_factor ** 2 + 1), 2))*u_r_factor
 
 
 def to_sigma(gamma):
@@ -262,7 +279,7 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
         plt.title("Full Spectrum Overview")
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
-        plt.plot(wavelength, flux)
+        plt.plot(wavelength, flux, color="navy")
         plt.show()
     if "flux_std" not in vars():
         flux_std = np.zeros(np.shape(flux))
@@ -272,10 +289,10 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
 def verify_peak(wavelength, sigma, params, errs, local_flux):
     """
     :param wavelength: Wavelength array
-    :param sigma: Standard deviation of Fit Function
+    :param sigma: Standard deviation of fit function
     :param params: Fit parameters
     :param errs: Fit errors
-    :return: Returns False if the Peak width is in the order of one step in the Wavelength array and does not have a
+    :return: Returns False if the peak width is in the order of one step in the wavelength array and does not have a
              significant amplitude relative to the std of the flux
     """
     d_wl = wavelength[1] - wavelength[0]
@@ -300,7 +317,7 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
     :param margin: index width of plotted area (arbitrary)
     :return:    Mean squared displacement(MSD) of signal area,
                 MSD of noise background,
-                Logarithmic Signal-to-Noise ratio
+                Signal-to-Noise ratio
     """
     scaling, gamma, shift, slope, height, eta = params
     wlmargin = np.abs(wavelength[0] - wavelength[margin])
@@ -323,7 +340,7 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
                     color="red")
     noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist() + flux[uloind:uupind].tolist())))
 
-    SNR = 10 * np.log10(signalstrength / noisestrength)
+    SNR = signalstrength / noisestrength
 
     return signalstrength, noisestrength, SNR
 
@@ -331,13 +348,20 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
 def expand_mask(mask):
     """
     :param mask: Boolean mask of an array
-    :return: Boolean mask, with
+    :return: Boolean mask, with False boolean values "expanded" by one
     """
     nmask = np.logical_and(np.logical_and(np.roll(mask, -1), np.roll(mask, 1)), mask)
     return nmask
 
 
-def sanitise_flux(flux, wavelength_pov, wls):
+def sanitize_flux(flux, wavelength_pov, wls):
+    """
+    :param flux: flux array
+    :param wavelength_pov: Wavelength of line that is being fitted
+    :param wls: Wavelengths of all Lines that can be in the Spectrum
+    :return: [masked array, masked array, array] Masked array of flux without
+    disturbing lines, Masked array of flux that was cut out, mask of bools that was used
+    """
     mask = np.full(np.shape(wls), True)
     for line in disturbing_lines.values():
         if not round(line) - 2 < round(wavelength_pov) < round(line) + 2:
@@ -348,28 +372,40 @@ def sanitise_flux(flux, wavelength_pov, wls):
     return clean_flux, cut_flux, mask
 
 
-def cosmic_ray(slicedwl, flux, params, errs):
-    if np.sum(np.abs(np.array((params[3], params[4])) / np.array((errs[3], errs[4]))) > 2) == 2:
-        scaling, gamma, shift, slope, height, eta = params
-        flux = flux - slope * slicedwl - height
-        m = np.mean(flux)
-        std = np.std(flux)
-        sigma = to_sigma(gamma)
-        h = scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))
-    else:
-        return False, []
-    diffarr = np.diff(flux, prepend=flux[0])
-    m_diffarr = np.mean(diffarr)
-    std_diffarr = np.std(diffarr)
-    if h > 2 * std:
-        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * h,
-                                             diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
-    else:
-        return True, np.where(np.logical_and(flux > m + COSMIC_RAY_DETECTION_LIM[0] * std,
-                                             diffarr > m_diffarr + COSMIC_RAY_DETECTION_LIM[1] * std_diffarr))
+def cosmic_ray(slicedwl, flux, params, errs, wl_pov):
+    """
+    :param slicedwl: Wavelenght array for which cosmic ray locations should be found
+    :param flux: Corresponding flux
+    :param params: Fit parameters
+    :param errs: Fit errors
+    :return: [bool, array] Whether any cosmic rays could be found, Their index locations in slicedwl
+    """
+
+    scaling, gamma, shift, slope, height, eta = params
+    sigma = to_sigma(gamma)
+    flux = flux - slope * slicedwl - height
+    flux, _, _ = sanitize_flux(flux, wl_pov, slicedwl)
+
+    lwl_for_std, lloind, lupind = slicearr(slicedwl, shift - MARGIN, shift - 2 * sigma)
+    uwl_for_std, uloind, uupind = slicearr(slicedwl, shift + 2 * sigma, shift + MARGIN)
+
+    for_std = np.concatenate([flux[lloind:lupind], flux[uloind:uupind]])
+    std = np.std(for_std)
+
+    return True, np.where(flux > COSMIC_RAY_DETECTION_LIM*std)
 
 
-def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=False, used_cr_inds=None):
+def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False, used_cr_inds=[]):
+
+    wavelength = np.copy(wavelengthdata)
+    flux = np.copy(fluxdata)
+    flux_std = np.copy(flux_stddata)
+
+    for i in disturbing_lines.values():
+        if i != center:
+            if i-CUT_MARGIN < center+MARGIN or i+CUT_MARGIN > center-MARGIN:
+                sanitize = True
+
     if used_cr_inds is None:
         used_cr_inds = []
 
@@ -382,7 +418,7 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
         lstr = "unknown"
     plt.title(f"Fit for Line {lstr} @ {round(center)}Å")
     if sanitize:
-        flux, cut_flux, mask = sanitise_flux(flux, center, wavelength)
+        flux, cut_flux, mask = sanitize_flux(flux, center, wavelength)
     slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
     plt.plot(slicedwl, flux[loind:upind], zorder=5)
 
@@ -427,16 +463,17 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
 
         errs = np.sqrt(np.diag(errs))
 
-        cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, errs)
-        if cr and np.sum(cr_ind) > 0:
-            cr_ind += loind
-            plt.cla()
-            for i in cr_ind[0]:
-                plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
-            return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
-                                    np.delete(flux_std, cr_ind), center, margin, file_prefix, used_cr_inds=cr_ind)
+        if len(used_cr_inds) == 0:
+            cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, errs, center)
+            if cr and np.sum(cr_ind) > 0:
+                cr_ind += loind
+                cr_true_inds = wavelengthdata.searchsorted(wavelength[cr_ind])
+                plt.cla()
+                for i in cr_ind[0]:
+                    plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
+                return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
+                                        np.delete(flux_std, cr_ind), center, margin, file_prefix, used_cr_inds=cr_true_inds)
 
-        # plt.plot(slicedwl, pseudo_voigt(slicedwl, initial_s, 1, 1, center, 0, initial_h, 0.5))
         if not verify_peak(slicedwl, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs, flux[loind:upind]):
             if sucess:
                 warn_text = plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
@@ -452,8 +489,8 @@ def plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sa
                           NoiseWarning)
             sucess = False
         sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin, sanitize)
-        plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}dB ", (10, 10), xycoords="figure pixels")
-        if SNR < 2:
+        plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}", (10, 10), xycoords="figure pixels")
+        if SNR < MAX_ALLOWED_SNR:
             if sucess:
                 warn_text = plt.figtext(0.3, 0.95, f"BAD SIGNAL!",
                                         horizontalalignment='right',
@@ -580,7 +617,7 @@ def single_spec_shift(filename):
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
             rv = v_from_doppler(shift, loc)
-            u_rv = v_from_doppler_err(shift, loc, errs[2], 0)
+            u_rv = v_from_doppler_err(shift, loc, errs[2])
             velocities.append(rv)
             verrs.append(u_rv)
 
@@ -655,14 +692,6 @@ def outer_fit(params, wl_dataset, flux_dataset, lines, curvetypes):
     return np.concatenate(resids)
 
 
-def v_from_doppler_rel(r_factor):
-    return c * (r_factor ** 2 - 1) / (r_factor ** 2 + 1)
-
-
-def v_from_doppler_rel_err(r_factor):
-    return 4 * c * r_factor / (np.power((r_factor ** 2 + 1), 2))
-
-
 def make_dataset(wl, rfac, i, params):
     shift = rfac * linelist[i]
     scaling, gamma, slope, height, eta = params
@@ -678,7 +707,7 @@ def culum_fit_funciton(wl, r_factor, *args):
         params.append(a)
 
     params = np.array(params)
-    params = np.split(params, len(params)/5)
+    params = np.split(params, len(params) / 5)
 
     for i, paramset in enumerate(params):
         resids.append(make_dataset(wl_dataset[i], r_factor, i, paramset))
@@ -698,13 +727,21 @@ def cumulative_shift(output_table_spec, file, n=0):
     flux_std_dataset = []
     output_table = output_table_cols.copy()
 
+    cr_inds = cr_ind.to_numpy()
+    print(cr_inds)
+    new_cr_inds = []
+    for i in cr_inds:
+        if type(i) != list:
+            new_cr_inds.append(i)
+    cr_inds = np.array([cr[0] for cr in new_cr_inds])
+    cr_inds = np.concatenate(cr_inds)
+
+    wl = np.delete(wl, cr_inds)
+    flx = np.delete(flx, cr_inds)
+    flx_std = np.delete(flx_std, cr_inds)
+
     for i, line in enumerate(linelist):
         if not list(flux_sanitized)[i]:
-            line_cr_inds = list(cr_ind)[i]
-            if len(line_cr_inds) > 0:
-                wl = np.delete(wl, line_cr_inds)
-                flx = np.delete(flx, line_cr_inds)
-                flx_std = np.delete(flx_std, line_cr_inds)
             wldata, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
 
             wl_dataset.append(wldata)
@@ -712,33 +749,28 @@ def cumulative_shift(output_table_spec, file, n=0):
             flux_std_dataset.append(flx_std[loind:upind])
 
         else:
-            line_cr_inds = list(cr_ind)[i]
-            if len(line_cr_inds) > 0:
-                wl = np.delete(wl, line_cr_inds)
-                flx = np.delete(flx, line_cr_inds)
-                flx_std = np.delete(flx_std, line_cr_inds)
-            sanflx, cut_flux, mask = sanitise_flux(flx, line, wl)
+            sanflx, cut_flux, mask = sanitize_flux(flx, line, wl)
             sanwl = wl[mask]
             sanflx = sanflx.compressed()
             sanflx_std = flx_std[mask]
             wldata, loind, upind = slicearr(sanwl, line - MARGIN, line + MARGIN)
-            plt.plot(sanwl[loind:upind], cut_flux[loind:upind], color="lightgrey", label='_nolegend_', zorder=1)
             wl_dataset.append(wldata)
             flux_dataset.append(sanflx[loind:upind])
             flux_std_dataset.append(sanflx_std[loind:upind])
-
 
     global wl_splitinds, flux_splitinds, flux_std_splitinds
     wl_splitinds = [len(wldata) for wldata in wl_dataset]
     flux_splitinds = [len(flxdata) for flxdata in flux_dataset]
     flux_std_splitinds = [len(flxstddata) for flxstddata in flux_std_dataset]
-    wl_splitinds = [sum(wl_splitinds[:ind+1]) for ind, wl in enumerate(wl_splitinds)]
-    flux_splitinds = [sum(flux_splitinds[:ind+1]) for ind, flx in enumerate(flux_splitinds)]
-    flux_std_splitinds = [sum(flux_std_splitinds[:ind+1]) for ind, flxstd in enumerate(flux_std_splitinds)]
+    wl_splitinds = [sum(wl_splitinds[:ind + 1]) for ind, wl in enumerate(wl_splitinds)]
+    flux_splitinds = [sum(flux_splitinds[:ind + 1]) for ind, flx in enumerate(flux_splitinds)]
+    flux_std_splitinds = [sum(flux_std_splitinds[:ind + 1]) for ind, flxstd in enumerate(flux_std_splitinds)]
 
     linelist = list(linelist)
 
-    p0 = [1]
+    rmean = output_table_spec["reduction_factor"].mean()
+
+    p0 = [rmean]
     bounds = [
         [0],
         [np.inf]
@@ -760,7 +792,8 @@ def cumulative_shift(output_table_spec, file, n=0):
     flux_dataset = np.concatenate(flux_dataset, axis=0)
     flux_std_dataset = np.concatenate(flux_std_dataset, axis=0)
 
-    flux_std_dataset[flux_std_dataset == 0] = np.mean(flux_std_dataset) #Zeros in the std-dataset will raise exceptions (And are scientifically nonsensical)
+    flux_std_dataset[flux_std_dataset == 0] = np.mean(
+        flux_std_dataset)  # Zeros in the std-dataset will raise exceptions (And are scientifically nonsensical)
 
     params, errs = curve_fit(
         culum_fit_funciton,
@@ -768,7 +801,7 @@ def cumulative_shift(output_table_spec, file, n=0):
         flux_dataset,
         p0=p0,
         bounds=bounds,
-        #sigma=flux_std_dataset,
+        sigma=flux_std_dataset,
         max_nfev=100000
     )
 
@@ -778,10 +811,10 @@ def cumulative_shift(output_table_spec, file, n=0):
     r_factor_err = errs[0]
 
     culumv = v_from_doppler_rel(r_factor)
-    culumv_errs = v_from_doppler_rel_err(r_factor_err)
+    culumv_errs = v_from_doppler_rel_err(r_factor, r_factor_err)
 
     errs = np.split(np.array(errs)[1:], len(np.array(errs)[1:]) / 5)
-    params = np.split(np.array(params)[1:], len(np.array(params)[1:])/5)
+    params = np.split(np.array(params)[1:], len(np.array(params)[1:]) / 5)
 
     wl_dataset = np.split(wl_dataset, wl_splitinds)
     flux_dataset = np.split(flux_dataset, flux_splitinds)
@@ -798,7 +831,7 @@ def cumulative_shift(output_table_spec, file, n=0):
         wllinspace = np.linspace(wl_dataset[i][0], wl_dataset[i][-1], 1000)
         plt.plot(wllinspace, make_dataset(wllinspace, r_factor, i, paramset))
         if SAVE_SINGLE_IMGS:
-            subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0"+str(subspec_ind)
+            subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
             plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å.png", dpi=300)
         if SHOW_PLOTS:
             plt.show()
@@ -809,7 +842,7 @@ def cumulative_shift(output_table_spec, file, n=0):
         scaling, gamma, slope, height, eta = paramset
         shift = r_factor * lines[i]
         scalingerr, gammaerr, slopeerr, heighterr, etaerr = errs[i]
-        shifterr = r_factor_err*lines[i]
+        shifterr = r_factor_err * lines[i]
 
         output_table_row = pd.DataFrame({
             "subspectrum": [list(output_table_spec["subspectrum"])[0]],
@@ -839,7 +872,7 @@ def cumulative_shift(output_table_spec, file, n=0):
             "noise_strength": ["--"],
             "SNR": ["--"],
             "sanitized": ["--"],
-            "cr_ind": ["--"]
+            "cr_ind": [cr_ind]
         })
 
         output_table = pd.concat([output_table, output_table_row], axis=0)
@@ -887,7 +920,7 @@ if __name__ == "__main__":
                 if not SAVE_SINGLE_IMGS:
                     continue
                 nspec = len(fileset)
-                if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec))!=1 else "0"+str(nspec)}/'):
+                if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
                     continue
         spectimes = []
         spectimes_mjd = []
@@ -954,12 +987,12 @@ if __name__ == "__main__":
         ax1.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
         ax2.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
 
-        specvels_range = specvels.max() - specvels.min()
-        culumvs_range = culumvs.max() - culumvs.min()
+        specvels_range = specverrs.min()
+        culumvs_range = culumvs_errs.min()
 
         if not pd.isnull(specvels_range) or pd.isnull(culumvs_range):
-            ax1.set_ylim((specvels.min()-0.5*specvels_range, specvels.max()+0.5*specvels_range))
-            ax2.set_ylim((culumvs.min()-0.5*culumvs_range, culumvs.max()+0.5*culumvs_range))
+            ax1.set_ylim((specvels.min() - 2 * specvels_range, specvels.max() + 2 * specvels_range))
+            ax2.set_ylim((culumvs.min() - 2 * culumvs_range, culumvs.max() + 2 * culumvs_range))
 
         plt.tight_layout()
         plt.savefig(f"output/{file_prefix.split('_')[0]}/RV_variation.png", dpi=300)
