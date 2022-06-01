@@ -23,11 +23,11 @@ OUTLIER_MAX_SIGMA = 2
 CUT_MARGIN = 20
 MARGIN = 100
 DESIREDERR = 50
-SHOW_PLOTS = True
+SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
-SAVE_SINGLE_IMGS = True
-SAVE_COMPOSITE_IMG = True
+SAVE_SINGLE_IMGS = False
+SAVE_COMPOSITE_IMG = False
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
 MAX_ALLOWED_SNR = 1.5
@@ -159,25 +159,41 @@ def gaussian(x, gamma, x_0):
     return 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp((-(x - x_0) ** 2) / (2 * sigma ** 2))
 
 
-def v_from_doppler(f_o, f_s):
+def v_from_doppler(lambda_o, lambda_s):
     """
-    :param f_o: Observed Frequency
-    :param f_s: Source Frequency
-    :return: Velocity Shift calculated from relativistic doppler effect
+    :param lambda_o: Observed Wavelength
+    :param lambda_s: Source Wavelength
+    :return: Radial Velocity calculated from relativistic doppler effect
     """
-    return c * (f_o ** 2 - f_s ** 2) / (f_o ** 2 + f_s ** 2)
+    return c * (lambda_s ** 2 - lambda_o ** 2) / (lambda_o ** 2 + lambda_s ** 2)
 
 
-def v_from_doppler_err(f_o, f_s, u_f_o, u_f_s):
+def v_from_doppler_err(lambda_o, lambda_s, u_lambda_o):
     """
-    :param f_o: Observed Frequency
-    :param f_s: Source Frequency
-    :param u_f_o: Uncertainty of Observed Frequency
-    :param u_f_s: Uncertainty of Source Frequency
-    :return: Uncertainty for Velocity Shift calculated from relativistic doppler effect
+    :param lambda_o: Observed Wavelength
+    :param lambda_s: Source Wavelength
+    :param u_lambda_o: Uncertainty of Observed Wavelength
+    :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
     """
-    return c * ((4 * f_o ** 2 * f_s) / ((f_o ** 2 + f_s ** 2) ** 2) * u_f_s + (4 * f_o * f_s ** 2) / (
-            (f_o ** 2 + f_s ** 2) ** 2) * u_f_o)
+    return c * ((4 * lambda_o * lambda_s ** 2) / (
+            (lambda_o ** 2 + lambda_s ** 2) ** 2) * u_lambda_o)
+
+
+def v_from_doppler_rel(r_factor):
+    """
+    :param r_factor: Wavelength reduction factor lambda_o/lambda_s
+    :return: Radial Velocity calculated from relativistic doppler effect
+    """
+    return c * (1 - r_factor ** 2) / (1 + r_factor ** 2)
+
+
+def v_from_doppler_rel_err(r_factor, u_r_factor):
+    """
+    :param r_factor: Wavelength reduction factor lambda_o/lambda_s
+    :param u_r_factor: Uncertainty for wavelength reduction factor
+    :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
+    """
+    return 4 * c * r_factor / (np.power((r_factor ** 2 + 1), 2))*u_r_factor
 
 
 def to_sigma(gamma):
@@ -273,10 +289,10 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
 def verify_peak(wavelength, sigma, params, errs, local_flux):
     """
     :param wavelength: Wavelength array
-    :param sigma: Standard deviation of Fit Function
+    :param sigma: Standard deviation of fit function
     :param params: Fit parameters
     :param errs: Fit errors
-    :return: Returns False if the Peak width is in the order of one step in the Wavelength array and does not have a
+    :return: Returns False if the peak width is in the order of one step in the wavelength array and does not have a
              significant amplitude relative to the std of the flux
     """
     d_wl = wavelength[1] - wavelength[0]
@@ -338,7 +354,7 @@ def expand_mask(mask):
     return nmask
 
 
-def sanitise_flux(flux, wavelength_pov, wls):
+def sanitize_flux(flux, wavelength_pov, wls):
     """
     :param flux: flux array
     :param wavelength_pov: Wavelength of line that is being fitted
@@ -368,7 +384,7 @@ def cosmic_ray(slicedwl, flux, params, errs, wl_pov):
     scaling, gamma, shift, slope, height, eta = params
     sigma = to_sigma(gamma)
     flux = flux - slope * slicedwl - height
-    flux, _, _ = sanitise_flux(flux, wl_pov, slicedwl)
+    flux, _, _ = sanitize_flux(flux, wl_pov, slicedwl)
 
     lwl_for_std, lloind, lupind = slicearr(slicedwl, shift - MARGIN, shift - 2 * sigma)
     uwl_for_std, uloind, uupind = slicearr(slicedwl, shift + 2 * sigma, shift + MARGIN)
@@ -402,7 +418,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         lstr = "unknown"
     plt.title(f"Fit for Line {lstr} @ {round(center)}Å")
     if sanitize:
-        flux, cut_flux, mask = sanitise_flux(flux, center, wavelength)
+        flux, cut_flux, mask = sanitize_flux(flux, center, wavelength)
     slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
     plt.plot(slicedwl, flux[loind:upind], zorder=5)
 
@@ -601,7 +617,7 @@ def single_spec_shift(filename):
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
             rv = v_from_doppler(shift, loc)
-            u_rv = v_from_doppler_err(shift, loc, errs[2], 0)
+            u_rv = v_from_doppler_err(shift, loc, errs[2])
             velocities.append(rv)
             verrs.append(u_rv)
 
@@ -676,14 +692,6 @@ def outer_fit(params, wl_dataset, flux_dataset, lines, curvetypes):
     return np.concatenate(resids)
 
 
-def v_from_doppler_rel(r_factor):
-    return c * (r_factor ** 2 - 1) / (r_factor ** 2 + 1)
-
-
-def v_from_doppler_rel_err(r_factor):
-    return 4 * c * r_factor / (np.power((r_factor ** 2 + 1), 2))
-
-
 def make_dataset(wl, rfac, i, params):
     shift = rfac * linelist[i]
     scaling, gamma, slope, height, eta = params
@@ -741,7 +749,7 @@ def cumulative_shift(output_table_spec, file, n=0):
             flux_std_dataset.append(flx_std[loind:upind])
 
         else:
-            sanflx, cut_flux, mask = sanitise_flux(flx, line, wl)
+            sanflx, cut_flux, mask = sanitize_flux(flx, line, wl)
             sanwl = wl[mask]
             sanflx = sanflx.compressed()
             sanflx_std = flx_std[mask]
@@ -803,7 +811,7 @@ def cumulative_shift(output_table_spec, file, n=0):
     r_factor_err = errs[0]
 
     culumv = v_from_doppler_rel(r_factor)
-    culumv_errs = v_from_doppler_rel_err(r_factor_err)
+    culumv_errs = v_from_doppler_rel_err(r_factor, r_factor_err)
 
     errs = np.split(np.array(errs)[1:], len(np.array(errs)[1:]) / 5)
     params = np.split(np.array(params)[1:], len(np.array(params)[1:]) / 5)

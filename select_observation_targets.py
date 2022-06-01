@@ -77,8 +77,12 @@ for_selection.loc[(["sdB" in c for c in for_selection["SPEC_CLASS"]]), "plot_col
 
 print(for_selection)
 
-ax = for_selection.plot.scatter("bp_rp", "gmag", "nspec", color=list(for_selection["plot_color"]), alpha=0.7,
-                                label="_nolegend_")
+mag = for_selection[["gmag"]].to_numpy()
+color = for_selection[["bp_rp"]].to_numpy()
+nspec = for_selection[["nspec"]].to_numpy()
+
+plt.scatter(color, mag, 0.7*nspec ** 2, color=list(for_selection["plot_color"]), alpha=0.7,
+            label="_nolegend_")
 plt.scatter([], [], color="darkred")
 plt.scatter([], [], color="red")
 plt.scatter([], [], color="gold")
@@ -86,12 +90,13 @@ plt.scatter([], [], color="darkgray")
 
 plt.legend(["sdO", "sdOB", "sdB", "uncategorized"])
 
-ax.set_title("Hot subdwarfs with single, non-coadded spectra")
-ax.set_xlabel("BP-RP color [mag]")
-ax.set_ylabel("G band magnitude [mag]")
-ax.set_xlim((-0.7, 0.6))
-ax.set_ylim((13, 21))
-ax.grid(which='major', axis='y', linestyle='--')
+plt.title("Hot subdwarfs with single, non-coadded spectra")
+plt.xlabel("BP-RP color [mag]")
+plt.ylabel("G band magnitude [mag]")
+plt.xlim((-0.7, 0.6))
+plt.ylim((13, 21))
+plt.grid(which='major', axis='y', linestyle='--')
+plt.gca().invert_yaxis()
 plt.savefig("hotsdBs.png", dpi=250)
 plt.show()
 
@@ -99,7 +104,13 @@ sdb_subset = for_selection.loc[["sdB" in c or "sdOB" in c for c in for_selection
 sdb_subset["gmag-nspec"] = sdb_subset["gmag"] - sdb_subset["nspec"] / 2
 final_table = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
 
-ax = final_table.plot.scatter("bp_rp", "gmag", "nspec", color=list(final_table["plot_color"]), alpha=0.7, label="_nolegend_")
+mag = final_table[["gmag"]].to_numpy()
+color = final_table[["bp_rp"]].to_numpy()
+nspec = final_table[["nspec"]].to_numpy()
+
+
+plt.scatter(color, mag, 0.7*nspec ** 2, color=list(final_table["plot_color"]), alpha=0.7,
+            label="_nolegend_")
 
 plt.scatter([], [], color="darkred")
 plt.scatter([], [], color="red")
@@ -108,12 +119,13 @@ plt.scatter([], [], color="darkgray")
 
 plt.legend(["sdO", "sdOB", "sdB", "uncategorized"])
 
-ax.set_title("Best subset of stars")
-ax.set_xlabel("BP-RP color [mag]")
-ax.set_ylabel("G band magnitude [mag]")
-ax.set_xlim((-0.7, 0.6))
-ax.set_ylim((13, 21))
-ax.grid(which='major', axis='y', linestyle='--')
+plt.title("Best subset of stars")
+plt.xlabel("BP-RP color [mag]")
+plt.ylabel("G band magnitude [mag]")
+plt.xlim((-0.7, 0.6))
+plt.ylim((13, 21))
+plt.grid(which='major', axis='y', linestyle='--')
+plt.gca().invert_yaxis()
 plt.savefig("subset.png", dpi=250)
 plt.show()
 final_table.drop("plot_color", axis=1).to_csv("selected_objects.csv", index=False)
