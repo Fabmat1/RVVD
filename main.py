@@ -193,7 +193,7 @@ def v_from_doppler_rel_err(r_factor, u_r_factor):
     :param u_r_factor: Uncertainty for wavelength reduction factor
     :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
     """
-    return 4 * c * r_factor / (np.power((r_factor ** 2 + 1), 2))*u_r_factor
+    return 4 * c * r_factor / (np.power((r_factor ** 2 + 1), 2)) * u_r_factor
 
 
 def to_sigma(gamma):
@@ -383,35 +383,53 @@ def cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=np.array([])):
     :param params: Fit parameters
     :param wl_pov: Wavelength of the line for which closeby cosmics are determined
     :param predetermined_crs: Cosmic rays that were detemined in a previous iteration of the function
-    :return: [bool, array] Whether any cosmic rays could be found, Their index locations in slicedwl
+    :return: [bool, array] Whether any cosmic rays could be found, Their index locations in modified_slicedwl
     """
 
     if len(predetermined_crs) != 0:
-        flux = np.delete(flux, predetermined_crs)
-        slicedwl = np.delete(slicedwl, predetermined_crs)
+        mask_array = np.zeros(np.shape(flux), dtype=bool)
+        mask_array[predetermined_crs] = True
+        normalized_flux = np.ma.MaskedArray(flux, mask_array)
+        modified_slicedwl = np.ma.MaskedArray(slicedwl, mask_array)
+    else:
+        normalized_flux = flux
+        modified_slicedwl = slicedwl
 
     scaling, gamma, shift, slope, height, eta = params
     sigma = to_sigma(gamma)
-    normalized_flux = flux - slope * slicedwl - height
-    normalized_flux, _, _ = sanitize_flux(normalized_flux, wl_pov, slicedwl)
+    normalized_flux = normalized_flux - slope * modified_slicedwl - height
+    _, _, mask = sanitize_flux(flux, wl_pov, slicedwl)
+    normalized_flux[~mask] = np.ma.masked
 
-    lwl_for_std, lloind, lupind = slicearr(slicedwl, shift - MARGIN, shift - 2 * sigma)
-    uwl_for_std, uloind, uupind = slicearr(slicedwl, shift + 2 * sigma, shift + MARGIN)
+    lwl_for_std, lloind, lupind = slicearr(modified_slicedwl, shift - MARGIN, shift - 2 * sigma)
+    uwl_for_std, uloind, uupind = slicearr(modified_slicedwl, shift + 2 * sigma, shift + MARGIN)
 
-    for_std = np.concatenate([normalized_flux[lloind:lupind], normalized_flux[uloind:uupind]])
+    if type(normalized_flux) == np.ma.core.MaskedArray:
+        for_std = np.concatenate([normalized_flux[lloind:lupind].compressed(), normalized_flux[uloind:uupind].compressed()])
+    else:
+        for_std = np.concatenate([normalized_flux[lloind:lupind], normalized_flux[uloind:uupind]])
     std = np.std(for_std)
 
     if len(predetermined_crs) == 0:
         initial_crs = np.where(normalized_flux > COSMIC_RAY_DETECTION_LIM * std)[0]
     else:
-        allowed_inds = np.concatenate((predetermined_crs+1, predetermined_crs-1))
-        initial_crs = np.where(np.logical_and(normalized_flux > COSMIC_RAY_DETECTION_LIM * std, np.where(normalized_flux) == allowed_inds))[0]
+        allowed_inds = np.concatenate((predetermined_crs + 1, predetermined_crs - 1))
+        initial_crs = np.where(normalized_flux > COSMIC_RAY_DETECTION_LIM * std)[0]
+        mask = np.isin(initial_crs, allowed_inds)
+        initial_crs = initial_crs[mask]
+        if round(wl_pov) == 4861:
+            plt.cla()
+            plt.clf()
+            plt.plot(slicedwl, normalized_flux, color="navy")
+            plt.axhline(COSMIC_RAY_DETECTION_LIM * std, color="darkred", linestyle="--")
+            plt.scatter(slicedwl[allowed_inds], normalized_flux[allowed_inds], color="gold")
+            plt.show()
 
     if len(initial_crs) > 0:
         if len(predetermined_crs) == 0:
             return cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=initial_crs)
         else:
-            return True, np.sort(np.concatenate([np.array(initial_crs), np.array(predetermined_crs)]))
+            return True, np.sort(np.concatenate([initial_crs, predetermined_crs]))
     else:
         if len(predetermined_crs) == 0:
             return False, []
@@ -419,15 +437,15 @@ def cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=np.array([])):
             return True, predetermined_crs
 
 
-def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False, used_cr_inds=[]):
-
+def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False,
+                     used_cr_inds=[]):
     wavelength = np.copy(wavelengthdata)
     flux = np.copy(fluxdata)
     flux_std = np.copy(flux_stddata)
 
     for i in disturbing_lines.values():
         if i != center:
-            if i-CUT_MARGIN < center+MARGIN or i+CUT_MARGIN > center-MARGIN:
+            if i - CUT_MARGIN < center + MARGIN or i + CUT_MARGIN > center - MARGIN:
                 sanitize = True
 
     if used_cr_inds is None:
@@ -496,7 +514,8 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                 for i in cr_ind:
                     plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
                 return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
-                                        np.delete(flux_std, cr_ind), center, margin, file_prefix, used_cr_inds=cr_true_inds)
+                                        np.delete(flux_std, cr_ind), center, margin, file_prefix,
+                                        used_cr_inds=cr_true_inds)
 
         if not verify_peak(slicedwl, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs, flux[loind:upind]):
             if sucess:
