@@ -27,6 +27,7 @@ SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
 SAVE_SINGLE_IMGS = False
+REDO_IMAGES = False
 SAVE_COMPOSITE_IMG = False
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
@@ -954,6 +955,8 @@ if __name__ == "__main__":
             if os.path.isfile(f'output/{file_prefix}/RV_variation.png'):
                 if not SAVE_SINGLE_IMGS:
                     continue
+                if not REDO_IMAGES:
+                    continue
                 nspec = len(fileset)
                 if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
                     continue
@@ -968,6 +971,9 @@ if __name__ == "__main__":
         for file in fileset:
             print_status(file, fileset, catalogue)
             complete_v_shift, v_std, time, file_prefix, output_table_spec = single_spec_shift(file)
+            if len(output_table_spec.index) == 0:
+                print("Not a single good line was found in this subspectrum!")
+                continue
             single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
             culumv, culumv_errs, output_table_spec = cumulative_shift(output_table_spec, file)
             cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
