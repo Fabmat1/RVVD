@@ -262,7 +262,6 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
     elif filetype == "coadded_fits":
         hdul = fits.open(filename)
         data = hdul[1].data
-        # pprint(hdul[0].header)
         try:
             tai = hdul[0].header["TAI"]
             t = atime.Time(tai + atime.Time(datetime.strptime("17/11/1858", '%d/%m/%Y')).to_value(format="unix_tai"),
@@ -728,17 +727,16 @@ def cumulative_shift(output_table_spec, file, n=0):
     output_table = output_table_cols.copy()
 
     cr_inds = cr_ind.to_numpy()
-    print(cr_inds)
     new_cr_inds = []
     for i in cr_inds:
         if type(i) != list:
             new_cr_inds.append(i)
     cr_inds = np.array([cr[0] for cr in new_cr_inds])
-    cr_inds = np.concatenate(cr_inds)
-
-    wl = np.delete(wl, cr_inds)
-    flx = np.delete(flx, cr_inds)
-    flx_std = np.delete(flx_std, cr_inds)
+    if len(cr_inds) > 0:
+        cr_inds = np.concatenate(cr_inds)
+        wl = np.delete(wl, cr_inds)
+        flx = np.delete(flx, cr_inds)
+        flx_std = np.delete(flx_std, cr_inds)
 
     for i, line in enumerate(linelist):
         if not list(flux_sanitized)[i]:
