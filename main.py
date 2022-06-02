@@ -26,7 +26,7 @@ DESIREDERR = 50
 SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
-SAVE_SINGLE_IMGS = True
+SAVE_SINGLE_IMGS = False
 SAVE_COMPOSITE_IMG = False
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
@@ -417,13 +417,6 @@ def cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=np.array([])):
         initial_crs = np.where(normalized_flux > COSMIC_RAY_DETECTION_LIM * std)[0]
         mask = np.isin(initial_crs, allowed_inds)
         initial_crs = initial_crs[mask]
-        if round(wl_pov) == 4861:
-            plt.cla()
-            plt.clf()
-            plt.plot(slicedwl, normalized_flux, color="navy")
-            plt.axhline(COSMIC_RAY_DETECTION_LIM * std, color="darkred", linestyle="--")
-            plt.scatter(slicedwl[allowed_inds], normalized_flux[allowed_inds], color="gold")
-            plt.show()
 
     if len(initial_crs) > 0:
         if len(predetermined_crs) == 0:
