@@ -32,6 +32,7 @@ SAVE_COMPOSITE_IMG = False
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
 MAX_ALLOWED_SNR = 5
+SNR_PEAK_SIGMA = 3
 COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 PLOT_LABELS_FONT_SIZE = 12
@@ -291,28 +292,6 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
     return wavelength, flux, t, flux_std
 
 
-def verify_peak(wavelength, sigma, params, errs, local_flux):
-    """
-    :param wavelength: Wavelength array
-    :param sigma: Standard deviation of fit function
-    :param params: Fit parameters
-    :param errs: Fit errors
-    :return: Returns False if the peak width is in the order of one step in the wavelength array and does not have a
-             significant amplitude relative to the std of the flux
-    """
-    d_wl = wavelength[1] - wavelength[0]
-    if sigma < d_wl:
-        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > NOISE_STD_LIMIT * np.std(local_flux):
-            return True
-        return False
-    else:
-        errs = np.array(errs)
-        errs[errs == 0] = 1e-10
-        p_over_err = np.abs(np.array(params) / errs)[:-1]
-        if np.sum(p_over_err < 2) > 0:
-            return False
-        return True
-
 
 def calc_SNR(params, flux, wavelength, margin, sanitized=False):
     """
@@ -325,19 +304,18 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
                 Signal-to-Noise ratio
     """
     scaling, gamma, shift, slope, height, eta = params
-    wlmargin = np.abs(wavelength[0] - wavelength[margin])
     flux = flux - slope * wavelength - height
     sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
 
-    slicedwl, loind, upind = slicearr(wavelength, shift - 2 * sigma, shift + 2 * sigma)
+    slicedwl, loind, upind = slicearr(wavelength, shift - SNR_PEAK_SIGMA * sigma, shift + SNR_PEAK_SIGMA * sigma)
     signalstrength = np.mean(np.square(flux[loind:upind]))
 
-    if 2 * sigma < wlmargin:
-        slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - 2 * sigma)
-        slicedwl, uloind, uupind = slicearr(wavelength, shift + 2 * sigma, shift + wlmargin)
+    if SNR_PEAK_SIGMA * sigma < margin:
+        slicedwl, lloind, lupind = slicearr(wavelength, shift - margin, shift - SNR_PEAK_SIGMA * sigma)
+        slicedwl, uloind, uupind = slicearr(wavelength, shift + SNR_PEAK_SIGMA * sigma, shift + margin)
     else:
-        slicedwl, lloind, lupind = slicearr(wavelength, shift - wlmargin, shift - sigma)
-        slicedwl, uloind, uupind = slicearr(wavelength, shift + sigma, shift + wlmargin)
+        slicedwl, lloind, lupind = slicearr(wavelength, shift - margin, shift - sigma)
+        slicedwl, uloind, uupind = slicearr(wavelength, shift + sigma, shift + margin)
         warnings.warn("Sigma very large, Fit seems improbable!", NoiseWarning)
         plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
                     horizontalalignment='right',
@@ -374,8 +352,13 @@ def sanitize_flux(flux, wavelength_pov, wls):
     """
     mask = np.full(np.shape(wls), True)
     for line in disturbing_lines.values():
-        if not round(line) - 2 < round(wavelength_pov) < round(line) + 2:
-            _, loind, upind = slicearr(wls, line - CUT_MARGIN, line + CUT_MARGIN)
+        roundedline = round(line)
+        if f"{roundedline}" in linewidths:
+            margin = 3*linewidths[f"{roundedline}"]
+        else:
+            margin = CUT_MARGIN
+        if not roundedline - 2 < round(wavelength_pov) < roundedline + 2:
+            _, loind, upind = slicearr(wls, line - margin, line + margin)
             mask[loind:upind] = False
     clean_flux = np.ma.MaskedArray(flux, ~mask)
     cut_flux = np.ma.MaskedArray(flux, expand_mask(mask))
@@ -515,21 +498,6 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                 return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
                                         np.delete(flux_std, cr_ind), center, margin, file_prefix,
                                         used_cr_inds=cr_true_inds)
-
-        if not verify_peak(slicedwl, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs, flux[loind:upind]):
-            if sucess:
-                warn_text = plt.figtext(0.3, 0.95, f"SNR NOT GOOD ENOUGH!",
-                                        horizontalalignment='right',
-                                        verticalalignment='bottom',
-                                        color="red")
-                if not sanitize:
-                    warn_text.set_visible(False)
-                    plt.cla()
-                    return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix,
-                                            sanitize=True)
-            warnings.warn(f"WL {center}Å: Peak seems to be fitted to Noise, SNR and peak may not be accurate.",
-                          NoiseWarning)
-            sucess = False
         sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin, sanitize)
         plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}", (10, 10), xycoords="figure pixels")
         if SNR < MAX_ALLOWED_SNR:
@@ -645,19 +613,22 @@ def single_spec_shift(filename):
     verrs = []
     output_table = output_table_cols.copy()
     subspec = int(filename.split("/")[-1].split("_")[1].split(".")[0])
+    global linewidths
+    linewidths = {}
 
     for lstr, loc in lines.items():
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         # plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
-        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,
-                                                                    SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
+        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
                                                                                                                flx_std,
                                                                                                                loc,
                                                                                                                MARGIN,
                                                                                                                file_prefix)
+
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
+            linewidths[str(round(loc))] = to_sigma(gamma)
             rv = v_from_doppler(shift, loc)
             u_rv = v_from_doppler_err(shift, loc, errs[2])
             velocities.append(rv)
@@ -913,7 +884,7 @@ def cumulative_shift(output_table_spec, file, n=0):
             "noise_strength": ["--"],
             "SNR": ["--"],
             "sanitized": ["--"],
-            "cr_ind": [cr_ind]
+            "cr_ind": [cr_inds]
         })
 
         output_table = pd.concat([output_table, output_table_row], axis=0)
@@ -1023,14 +994,14 @@ if __name__ == "__main__":
         fig, ax1 = plt.subplots()
         fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE)
         ax1.set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
-        ax1.set_xlabel("Date from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE)
+        ax1.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE)
 
         spectimes_mjd = np.array(spectimes_mjd)
         spectimes_mjd -= np.amin(spectimes_mjd)
 
-        ax1.scatter(spectimes_mjd, culumvs, zorder=5, color="C0")
-
-        ax1.errorbar(spectimes_mjd, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1, color="C1")
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        ax1.scatter(spectimes_mjd, culumvs, zorder=5, color=colors[0])
+        ax1.errorbar(spectimes_mjd, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1, color=colors[1])
 
         specvels_range = specverrs.min()
         culumvs_range = culumvs_errs.min()
