@@ -26,11 +26,11 @@ DESIREDERR = 50
 SHOW_PLOTS = False
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
-SAVE_SINGLE_IMGS = False
+SAVE_SINGLE_IMGS = True
 SAVE_COMPOSITE_IMG = False
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
-MAX_ALLOWED_SNR = 1.5
+MAX_ALLOWED_SNR = 5
 COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 
@@ -341,6 +341,11 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
 
     SNR = signalstrength / noisestrength
 
+    if np.isnan(SNR):
+        signalstrength = 0
+        noisestrength = 1
+        SNR = 0
+
     return signalstrength, noisestrength, SNR
 
 
@@ -371,27 +376,47 @@ def sanitize_flux(flux, wavelength_pov, wls):
     return clean_flux, cut_flux, mask
 
 
-def cosmic_ray(slicedwl, flux, params, errs, wl_pov):
+def cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=np.array([])):
     """
     :param slicedwl: Wavelenght array for which cosmic ray locations should be found
     :param flux: Corresponding flux
     :param params: Fit parameters
-    :param errs: Fit errors
+    :param wl_pov: Wavelength of the line for which closeby cosmics are determined
+    :param predetermined_crs: Cosmic rays that were detemined in a previous iteration of the function
     :return: [bool, array] Whether any cosmic rays could be found, Their index locations in slicedwl
     """
 
+    if len(predetermined_crs) != 0:
+        flux = np.delete(flux, predetermined_crs)
+        slicedwl = np.delete(slicedwl, predetermined_crs)
+
     scaling, gamma, shift, slope, height, eta = params
     sigma = to_sigma(gamma)
-    flux = flux - slope * slicedwl - height
-    flux, _, _ = sanitize_flux(flux, wl_pov, slicedwl)
+    normalized_flux = flux - slope * slicedwl - height
+    normalized_flux, _, _ = sanitize_flux(normalized_flux, wl_pov, slicedwl)
 
     lwl_for_std, lloind, lupind = slicearr(slicedwl, shift - MARGIN, shift - 2 * sigma)
     uwl_for_std, uloind, uupind = slicearr(slicedwl, shift + 2 * sigma, shift + MARGIN)
 
-    for_std = np.concatenate([flux[lloind:lupind], flux[uloind:uupind]])
+    for_std = np.concatenate([normalized_flux[lloind:lupind], normalized_flux[uloind:uupind]])
     std = np.std(for_std)
 
-    return True, np.where(flux > COSMIC_RAY_DETECTION_LIM*std)
+    if len(predetermined_crs) == 0:
+        initial_crs = np.where(normalized_flux > COSMIC_RAY_DETECTION_LIM * std)[0]
+    else:
+        allowed_inds = np.concatenate((predetermined_crs+1, predetermined_crs-1))
+        initial_crs = np.where(np.logical_and(normalized_flux > COSMIC_RAY_DETECTION_LIM * std, np.where(normalized_flux) == allowed_inds))[0]
+
+    if len(initial_crs) > 0:
+        if len(predetermined_crs) == 0:
+            return cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=initial_crs)
+        else:
+            return True, np.sort(np.concatenate([np.array(initial_crs), np.array(predetermined_crs)]))
+    else:
+        if len(predetermined_crs) == 0:
+            return False, []
+        else:
+            return True, predetermined_crs
 
 
 def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False, used_cr_inds=[]):
@@ -463,19 +488,19 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         errs = np.sqrt(np.diag(errs))
 
         if len(used_cr_inds) == 0:
-            cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, errs, center)
+            cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, center)
             if cr and np.sum(cr_ind) > 0:
                 cr_ind += loind
                 cr_true_inds = wavelengthdata.searchsorted(wavelength[cr_ind])
                 plt.cla()
-                for i in cr_ind[0]:
+                for i in cr_ind:
                     plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
                 return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
                                         np.delete(flux_std, cr_ind), center, margin, file_prefix, used_cr_inds=cr_true_inds)
 
         if not verify_peak(slicedwl, params[1] / (2 * np.sqrt(2 * np.log(2))), params, errs, flux[loind:upind]):
             if sucess:
-                warn_text = plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
+                warn_text = plt.figtext(0.3, 0.95, f"SNR NOT GOOD ENOUGH!",
                                         horizontalalignment='right',
                                         verticalalignment='bottom',
                                         color="red")
@@ -731,7 +756,7 @@ def cumulative_shift(output_table_spec, file, n=0):
     for i in cr_inds:
         if type(i) != list:
             new_cr_inds.append(i)
-    cr_inds = np.array([cr[0] for cr in new_cr_inds])
+    cr_inds = new_cr_inds
     if len(cr_inds) > 0:
         cr_inds = np.concatenate(cr_inds)
         wl = np.delete(wl, cr_inds)
