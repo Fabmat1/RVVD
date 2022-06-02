@@ -34,6 +34,11 @@ CHECK_IF_EXISTS = True
 MAX_ALLOWED_SNR = 5
 COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
+PLOT_LABELS_FONT_SIZE = 12
+PLOT_TITLE_FONT_SIZE = 17
+# PLOT_STYLE = 'science'
+#
+# plt.style.use(PLOT_STYLE)
 
 output_table_cols = pd.DataFrame({
     "subspectrum": [],
@@ -697,7 +702,7 @@ def single_spec_shift(filename):
     velocities = np.array(velocities)
     verrs = np.array(verrs)
     outloc = check_for_outliers(velocities)
-    if np.invert(outloc).sum() != 0:
+    if np.invert(outloc).sum() != 0 and len(velocities) > 2:
         if not AUTO_REMOVE_OUTLIERS:
             print(f"! DETECTED OUTLIER CANDIDATE (DEVIATION > {OUTLIER_MAX_SIGMA}σ), REMOVE OUTLIER? [Y/N]")
             print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
@@ -971,9 +976,11 @@ if __name__ == "__main__":
         for file in fileset:
             print_status(file, fileset, catalogue)
             complete_v_shift, v_std, time, file_prefix, output_table_spec = single_spec_shift(file)
-            if len(output_table_spec.index) == 0:
+            if len(output_table_spec.index) == 0 or pd.isnull(complete_v_shift):
                 print("Not a single good line was found in this subspectrum!")
                 continue
+            elif VERBOSE:
+                print(f"Fits for {len(output_table_spec.index)} Lines complete!")
             single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
             culumv, culumv_errs, output_table_spec = cumulative_shift(output_table_spec, file)
             cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
@@ -1013,27 +1020,23 @@ if __name__ == "__main__":
         plt.close()
         plt.cla()
         plt.clf()
-        fig, [ax1, ax2] = plt.subplots(2, 1, sharex="col")
-        fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}")
-        ax1.set_ylabel("Radial Velocity [km/s]")
-        ax1.set_title("RV Curve determined by single Fit")
-        ax2.set_ylabel("Radial Velocity [km/s]")
-        ax2.set_title("RV Curve determined by cumulative Fit")
-        ax2.set_xlabel("Date")
-        fig.autofmt_xdate()
+        fig, ax1 = plt.subplots()
+        fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE)
+        ax1.set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
+        ax1.set_xlabel("Date from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE)
 
-        ax1.plot_date(spectimes, specvels, xdate=True, zorder=5)
-        ax2.plot_date(spectimes, culumvs, xdate=True, zorder=5)
+        spectimes_mjd = np.array(spectimes_mjd)
+        spectimes_mjd -= np.amin(spectimes_mjd)
 
-        ax1.errorbar(spectimes, specvels, yerr=specverrs, capsize=3, linestyle='', zorder=1)
-        ax2.errorbar(spectimes, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1)
+        ax1.scatter(spectimes_mjd, culumvs, zorder=5, color="C0")
+
+        ax1.errorbar(spectimes_mjd, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1, color="C1")
 
         specvels_range = specverrs.min()
         culumvs_range = culumvs_errs.min()
 
         if not pd.isnull(specvels_range) or pd.isnull(culumvs_range):
-            ax1.set_ylim((specvels.min() - 2 * specvels_range, specvels.max() + 2 * specvels_range))
-            ax2.set_ylim((culumvs.min() - 2 * culumvs_range, culumvs.max() + 2 * culumvs_range))
+            ax1.set_ylim((culumvs.min() - 2 * culumvs_range, culumvs.max() + 2 * culumvs_range))
 
         plt.tight_layout()
         plt.savefig(f"output/{file_prefix.split('_')[0]}/RV_variation.png", dpi=300)
