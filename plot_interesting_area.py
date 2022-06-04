@@ -1,22 +1,22 @@
 import numpy as np
 from matplotlib import pyplot as plt
-from main import pseudo_voigt, slicearr, load_spectrum, v_from_doppler_rel, lines
+from main import pseudo_voigt, slicearr, load_spectrum, v_from_doppler_rel, lines, expand_mask
 import pandas as pd
 
-SPECFILE_NAME = "spec-2682-54401-0569"  # spec-4067-55361-0224"
-TITLE = "The H-Alpha line of the same star,\n observed at different times"  # A H-Alpha line of a spectrum with a cosmic ray event\n in an unfavorable place"
-SUBSPEC = [7]
+SPECFILE_NAME = "spec-4067-55361-0224"
+TITLE = "A H-Alpha line of a spectrum with a cosmic ray event\n in an unfavorable place"
+SUBSPEC = [1]
 GAIA_ID = ""
 MARGIN = 100
-LINE_LOC = "all"
-PLOT_OVERVIEW = True
-PLOT_FITTED_LINE = True
+LINE_LOC = 6562.79# "all"
+PLOT_OVERVIEW = False
+PLOT_FITTED_LINE = False
 CULUMFIT = True
 COLORS = ["navy", "crimson"]
 MANUALLIMITS = False
 YLIM = (75, 110)
 XLIM = (6550, 6575)
-SUBSPECCOLORS = ["darkred", "darkgray", "gold"]
+SUBSPECCOLORS = ["navy"]
 
 filenames = []
 
@@ -32,8 +32,9 @@ for specn in SUBSPEC:
 for filename in filenames:
     nspec = filenames.index(filename)+1
     wl, flux, _, flux_std = load_spectrum(filename)
-    if LINE_LOC.lower() == "all":
-        linelist = lines.values()
+    if type(LINE_LOC) == str:
+        if LINE_LOC.lower() == "all":
+            linelist = lines.values()
     else:
         linelist = [LINE_LOC]
     for line in linelist:
@@ -55,16 +56,18 @@ for filename in filenames:
         params = params.loc[params["line_loc"] == line]
         if len(params.index) == 0:
             continue
-        # if list(params["cr_ind"])[0] != "[]":
-        #     crind_list = list(params["cr_ind"])[0].split("\n")[0].split("[[")[1].replace("]]", "").split(",")
-        #     cr_ind = np.array([int(i) for i in crind_list])
-        #     cr_ind -= loind
-        #
-        #     for i in cr_ind:
-        #         plt.plot(slicedwl[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
-        #     mask = np.ones(slicedwl.shape, bool)
-        #     mask[cr_ind] = False
-        #     slicedwl = np.ma.MaskedArray(slicedwl, ~mask)
+        if list(params["cr_ind"])[0] != "[]":
+            crind_list = list(params["cr_ind"])[0].replace("[", "").replace("]", "").split(" ")
+            cr_ind = np.array([int(i) for i in crind_list])
+            cr_ind -= loind
+            mask = np.ones(slicedwl.shape, bool)
+            mask[cr_ind] = False
+
+            for i in cr_ind:
+                crmask = expand_mask(mask)
+                plt.plot(slicedwl[~crmask], slicedflux[~crmask], color="lightgray", label='_nolegend_')
+
+            slicedwl = np.ma.MaskedArray(slicedwl, ~mask)
         plt.plot(slicedwl, slicedflux, color=SUBSPECCOLORS[nspec-1])
 
         if PLOT_FITTED_LINE:

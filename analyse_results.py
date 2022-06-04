@@ -63,4 +63,4 @@ for file in files:
 
 var_over_err = var_over_err.sort_values("logp", axis=0, ascending=False)
 var_over_err.to_csv("logps.csv", index=False)
-print(round(1-np.mean(np.array(std_reduction)), 3))
+print(round(100*(1-np.mean(np.array(std_reduction))), 3))

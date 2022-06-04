@@ -8,7 +8,10 @@ output/*
 !requirements.txt
 spectra/*
 !spectra/.gitkeep
+images/*
+!images/.gitkeep
 *.png
 *.zip
 test.py
 *.xcf
+count_files.py
