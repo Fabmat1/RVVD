@@ -921,7 +921,7 @@ def print_status(file, fileset, catalogue):
     print(f"Doing Fits for System GAIA EDR3 {gaia_id}  [{(fileset.index(file) + 1)}/{(len(fileset))}]")
 
 
-def plot_rvcurve(vels, verrs, times, fprefix):
+def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
     plt.figure().clear()
     plt.close()
     plt.cla()
@@ -929,7 +929,7 @@ def plot_rvcurve(vels, verrs, times, fprefix):
 
     if len(times) > 1:
         gaps = np.diff(times)
-        gaps_inds = list(np.where(gaps > 5*np.amin(gaps))[0])
+        gaps_inds = list(np.where(gaps > 5*np.mean(gaps))[0])
         ncuts = len(gaps_inds) + 1
         gaps_inds.append(len(gaps))
         gaps_inds.insert(0, 0)
@@ -937,14 +937,22 @@ def plot_rvcurve(vels, verrs, times, fprefix):
         for ind, gapind in enumerate(gaps_inds):
             if ind != len(gaps_inds) - 1:
                 widths.append(times[gaps_inds[ind + 1]]-times[gaps_inds[ind] + 1 if gaps_inds[ind] != 0 else 0])
+        widths = np.array(widths)
+        toothin = np.where(widths < 0.05*np.amax(widths))[0]
+        widths[toothin] += 0.05*np.amax(widths)
     else:
+        gaps = []
         gaps_inds = []
         ncuts = 1
-        widths = [1]
+        widths = np.array([1])
 
     fig, axs = plt.subplots(1, ncuts, sharey="all", facecolor="w", gridspec_kw={'width_ratios': widths})
+    plt.subplots_adjust(wspace=.075)
 
-    axs[0].set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
+    if type(axs) == np.ndarray:
+        axs[0].set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
+    else:
+        axs.set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
 
     invis_ax = fig.add_subplot(111)
 
@@ -973,12 +981,12 @@ def plot_rvcurve(vels, verrs, times, fprefix):
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     if ncuts > 1:
         for ind, ax in enumerate(axs):
-            ax.scatter(times, vels, zorder=5, color=colors[0])
-            ax.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
+            ax.scatter(times, vels, zorder=5, color=colors[0], clip_on=False)
+            ax.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1], clip_on=False)
             start = times[gaps_inds[ind]+1 if gaps_inds[ind] != 0 else 0]
             end = times[gaps_inds[ind+1]]
             span = end-start
-            ax.set_xlim(start-span*0.05, end+span*0.05)
+            ax.set_xlim(start-span*0.1, end+span*0.1)
 
             kwargs = dict(transform=fig.transFigure, color='k', clip_on=False)
             [xmin, ymin], [xmax, ymax] = ax.get_position().get_points()
@@ -994,7 +1002,6 @@ def plot_rvcurve(vels, verrs, times, fprefix):
                 ax.plot((xmin - d, xmin + d), (ymin - 2*d, ymin + 2*d), **kwargs)
                 ax.plot((xmin - d, xmin + d), (ymax - 2*d, ymax + 2*d), **kwargs)
                 ax.yaxis.tick_left()
-                ax.yaxis.tick_right()
                 ax.spines['right'].set_visible(False)
                 ax.spines['left'].set_visible(False)
             else:
@@ -1006,7 +1013,39 @@ def plot_rvcurve(vels, verrs, times, fprefix):
         axs.scatter(times, vels, zorder=5, color=colors[0])
         axs.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
 
-    fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation.png", dpi=300)
+    fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis.png", dpi=300)
+    if SHOW_PLOTS:
+        plt.show()
+    else:
+        plt.cla()
+        plt.clf()
+        plt.close()
+
+
+def plot_rvcurve(vels, verrs, times, fprefix):
+    plt.figure().clear()
+    plt.close()
+    plt.cla()
+    plt.clf()
+    fig, ax1 = plt.subplots()
+    fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE)
+    ax1.set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
+    ax1.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE)
+
+    times = np.array(times)
+    times -= np.amin(times)
+
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    ax1.scatter(times, vels, zorder=5, color=colors[0])
+    ax1.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
+
+    culumvs_range = verrs.min()
+
+    if not pd.isnull(culumvs_range):
+        ax1.set_ylim((vels.min() - 2 * culumvs_range, vels.max() + 2 * culumvs_range))
+
+    plt.tight_layout()
+    plt.savefig(f"output/{fprefix.split('_')[0]}/RV_variation.png", dpi=300)
     if SHOW_PLOTS:
         plt.show()
     else:
@@ -1080,3 +1119,4 @@ if __name__ == "__main__":
         })
         rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
         plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
+        plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
