@@ -921,6 +921,100 @@ def print_status(file, fileset, catalogue):
     print(f"Doing Fits for System GAIA EDR3 {gaia_id}  [{(fileset.index(file) + 1)}/{(len(fileset))}]")
 
 
+def plot_rvcurve(vels, verrs, times, fprefix):
+    plt.figure().clear()
+    plt.close()
+    plt.cla()
+    plt.clf()
+
+    if len(times) > 1:
+        gaps = np.diff(times)
+        gaps_inds = list(np.where(gaps > 5*np.amin(gaps))[0])
+        ncuts = len(gaps_inds) + 1
+        gaps_inds.append(len(gaps))
+        gaps_inds.insert(0, 0)
+        widths = []
+        for ind, gapind in enumerate(gaps_inds):
+            if ind != len(gaps_inds) - 1:
+                widths.append(times[gaps_inds[ind + 1]]-times[gaps_inds[ind] + 1 if gaps_inds[ind] != 0 else 0])
+    else:
+        gaps_inds = []
+        ncuts = 1
+        widths = [1]
+
+    fig, axs = plt.subplots(1, ncuts, sharey="all", facecolor="w", gridspec_kw={'width_ratios': widths})
+
+    axs[0].set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
+
+    invis_ax = fig.add_subplot(111)
+
+    invis_ax.spines['top'].set_color('none')
+    invis_ax.spines['bottom'].set_color('none')
+    invis_ax.spines['left'].set_color('none')
+    invis_ax.spines['right'].set_color('none')
+    invis_ax.patch.set_alpha(0)
+    invis_ax.tick_params(labelcolor='w',
+                         top=False,
+                         bottom=False,
+                         left=False,
+                         right=False,
+                         labeltop=False,
+                         labelbottom=False,
+                         labelleft=False,
+                         labelright=False)
+
+    invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
+    invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+    plt.subplots_adjust(top=0.85)
+
+    times = np.array(times)
+    times -= np.amin(times)
+
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    if ncuts > 1:
+        for ind, ax in enumerate(axs):
+            ax.scatter(times, vels, zorder=5, color=colors[0])
+            ax.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
+            start = times[gaps_inds[ind]+1 if gaps_inds[ind] != 0 else 0]
+            end = times[gaps_inds[ind+1]]
+            span = end-start
+            ax.set_xlim(start-span*0.05, end+span*0.05)
+
+            kwargs = dict(transform=fig.transFigure, color='k', clip_on=False)
+            [xmin, ymin], [xmax, ymax] = ax.get_position().get_points()
+            d = .0075
+            if ind == 0:
+                ax.plot((xmax - d, xmax + d), (ymin - 2*d, ymin + 2*d), **kwargs)
+                ax.plot((xmax - d, xmax + d), (ymax - 2*d, ymax + 2*d), **kwargs)
+                ax.yaxis.tick_left()
+                ax.spines['right'].set_visible(False)
+            elif 0 < ind < len(axs)-1:
+                ax.plot((xmax - d, xmax + d), (ymin - 2*d, ymin + 2*d), **kwargs)
+                ax.plot((xmax - d, xmax + d), (ymax - 2*d, ymax + 2*d), **kwargs)
+                ax.plot((xmin - d, xmin + d), (ymin - 2*d, ymin + 2*d), **kwargs)
+                ax.plot((xmin - d, xmin + d), (ymax - 2*d, ymax + 2*d), **kwargs)
+                ax.yaxis.tick_left()
+                ax.yaxis.tick_right()
+                ax.spines['right'].set_visible(False)
+                ax.spines['left'].set_visible(False)
+            else:
+                ax.plot((xmin - d, xmin + d), (ymin - 2*d, ymin + 2*d), **kwargs)
+                ax.plot((xmin - d, xmin + d), (ymax - 2*d, ymax + 2*d), **kwargs)
+                ax.yaxis.tick_right()
+                ax.spines['left'].set_visible(False)
+    else:
+        axs.scatter(times, vels, zorder=5, color=colors[0])
+        axs.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
+
+    fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation.png", dpi=300)
+    if SHOW_PLOTS:
+        plt.show()
+    else:
+        plt.cla()
+        plt.clf()
+        plt.close()
+
+
 if __name__ == "__main__":
     if not VERBOSE:
         warnings.filterwarnings("ignore")
@@ -985,35 +1079,4 @@ if __name__ == "__main__":
             "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
         })
         rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
-        if not SHOW_PLOTS:
-            plt.cla()
-        plt.figure().clear()
-        plt.close()
-        plt.cla()
-        plt.clf()
-        fig, ax1 = plt.subplots()
-        fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE)
-        ax1.set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
-        ax1.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE)
-
-        spectimes_mjd = np.array(spectimes_mjd)
-        spectimes_mjd -= np.amin(spectimes_mjd)
-
-        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-        ax1.scatter(spectimes_mjd, culumvs, zorder=5, color=colors[0])
-        ax1.errorbar(spectimes_mjd, culumvs, yerr=culumvs_errs, capsize=3, linestyle='', zorder=1, color=colors[1])
-
-        specvels_range = specverrs.min()
-        culumvs_range = culumvs_errs.min()
-
-        if not pd.isnull(specvels_range) or pd.isnull(culumvs_range):
-            ax1.set_ylim((culumvs.min() - 2 * culumvs_range, culumvs.max() + 2 * culumvs_range))
-
-        plt.tight_layout()
-        plt.savefig(f"output/{file_prefix.split('_')[0]}/RV_variation.png", dpi=300)
-        if SHOW_PLOTS:
-            plt.show()
-        else:
-            plt.cla()
-            plt.clf()
-            plt.close()
+        plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
