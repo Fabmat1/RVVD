@@ -4,11 +4,11 @@ from main import pseudo_voigt, slicearr, load_spectrum, v_from_doppler_rel, line
 import pandas as pd
 
 SPECFILE_NAME = "spec-4067-55361-0224"
-TITLE = "A H-Alpha line of a spectrum with a cosmic ray event\n in an unfavorable place"
-SUBSPEC = [1]
+TITLE = ""
+SUBSPEC = [3]
 GAIA_ID = ""
 MARGIN = 100
-LINE_LOC = 6562.79# "all"
+LINE_LOC = 5015.678# "all"
 PLOT_OVERVIEW = False
 PLOT_FITTED_LINE = False
 CULUMFIT = True
@@ -16,7 +16,13 @@ COLORS = ["navy", "crimson"]
 MANUALLIMITS = False
 YLIM = (75, 110)
 XLIM = (6550, 6575)
+TITLE_SIZE = 17
+LABEL_SIZE = 14
+TICK_SIZE = 12
 SUBSPECCOLORS = ["navy"]
+
+plt.rcParams["figure.figsize"] = (10, 4.5)
+plt.rcParams["figure.dpi"] = 300
 
 filenames = []
 
@@ -30,7 +36,7 @@ for specn in SUBSPEC:
             f"spectra/{spectra_table['file'][0]}_{specn if len(str(specn)) > 1 else '0' + str(specn)}.txt")
 
 for filename in filenames:
-    nspec = filenames.index(filename)+1
+    nspec = SUBSPEC[filenames.index(filename)]
     wl, flux, _, flux_std = load_spectrum(filename)
     if type(LINE_LOC) == str:
         if LINE_LOC.lower() == "all":
@@ -40,10 +46,13 @@ for filename in filenames:
     for line in linelist:
         if PLOT_OVERVIEW:
             plt.plot(wl, flux, color="navy")
-            plt.title("Overview of a non-coadded Spectrum")
-            plt.ylabel("Flux [ergs/s/cm^2/Å]")
-            plt.xlabel("Wavelength [Å]")
-            plt.savefig("images/overviewplot.png", dpi=300)
+            plt.title("Overview of a non-coadded Spectrum", fontsize=TITLE_SIZE)
+            plt.ylabel("Flux [ergs/s/cm^2/Å]", fontsize=LABEL_SIZE)
+            plt.xlabel("Wavelength [Å]", fontsize=LABEL_SIZE)
+            plt.xticks(fontsize=TICK_SIZE)
+            plt.yticks(fontsize=TICK_SIZE)
+            plt.tight_layout()
+            plt.savefig("images/overviewplot.png")
         plt.show()
         slicedwl, loind, upind = slicearr(wl, line - MARGIN, line + MARGIN)
         slicedflux = flux[loind:upind]
@@ -68,7 +77,8 @@ for filename in filenames:
                 plt.plot(slicedwl[~crmask], slicedflux[~crmask], color="lightgray", label='_nolegend_')
 
             slicedwl = np.ma.MaskedArray(slicedwl, ~mask)
-        plt.plot(slicedwl, slicedflux, color=SUBSPECCOLORS[nspec-1])
+        plt.rcParams["figure.figsize"] = (8, 6)
+        plt.plot(slicedwl, slicedflux, color=SUBSPECCOLORS[0])
 
         if PLOT_FITTED_LINE:
             if not CULUMFIT:
@@ -88,13 +98,16 @@ for filename in filenames:
             wlspace = np.linspace(slicedwl.min(), slicedwl.max(), 10000)
             plt.plot(wlspace, pseudo_voigt(wlspace, scaling, gamma, shift, slope, heigth, eta), color=COLORS[1])
 
-        plt.title(TITLE)
-        plt.ylabel("Flux [ergs/s/cm^2/Å]")
-        plt.xlabel("Wavelength [Å]")
+        plt.title(TITLE, fontsize=TITLE_SIZE)
+        plt.ylabel("Flux [ergs/s/cm^2/Å]", fontsize=LABEL_SIZE)
+        plt.xlabel("Wavelength [Å]", fontsize=LABEL_SIZE)
+        plt.xticks(fontsize=TICK_SIZE)
+        plt.yticks(fontsize=TICK_SIZE)
         if PLOT_FITTED_LINE:
             plt.legend(["Flux data", "Best Fit"])
         if MANUALLIMITS:
             plt.ylim(YLIM)
             plt.xlim(XLIM)
-        plt.savefig(f"images/{SPECFILE_NAME}_{line}A_plot.png", dpi=500)
+        plt.tight_layout()
+        plt.savefig(f"images/{SPECFILE_NAME}_{line}A_plot.png")
         plt.show()
