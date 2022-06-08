@@ -58,7 +58,6 @@ for file in files:
     var_over_err = pd.concat([var_over_err, pd.DataFrame({
         "spec": [specname],
         "logp": [vrad_pvalue(culumvs, culumv_errs)],
-        "var_over_err": np.std(culumvs)/np.mean(culumv_errs)
     })])
 
 var_over_err = var_over_err.sort_values("logp", axis=0, ascending=False)

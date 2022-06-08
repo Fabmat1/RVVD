@@ -1,3 +1,4 @@
+import glob
 import os
 import re
 from datetime import datetime
@@ -15,6 +16,8 @@ import matplotlib as mpl
 mpl.rcParams['figure.dpi'] = 300
 
 EXTENSION = ".txt"
+SPECTRUM_FILE_SEPARATOR = " "
+USE_CATALOGUE = True
 CATALOGUE = "selected_objects.csv"
 FILE_LOC = "spectra/"
 DATA_TYPE = "numeric"  # dict, numeric
@@ -23,12 +26,12 @@ OUTLIER_MAX_SIGMA = 2
 CUT_MARGIN = 20
 MARGIN = 100
 DESIREDERR = 50
-SHOW_PLOTS = False
+SHOW_PLOTS = True
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
 SAVE_SINGLE_IMGS = False
 REDO_IMAGES = False
-SAVE_COMPOSITE_IMG = False
+SAVE_COMPOSITE_IMG = True
 NOISE_STD_LIMIT = 1
 CHECK_IF_EXISTS = True
 MAX_ALLOWED_SNR = 5
@@ -40,37 +43,6 @@ PLOT_TITLE_FONT_SIZE = 17
 # PLOT_STYLE = 'science'
 #
 # plt.style.use(PLOT_STYLE)
-
-output_table_cols = pd.DataFrame({
-    "subspectrum": [],
-    "line_name": [],
-    "line_loc": [],
-    "height": [],
-    "u_height": [],
-    "reduction_factor": [],
-    "u_reduction_factor": [],
-    "lambda_0": [],
-    "u_lambda_0": [],
-    "eta": [],
-    "u_eta": [],
-    "sigma": [],
-    "u_sigma": [],
-    "gamma": [],
-    "u_gamma": [],
-    "scaling": [],
-    "u_scaling": [],
-    "flux_0": [],
-    "u_flux_0": [],
-    "slope": [],
-    "u_slope": [],
-    "RV": [],
-    "u_RV": [],
-    "signal_strength": [],
-    "noise_strength": [],
-    "SNR": [],
-    "sanitized": [],
-    "cr_ind": [],
-}, dtype=object)
 
 lines = {
     "H_alpha": 6562.79,
@@ -109,6 +81,38 @@ disturbing_lines = {
     "He_II_4686": 4685.70,
     "He_II_5412": 5411.52
 }
+
+
+output_table_cols = pd.DataFrame({
+    "subspectrum": [],
+    "line_name": [],
+    "line_loc": [],
+    "height": [],
+    "u_height": [],
+    "reduction_factor": [],
+    "u_reduction_factor": [],
+    "lambda_0": [],
+    "u_lambda_0": [],
+    "eta": [],
+    "u_eta": [],
+    "sigma": [],
+    "u_sigma": [],
+    "gamma": [],
+    "u_gamma": [],
+    "scaling": [],
+    "u_scaling": [],
+    "flux_0": [],
+    "u_flux_0": [],
+    "slope": [],
+    "u_slope": [],
+    "RV": [],
+    "u_RV": [],
+    "signal_strength": [],
+    "noise_strength": [],
+    "SNR": [],
+    "sanitized": [],
+    "cr_ind": [],
+}, dtype=object)
 
 wl_splitinds, flux_splitinds, flux_std_splitinds = [0, 0, 0]
 linelist = []
@@ -234,6 +238,7 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
 
     :return: Spectrum Wavelengths, Corresponding flux, time of observation, flux error (if available)
     """
+    # Modify this to account for your specific needs!
     if filetype == "noncoadded_txt":
         wavelength = []
         flux = []
@@ -241,7 +246,7 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
         with open(filename) as dsource:
             for row in dsource:
                 if "#" not in row:
-                    wl, flx, flx_std = row.split(" ")
+                    wl, flx, flx_std = row.split(SPECTRUM_FILE_SEPARATOR)
                     wavelength.append(float(wl))
                     flux.append(float(flx))
                     flux_std.append(float(flx_std))
@@ -286,11 +291,11 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         plt.plot(wavelength, flux, color="navy")
-        plt.show()
+        if SHOW_PLOTS:
+            plt.show()
     if "flux_std" not in vars():
         flux_std = np.zeros(np.shape(flux))
     return wavelength, flux, t, flux_std
-
 
 
 def calc_SNR(params, flux, wavelength, margin, sanitized=False):
@@ -354,7 +359,7 @@ def sanitize_flux(flux, wavelength_pov, wls):
     for line in disturbing_lines.values():
         roundedline = round(line)
         if f"{roundedline}" in linewidths:
-            margin = 3*linewidths[f"{roundedline}"]
+            margin = 3 * linewidths[f"{roundedline}"]
         else:
             margin = CUT_MARGIN
         if not roundedline - 2 < round(wavelength_pov) < roundedline + 2:
@@ -394,7 +399,8 @@ def cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=np.array([])):
     uwl_for_std, uloind, uupind = slicearr(modified_slicedwl, shift + 2 * sigma, shift + MARGIN)
 
     if type(normalized_flux) == np.ma.core.MaskedArray:
-        for_std = np.concatenate([normalized_flux[lloind:lupind].compressed(), normalized_flux[uloind:uupind].compressed()])
+        for_std = np.concatenate(
+            [normalized_flux[lloind:lupind].compressed(), normalized_flux[uloind:uupind].compressed()])
     else:
         for_std = np.concatenate([normalized_flux[lloind:lupind], normalized_flux[uloind:uupind]])
     std = np.std(for_std)
@@ -549,8 +555,8 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         os.mkdir(f"output/{f_pre}/{subspec_ind}")
     if SAVE_SINGLE_IMGS:
         plt.savefig(f"output/{f_pre}/{subspec_ind}/{round(center)}Å", dpi=500)
-    if SHOW_PLOTS:
-        plt.show()
+        if SHOW_PLOTS:
+            plt.show()
     else:
         plt.cla()
         plt.clf()
@@ -620,7 +626,8 @@ def single_spec_shift(filename):
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         # plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
-        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
+        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,
+                                                                    SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
                                                                                                                flx_std,
                                                                                                                loc,
                                                                                                                MARGIN,
@@ -845,8 +852,8 @@ def cumulative_shift(output_table_spec, file, n=0):
         if SAVE_SINGLE_IMGS:
             subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
             plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å.png", dpi=300)
-        if SHOW_PLOTS:
-            plt.show()
+            if SHOW_PLOTS:
+                plt.show()
         else:
             plt.clf()
             plt.cla()
@@ -909,16 +916,23 @@ def open_spec_files(loc, fpre, end=".txt"):
 
 
 def files_from_catalogue(cat):
-    catalogue = pd.read_csv(cat)
-    return [a.split(".")[0] for a in catalogue["file"]], catalogue
+    if USE_CATALOGUE:
+        catalogue = pd.read_csv(cat)
+        return [a.replace(".fits", "")[0] for a in catalogue["file"]], catalogue
+    else:
+        filelist = glob.glob("spectra/*.txt")
+        filenamelist = [filepath.split("\\")[-1] for filepath in filelist]
+        fileprefixes = [filename.split("_")[0] for filename in filenamelist if "_mjd" in filename]
+        return fileprefixes, None
 
 
 def print_status(file, fileset, catalogue):
-    if "catalogue" in vars():
+    if USE_CATALOGUE:
         gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
+        print(f"Doing Fits for System GAIA EDR3 {gaia_id} ({file_prefix.split('_')[0]}) [{(fileset.index(file) + 1)}/{(len(fileset))}]")
     else:
-        gaia_id = file_prefix
-    print(f"Doing Fits for System GAIA EDR3 {gaia_id}  [{(fileset.index(file) + 1)}/{(len(fileset))}]")
+        print(f"Doing Fits for System {file_prefix.split('_')[0]} [{(fileset.index(file) + 1)}/{(len(fileset))}]")
+
 
 
 def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
@@ -929,17 +943,17 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
 
     if len(times) > 1:
         gaps = np.diff(times)
-        gaps_inds = list(np.where(gaps > 5*np.mean(gaps))[0])
+        gaps_inds = list(np.where(gaps > 4 * np.mean(gaps))[0])
         ncuts = len(gaps_inds) + 1
         gaps_inds.append(len(gaps))
         gaps_inds.insert(0, 0)
         widths = []
         for ind, gapind in enumerate(gaps_inds):
             if ind != len(gaps_inds) - 1:
-                widths.append(times[gaps_inds[ind + 1]]-times[gaps_inds[ind] + 1 if gaps_inds[ind] != 0 else 0])
+                widths.append(times[gaps_inds[ind + 1]] - times[gaps_inds[ind] + 1 if gaps_inds[ind] != 0 else 0])
         widths = np.array(widths)
-        toothin = np.where(widths < 0.05*np.amax(widths))[0]
-        widths[toothin] += 0.05*np.amax(widths)
+        toothin = np.where(widths < 0.05 * np.amax(widths))[0]
+        widths[toothin] += 0.05 * np.amax(widths)
     else:
         gaps = []
         gaps_inds = []
@@ -981,34 +995,58 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     if ncuts > 1:
         for ind, ax in enumerate(axs):
-            ax.scatter(times, vels, zorder=5, color=colors[0], clip_on=False)
-            ax.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1], clip_on=False)
-            start = times[gaps_inds[ind]+1 if gaps_inds[ind] != 0 else 0]
-            end = times[gaps_inds[ind+1]]
-            span = end-start
-            ax.set_xlim(start-span*0.1, end+span*0.1)
+            start = times[gaps_inds[ind] + 1 if gaps_inds[ind] != 0 else 0]
+            end = times[gaps_inds[ind + 1]]
+            span = end - start
+            start -= span * 0.1
+            end += span * 0.1
+            ax.set_xlim(start, end)
+            mask = np.logical_and(times >= start, times <= end)
+
+            ax.scatter(times[mask],
+                       vels[mask],
+                       zorder=5,
+                       color=colors[0],
+                       clip_on=False)
+            ax.errorbar(times[mask],
+                        vels[mask],
+                        yerr=verrs[mask],
+                        capsize=3,
+                        linestyle='',
+                        zorder=1,
+                        color=colors[1],
+                        clip_on=False)
+
+            normwidths = widths / np.linalg.norm(widths)
 
             kwargs = dict(transform=fig.transFigure, color='k', clip_on=False)
             [xmin, ymin], [xmax, ymax] = ax.get_position().get_points()
             d = .0075
             if ind == 0:
-                ax.plot((xmax - d, xmax + d), (ymin - 2*d, ymin + 2*d), **kwargs)
-                ax.plot((xmax - d, xmax + d), (ymax - 2*d, ymax + 2*d), **kwargs)
+                ax.plot((xmax - d, xmax + d), (ymin - 2 * d, ymin + 2 * d), **kwargs)
+                ax.plot((xmax - d, xmax + d), (ymax - 2 * d, ymax + 2 * d), **kwargs)
                 ax.yaxis.tick_left()
                 ax.spines['right'].set_visible(False)
-            elif 0 < ind < len(axs)-1:
-                ax.plot((xmax - d, xmax + d), (ymin - 2*d, ymin + 2*d), **kwargs)
-                ax.plot((xmax - d, xmax + d), (ymax - 2*d, ymax + 2*d), **kwargs)
-                ax.plot((xmin - d, xmin + d), (ymin - 2*d, ymin + 2*d), **kwargs)
-                ax.plot((xmin - d, xmin + d), (ymax - 2*d, ymax + 2*d), **kwargs)
-                ax.yaxis.tick_left()
+            elif 0 < ind < len(axs) - 1:
+                ax.plot((xmax - d, xmax + d), (ymin - 2 * d, ymin + 2 * d), **kwargs)
+                ax.plot((xmax - d, xmax + d), (ymax - 2 * d, ymax + 2 * d), **kwargs)
+                ax.plot((xmin - d, xmin + d), (ymin - 2 * d, ymin + 2 * d), **kwargs)
+                ax.plot((xmin - d, xmin + d), (ymax - 2 * d, ymax + 2 * d), **kwargs)
+                ax.tick_params(
+                    axis='y',
+                    which='both',
+                    right=False,
+                    left=False,
+                    labelleft=False)
                 ax.spines['right'].set_visible(False)
                 ax.spines['left'].set_visible(False)
             else:
-                ax.plot((xmin - d, xmin + d), (ymin - 2*d, ymin + 2*d), **kwargs)
-                ax.plot((xmin - d, xmin + d), (ymax - 2*d, ymax + 2*d), **kwargs)
+                ax.plot((xmin - d, xmin + d), (ymin - 2 * d, ymin + 2 * d), **kwargs)
+                ax.plot((xmin - d, xmin + d), (ymax - 2 * d, ymax + 2 * d), **kwargs)
                 ax.yaxis.tick_right()
                 ax.spines['left'].set_visible(False)
+            if normwidths[ind] < 0.20:
+                plt.setp(ax.get_xticklabels(), rotation=90, ha='right')
     else:
         axs.scatter(times, vels, zorder=5, color=colors[0])
         axs.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
@@ -1095,7 +1133,7 @@ if __name__ == "__main__":
             specvels.append(complete_v_shift)
             specverrs.append(v_std)
 
-        if "catalogue" in vars():
+        if USE_CATALOGUE:
             gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
         else:
             gaia_id = file_prefix
@@ -1118,5 +1156,6 @@ if __name__ == "__main__":
             "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
         })
         rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
-        plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
-        plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
+        if SAVE_COMPOSITE_IMG:
+            plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
+            plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
