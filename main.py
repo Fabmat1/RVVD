@@ -25,7 +25,6 @@ VERBOSE = False
 OUTLIER_MAX_SIGMA = 2
 CUT_MARGIN = 20
 MARGIN = 100
-DESIREDERR = 50
 SHOW_PLOTS = True
 PLOTOVERVIEW = False
 AUTO_REMOVE_OUTLIERS = True
@@ -735,7 +734,7 @@ def culum_fit_funciton(wl, r_factor, *args):
     return np.concatenate(resids)
 
 
-def cumulative_shift(output_table_spec, file, n=0):
+def cumulative_shift(output_table_spec, file):
     global linelist
     wl, flx, time, flx_std = load_spectrum(file)
     linelist = output_table_spec["line_loc"]
@@ -837,7 +836,6 @@ def cumulative_shift(output_table_spec, file, n=0):
 
     wl_dataset = np.split(wl_dataset, wl_splitinds)
     flux_dataset = np.split(flux_dataset, flux_splitinds)
-    flux_std_dataset = np.split(flux_std_dataset, flux_std_splitinds)
 
     for i, paramset in enumerate(params):
         lname = list(output_table_spec['line_name'])[i]
@@ -918,7 +916,7 @@ def open_spec_files(loc, fpre, end=".txt"):
 def files_from_catalogue(cat):
     if USE_CATALOGUE:
         catalogue = pd.read_csv(cat)
-        return [a.replace(".fits", "")[0] for a in catalogue["file"]], catalogue
+        return [a.replace(".fits", "") for a in catalogue["file"]], catalogue
     else:
         filelist = glob.glob("spectra/*.txt")
         filenamelist = [filepath.split("\\")[-1] for filepath in filelist]
