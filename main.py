@@ -28,7 +28,7 @@ VERBOSE = False  # enable/disable verbose output
 
 ### FIT SETTINGS
 
-OUTLIER_MAX_SIGMA = 2
+OUTLIER_MAX_SIGMA = 3
 """
 OUTLIER_MAX_SIGMA: Sigma value above which a line from the individual gets rejected as a fit to a wrong line.
 Outliers do not get used in the cumulative fit.
@@ -159,7 +159,7 @@ def slicearr(arr, lower, upper):
         upind = loind + 1
         newarr = np.array([])
     if len(newarr) == 0:
-        if np.array(arr == arr[arr > lower]).all():
+        if len(arr[arr > lower]) != 0:
             loind = np.where(arr == arr[arr > lower][0])[0][0]
             upind = loind + 1
         else:
