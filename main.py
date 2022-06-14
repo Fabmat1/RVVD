@@ -12,37 +12,48 @@ from scipy.constants import c
 from astropy.io import fits
 import astropy.time as atime
 import matplotlib as mpl
+from analyse_results import result_analysis
 
-mpl.rcParams['figure.dpi'] = 300
+############################## SETTINGS ##############################
 
-EXTENSION = ".txt"
-SPECTRUM_FILE_SEPARATOR = " "
-USE_CATALOGUE = True
-CATALOGUE = "selected_objects.csv"
-FILE_LOC = "spectra/"
-DATA_TYPE = "numeric"  # dict, numeric
-VERBOSE = False
+
+### GENERAL EXECUTION SETTINGS
+
+EXTENSION = ".txt"  # extension of the ASCII spectra files
+SPECTRUM_FILE_SEPARATOR = " "  # Separator between columns in the ASCII file
+USE_CATALOGUE = True  # whether only a subset of stars defined by a catalogue should be used
+CATALOGUE = "1selected_sdB_sdOB.csv"  # the location of the catalogue
+FILE_LOC = "spectra/"  # directory that holds the spectrum files
+VERBOSE = False  # enable/disable verbose output
+
+### FIT SETTINGS
+
 OUTLIER_MAX_SIGMA = 2
-CUT_MARGIN = 20
-MARGIN = 100
-SHOW_PLOTS = True
-PLOTOVERVIEW = False
-AUTO_REMOVE_OUTLIERS = True
-SAVE_SINGLE_IMGS = False
-REDO_IMAGES = False
-SAVE_COMPOSITE_IMG = True
-NOISE_STD_LIMIT = 1
-CHECK_IF_EXISTS = True
-MAX_ALLOWED_SNR = 5
-SNR_PEAK_SIGMA = 3
+"""
+OUTLIER_MAX_SIGMA: Sigma value above which a line from the individual gets rejected as a fit to a wrong line.
+Outliers do not get used in the cumulative fit.
+"""
+CUT_MARGIN = 20  # Margin used for cutting out disturbing lines, if their standard deviation was not yet determined [Å]
+MARGIN = 100  # Window margin around lines used in determining fits [Å]
+AUTO_REMOVE_OUTLIERS = True  # Whether an input from the user is required to remove outliers from being used in the cumulative fit 
+MAX_ALLOWED_SNR = 5  # Maximum allowed SNR to include a line in the cumulative fit
+SNR_PEAK_SIGMA = 3  # Standard deviation width of the peak that is considered the "signal"
 COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
-PLOT_LABELS_FONT_SIZE = 12
-PLOT_TITLE_FONT_SIZE = 17
-# PLOT_STYLE = 'science'
-#
-# plt.style.use(PLOT_STYLE)
 
+
+### PLOT AND STORAGE SETTINGS
+mpl.rcParams['figure.dpi'] = 300  # DPI value of plots that are crated
+SHOW_PLOTS = False  # Show matplotlib plotting window for each plot
+PLOTOVERVIEW = False  # Plot overview of entire subspectrum
+SAVE_SINGLE_IMGS = False  # Save individual plots of fits as images in the respective folders
+REDO_IMAGES = False  # Redo images already present in folders
+SAVE_COMPOSITE_IMG = True  # Save RV-Curve plot
+DONT_REDO_STARS = True  # Whether to redo stars for which RVs have already be determined
+PLOT_LABELS_FONT_SIZE = 12  # Label font size
+PLOT_TITLE_FONT_SIZE = 17  # Title font size
+
+# Lines that can potentially be used in fitting:
 lines = {
     "H_alpha": 6562.79,
     "H_beta": 4861.35,
@@ -62,6 +73,7 @@ lines = {
     # "He_II_5412": 5411.52
 }
 
+# Lines that need to potentially be cut out (also include all lines from above)
 disturbing_lines = {
     "H_alpha": 6562.79,
     "H_beta": 4861.35,
@@ -80,6 +92,8 @@ disturbing_lines = {
     "He_II_4686": 4685.70,
     "He_II_5412": 5411.52
 }
+
+############################## FUNCTIONS ##############################
 
 
 output_table_cols = pd.DataFrame({
@@ -927,10 +941,10 @@ def files_from_catalogue(cat):
 def print_status(file, fileset, catalogue):
     if USE_CATALOGUE:
         gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
-        print(f"Doing Fits for System GAIA EDR3 {gaia_id} ({file_prefix.split('_')[0]}) [{(fileset.index(file) + 1)}/{(len(fileset))}]")
+        print(
+            f"Doing Fits for System GAIA EDR3 {gaia_id} ({file_prefix.split('_')[0]}) [{(fileset.index(file) + 1)}/{(len(fileset))}]")
     else:
         print(f"Doing Fits for System {file_prefix.split('_')[0]} [{(fileset.index(file) + 1)}/{(len(fileset))}]")
-
 
 
 def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
@@ -939,9 +953,14 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
     plt.cla()
     plt.clf()
 
-    if len(times) > 1:
+    if len(times) > 2:
         gaps = np.diff(times)
-        gaps_inds = list(np.where(gaps > 4 * np.mean(gaps))[0])
+        gapsstd = np.std(gaps)
+        gapsmean = np.mean(gaps)
+        if 2 * gapsmean < gapsstd:
+            gaps_inds = list(np.where(gaps > 1.5 * gapsstd)[0])
+        else:
+            gaps_inds = list(np.where(gaps > 4 * gapsmean)[0])
         ncuts = len(gaps_inds) + 1
         gaps_inds.append(len(gaps))
         gaps_inds.insert(0, 0)
@@ -1090,13 +1109,17 @@ def plot_rvcurve(vels, verrs, times, fprefix):
         plt.close()
 
 
+############################## EXECUTION ##############################
+
+
 if __name__ == "__main__":
     if not VERBOSE:
         warnings.filterwarnings("ignore")
+    print("Loading spectrum files...")
     file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
     for file_prefix in file_prefixes:
         fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
-        if os.path.isdir(f'output/{file_prefix}') and CHECK_IF_EXISTS:
+        if os.path.isdir(f'output/{file_prefix}') and DONT_REDO_STARS:
             if os.path.isfile(f'output/{file_prefix}/RV_variation.png'):
                 if not SAVE_SINGLE_IMGS:
                     continue
@@ -1157,3 +1180,5 @@ if __name__ == "__main__":
         if SAVE_COMPOSITE_IMG:
             plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
             plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
+    print("Fits are completed, analysing results...")
+    result_analysis()
