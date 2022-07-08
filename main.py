@@ -560,7 +560,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
 
         fluxspan = np.amax(flux[loind:upind]) - np.amin(flux[loind:upind])
 
-        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > 1.5 * fluxspan and sucess:
+        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > 1.5 * fluxspan and sucess and not limit_peak_height[0]:
             plt.cla()
             plt.clf()
             return plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize, used_cr_inds, limit_peak_height=(True, 5 * peak_amp_from_height(fluxspan, np.mean(np.diff(slicedwl)), 0.5)))
