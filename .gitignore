@@ -15,3 +15,5 @@ images/*
 test.py
 *.xcf
 count_files.py
+local_*
+all_*

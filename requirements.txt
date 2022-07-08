@@ -37,3 +37,4 @@ urllib3>=1.26.9
 webencodings>=0.5.1
 wheel>=0.36.2
 zipp>=3.8.0
+img2pdf~=0.4.4

@@ -2,6 +2,7 @@ import glob
 import os
 import re
 from datetime import datetime
+import img2pdf
 import pandas as pd
 import numpy as np
 import warnings
@@ -36,22 +37,25 @@ Outliers do not get used in the cumulative fit.
 CUT_MARGIN = 20  # Margin used for cutting out disturbing lines, if their standard deviation was not yet determined [Å]
 MARGIN = 100  # Window margin around lines used in determining fits [Å]
 AUTO_REMOVE_OUTLIERS = True  # Whether an input from the user is required to remove outliers from being used in the cumulative fit 
-MAX_ALLOWED_SNR = 5  # Maximum allowed SNR to include a line in the cumulative fit
+MIN_ALLOWED_SNR = 5  # Minimum allowed SNR to include a line in the cumulative fit
 SNR_PEAK_SIGMA = 3  # Standard deviation width of the peak that is considered the "signal"
 COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 
 
 ### PLOT AND STORAGE SETTINGS
+
 mpl.rcParams['figure.dpi'] = 300  # DPI value of plots that are crated
 SHOW_PLOTS = False  # Show matplotlib plotting window for each plot
 PLOTOVERVIEW = False  # Plot overview of entire subspectrum
-SAVE_SINGLE_IMGS = False  # Save individual plots of fits as images in the respective folders
+SAVE_SINGLE_IMGS = True  # Save individual plots of fits as images in the respective folders !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!
 REDO_IMAGES = False  # Redo images already present in folders
 SAVE_COMPOSITE_IMG = True  # Save RV-Curve plot
-DONT_REDO_STARS = True  # Whether to redo stars for which RVs have already be determined
+REDO_STARS = False  # Whether to redo stars for which RVs have already be determined
 PLOT_LABELS_FONT_SIZE = 12  # Label font size
 PLOT_TITLE_FONT_SIZE = 17  # Title font size
+CREATE_PDF = True  # Group all RV-plots into one big .pdf at the end of the calculations !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!
+
 
 # Lines that can potentially be used in fitting:
 lines = {
@@ -224,11 +228,10 @@ def to_sigma(gamma):
     return gamma / (2 * np.sqrt(2 * np.log(2)))
 
 
-def height_err(eta, sigma, gamma, scaling, u_eta, u_sigma, u_gamma, u_scaling):
-    return np.sqrt((u_scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (gamma * np.pi))) ** 2 + \
-                   (u_sigma * eta * scaling / (sigma ** 2 * np.sqrt(2 * np.pi))) ** 2 + \
-                   (u_eta * scaling * (1 / (sigma * np.sqrt(2 * np.pi)) - 2 / (gamma * np.pi))) ** 2 + \
-                   (u_gamma * scaling * (1 - eta) * 2 / (gamma ** 2 * np.pi)) ** 2)
+def height_err(eta, gamma, scaling, u_eta, u_gamma, u_scaling):
+    return np.sqrt((u_scaling * 2 / (np.pi*gamma)*(eta*(np.sqrt(np.log(2)*np.pi)-1)+1)) ** 2 + \
+                   (u_gamma*2*scaling/(np.pi*gamma**2)*(eta*(np.sqrt(np.log(2)*np.pi)-1)+1)) ** 2 + \
+                   (u_eta*2*scaling/(np.pi*gamma)*(np.sqrt(np.log(2)*np.pi)-1)) ** 2)
 
 
 def voigt(x, scaling, gamma, shift, slope, height):
@@ -438,8 +441,12 @@ def cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=np.array([])):
             return True, predetermined_crs
 
 
+def peak_amp_from_height(h, gamma, eta):
+    return h/(np.pi*gamma/(2*(1+(np.sqrt(np.pi*np.log(2))-1)*eta)))
+
+
 def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False,
-                     used_cr_inds=[]):
+                     used_cr_inds=[], limit_peak_height=(False, 0)):
     wavelength = np.copy(wavelengthdata)
     flux = np.copy(fluxdata)
     flux_std = np.copy(flux_stddata)
@@ -489,7 +496,27 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     if initial_s == np.nan:
         initial_s = 1
 
+
+    # scaling, gamma, shift, slope, height, eta
     initial_params = [initial_s, 5, center, 0, initial_h, 0.5]
+
+    if limit_peak_height[0]:
+        bounds = (
+                     [0, 0, center - 15, -np.inf, 0, 0],
+                     [limit_peak_height[1], np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
+                 )
+        try:
+            for i, param in enumerate(initial_params):
+                assert bounds[0][i] < param < bounds[1][i]
+        except AssertionError:
+            sucess = False
+    else:
+        bounds = (
+            [0, 0, center - 15, -np.inf, 0, 0],
+            [np.inf, np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
+        )
+
+
 
     try:
         params, errs = curve_fit(pseudo_voigt,
@@ -497,10 +524,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                                  flux[loind:upind],
                                  initial_params,
                                  # scaling, gamma, shift, slope, height, eta
-                                 bounds=(
-                                     [0, 0, center - 15, -np.inf, 0, 0],
-                                     [np.inf, np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
-                                 ),
+                                 bounds= bounds,
                                  sigma=flux_std[loind:upind]
                                  )
 
@@ -519,7 +543,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                                         used_cr_inds=cr_true_inds)
         sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin, sanitize)
         plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}", (10, 10), xycoords="figure pixels")
-        if SNR < MAX_ALLOWED_SNR:
+        if SNR < MIN_ALLOWED_SNR:
             if sucess:
                 warn_text = plt.figtext(0.3, 0.95, f"BAD SIGNAL!",
                                         horizontalalignment='right',
@@ -533,6 +557,13 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
             warnings.warn(f"WL {center}Å: Signal-to-Noise ratio out of bounds!",
                           NoiseWarning)
             sucess = False
+
+        fluxspan = np.amax(flux[loind:upind]) - np.amin(flux[loind:upind])
+
+        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > 1.5 * fluxspan and sucess:
+            plt.cla()
+            plt.clf()
+            return plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize, used_cr_inds, limit_peak_height=(True, 5 * peak_amp_from_height(fluxspan, np.mean(np.diff(slicedwl)), 0.5)))
 
         plt.plot(slicedwl, pseudo_voigt(slicedwl, *params), zorder=5)
     except RuntimeError:
@@ -570,9 +601,8 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         plt.savefig(f"output/{f_pre}/{subspec_ind}/{round(center)}Å", dpi=500)
         if SHOW_PLOTS:
             plt.show()
-    else:
-        plt.cla()
-        plt.clf()
+    plt.cla()
+    plt.clf()
     if sucess:
         return sucess, errs, params, [sstr, nstr, SNR], sanitize, used_cr_inds
     else:
@@ -580,13 +610,9 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                [False, False, False], False, False
 
 
-def pseudo_voigt_height(errs, scaling, eta, gamma, sigma=False, sigma_err=False):
-    if not sigma:
-        sigma = to_sigma(gamma)
-    if not sigma_err:
-        sigma_err = to_sigma(errs[1])
-    height = scaling * (eta / (sigma * np.sqrt(2 * np.pi)) + (1 - eta) * 2 / (np.pi * gamma))
-    err = height_err(eta, sigma, gamma, scaling, errs[5], sigma_err, errs[1], errs[0])
+def pseudo_voigt_height(errs, scaling, eta, gamma):
+    height = 2*scaling/(np.pi*gamma)*(1+(np.sqrt(np.pi*np.log(2))-1)*eta)
+    err = height_err(eta, gamma, scaling, errs[5], errs[1], errs[0])
     return height, err
 
 
@@ -595,7 +621,7 @@ def print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc):
         if sucess:
             sigma = to_sigma(gamma)
             sigma_err = to_sigma(errs[1])
-            h, u_h = pseudo_voigt_height(errs, scaling, eta, gamma, sigma, sigma_err)
+            h, u_h = pseudo_voigt_height(errs, scaling, eta, gamma)
             print("######################## FIT RESULTS ########################")
             print(f"Result for line {lstr} @ {round(loc)}Å:")
             print(f"\nPeak Height I={h}±{u_h}")
@@ -817,8 +843,9 @@ def cumulative_shift(output_table_spec, file):
             specparamrow["flux_0"][0],
             specparamrow["eta"][0],
         ]
-        bounds[0] += [0, 0, -np.inf, 0, 0]
-        bounds[1] += [np.inf, np.inf, np.inf, np.inf, 1]
+        bounds[0] += [0, specparamrow["gamma"][0]/4, -np.inf, 0, 0]
+        bounds[1] += [specparamrow["scaling"][0]*2, np.inf, np.inf, np.inf, 1]
+
 
     wl_dataset = np.concatenate(wl_dataset, axis=0)
     flux_dataset = np.concatenate(flux_dataset, axis=0)
@@ -866,9 +893,8 @@ def cumulative_shift(output_table_spec, file):
             plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å.png", dpi=300)
             if SHOW_PLOTS:
                 plt.show()
-        else:
-            plt.clf()
-            plt.cla()
+        plt.clf()
+        plt.cla()
 
         scaling, gamma, slope, height, eta = paramset
         shift = r_factor * lines[i]
@@ -1109,6 +1135,18 @@ def plot_rvcurve(vels, verrs, times, fprefix):
         plt.close()
 
 
+def create_pdf():
+    dirname = os.path.dirname(__file__)
+    dirs = os.walk(os.path.join(dirname, "output"))
+    dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
+    files = [os.path.join(d, "RV_variation.png") for d in dirs]
+    files_brokenaxis = [os.path.join(d, "RV_variation_broken_axis.png") for d in dirs]
+    with open("all_RV_plots.pdf", "wb") as f:
+        f.write(img2pdf.convert(files))
+    with open("all_RV_plots_broken_axis.pdf", "wb") as f:
+        f.write(img2pdf.convert(files_brokenaxis))
+
+
 ############################## EXECUTION ##############################
 
 
@@ -1119,7 +1157,7 @@ if __name__ == "__main__":
     file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
     for file_prefix in file_prefixes:
         fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
-        if os.path.isdir(f'output/{file_prefix}') and DONT_REDO_STARS:
+        if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
             if os.path.isfile(f'output/{file_prefix}/RV_variation.png'):
                 if not SAVE_SINGLE_IMGS:
                     continue
@@ -1182,3 +1220,6 @@ if __name__ == "__main__":
             plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
     print("Fits are completed, analysing results...")
     result_analysis()
+    if CREATE_PDF:
+        create_pdf()
+    print("All done!")
