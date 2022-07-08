@@ -1151,6 +1151,8 @@ def create_pdf():
 
 
 if __name__ == "__main__":
+    if not os.path.isdir(f'output'):
+        os.mkdir("output")
     if not VERBOSE:
         warnings.filterwarnings("ignore")
     print("Loading spectrum files...")
