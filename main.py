@@ -45,7 +45,8 @@ COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to d
 
 ### PLOT AND STORAGE SETTINGS
 
-mpl.rcParams['figure.dpi'] = 300  # DPI value of plots that are crated
+mpl.rcParams['figure.dpi'] = 300  # DPI value of plots that are created, if they are not pdf files
+PLOT_FMT = ".pdf"  # File format of plots
 SHOW_PLOTS = False  # Show matplotlib plotting window for each plot
 PLOTOVERVIEW = False  # Plot overview of entire subspectrum
 SAVE_SINGLE_IMGS = False  # Save individual plots of fits as images in the respective folders !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!
@@ -193,7 +194,7 @@ def v_from_doppler(lambda_o, lambda_s):
     :param lambda_s: Source Wavelength
     :return: Radial Velocity calculated from relativistic doppler effect
     """
-    return c * (lambda_s ** 2 - lambda_o ** 2) / (lambda_o ** 2 + lambda_s ** 2)
+    return c * (lambda_o ** 2 - lambda_s ** 2) / (lambda_o ** 2 + lambda_s ** 2)
 
 
 def v_from_doppler_err(lambda_o, lambda_s, u_lambda_o):
@@ -212,7 +213,7 @@ def v_from_doppler_rel(r_factor):
     :param r_factor: Wavelength reduction factor lambda_o/lambda_s
     :return: Radial Velocity calculated from relativistic doppler effect
     """
-    return c * (1 - r_factor ** 2) / (1 + r_factor ** 2)
+    return c * (r_factor ** 2 - 1) / (1 + r_factor ** 2)
 
 
 def v_from_doppler_rel_err(r_factor, u_r_factor):
@@ -890,7 +891,7 @@ def cumulative_shift(output_table_spec, file):
         plt.plot(wllinspace, make_dataset(wllinspace, r_factor, i, paramset))
         if SAVE_SINGLE_IMGS:
             subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
-            plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å.png", dpi=300)
+            plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}", dpi=300)
             if SHOW_PLOTS:
                 plt.show()
         plt.clf()
@@ -1094,7 +1095,7 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
         axs.scatter(times, vels, zorder=5, color=colors[0])
         axs.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
 
-    fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis.png", dpi=300)
+    fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
     if SHOW_PLOTS:
         plt.show()
     else:
@@ -1126,7 +1127,7 @@ def plot_rvcurve(vels, verrs, times, fprefix):
         ax1.set_ylim((vels.min() - 2 * culumvs_range, vels.max() + 2 * culumvs_range))
 
     plt.tight_layout()
-    plt.savefig(f"output/{fprefix.split('_')[0]}/RV_variation.png", dpi=300)
+    plt.savefig(f"output/{fprefix.split('_')[0]}/RV_variation{PLOT_FMT}", dpi=300)
     if SHOW_PLOTS:
         plt.show()
     else:
@@ -1136,15 +1137,21 @@ def plot_rvcurve(vels, verrs, times, fprefix):
 
 
 def create_pdf():
-    dirname = os.path.dirname(__file__)
-    dirs = os.walk(os.path.join(dirname, "output"))
-    dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
-    files = [os.path.join(d, "RV_variation.png") for d in dirs]
-    files_brokenaxis = [os.path.join(d, "RV_variation_broken_axis.png") for d in dirs]
-    with open("all_RV_plots.pdf", "wb") as f:
-        f.write(img2pdf.convert(files))
-    with open("all_RV_plots_broken_axis.pdf", "wb") as f:
-        f.write(img2pdf.convert(files_brokenaxis))
+    plotpdf_exists = os.path.exists("all_RV_plots.pdf")
+    plotpdfbroken_exists = os.path.exists("all_RV_plots_broken_axis.pdf")
+
+    if not plotpdf_exists or not plotpdfbroken_exists:
+        dirname = os.path.dirname(__file__)
+        dirs = os.walk(os.path.join(dirname, "output"))
+        dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
+        files = [os.path.join(d, f"RV_variation{PLOT_FMT}") for d in dirs]
+        files_brokenaxis = [os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}") for d in dirs]
+        if not plotpdf_exists:
+            with open("all_RV_plots.pdf", "wb") as f:
+                f.write(img2pdf.convert(files))
+        if not plotpdfbroken_exists:
+            with open("all_RV_plots_broken_axis.pdf", "wb") as f:
+                f.write(img2pdf.convert(files_brokenaxis))
 
 
 ############################## EXECUTION ##############################
@@ -1160,7 +1167,7 @@ if __name__ == "__main__":
     for file_prefix in file_prefixes:
         fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
         if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
-            if os.path.isfile(f'output/{file_prefix}/RV_variation.png'):
+            if os.path.isfile(f'output/{file_prefix}/RV_variation{PLOT_FMT}'):
                 if not SAVE_SINGLE_IMGS:
                     continue
                 if not REDO_IMAGES:
