@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from fit_rv_curve import fit_rv_curve
+import shutil
 
 
 def vrad_pvalue(vrad, vrad_err):
@@ -31,7 +32,42 @@ def vrad_pvalue(vrad, vrad_err):
     return logp
 
 
-def result_analysis():
+def mergedir(dirs_to_combine, gaia_id):
+    dirname = os.path.dirname(__file__)
+    rvdata = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/RV_variation.csv"), delimiter=',')[1:] for f in dirs_to_combine], dtype=None)
+    single_fit_data = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/single_spec_vals.csv"), delimiter=',')[1:] for f in dirs_to_combine], dtype=None)
+    culum_fit_data = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/culum_spec_vals.csv"), delimiter=',')[1:] for f in dirs_to_combine], dtype=None)
+
+    firstdir = dirs_to_combine[0]
+
+    rvheader = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/RV_variation.csv"), delimiter=',', dtype=str)[:1]
+    single_fit_header = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/single_spec_vals.csv"), delimiter=',', dtype=str)[:1]
+    culum_fit_header = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/culum_spec_vals.csv"), delimiter=',', dtype=str)[:1]
+
+
+    try:
+        os.mkdir(os.path.join(dirname, f"output/{firstdir}_merged/"))
+    except FileExistsError:
+        pass
+
+    rv_array = np.concatenate([rvheader, rvdata], axis=0)
+    single_fit_array = np.concatenate([single_fit_header, single_fit_data], axis=0)
+    culum_fit_array = np.concatenate([culum_fit_header, culum_fit_data], axis=0)
+
+    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/RV_variation.csv"), rv_array, delimiter=",", fmt="%s")
+    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/single_spec_vals.csv"), single_fit_array, delimiter=",", fmt="%s")
+    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/culum_spec_vals.csv"), culum_fit_array, delimiter=",", fmt="%s")
+
+    from main import plot_rvcurve, plot_rvcurve_brokenaxis
+    plot_rvcurve(rvdata[:, 0], rvdata[:, 1], rvdata[:, 4], firstdir, gaia_id, True)
+    plot_rvcurve_brokenaxis(rvdata[:, 0], rvdata[:, 1], rvdata[:, 4], firstdir, gaia_id, True)
+
+    for d in dirs_to_combine:
+        open(os.path.join(dirname, f"output/.{d}"), 'a').close()
+        shutil.rmtree(os.path.join(dirname, f"output/{d}/"))
+
+
+def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     dirname = os.path.dirname(__file__)
     dirs = os.walk(os.path.join(dirname, "output"))
     dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
@@ -39,21 +75,42 @@ def result_analysis():
 
     analysis_params = pd.DataFrame(
         {
-            "spec": [],
-            "logp": []
+            "source_id": [],
+            "logp": [],
+            "associated_files": []
         }
     )
 
+    if check_doubles and catalogue is not None:
+        duplicated_stars = catalogue.loc[catalogue.duplicated(["source_id"])]
+        sourceids = np.array([s for s in duplicated_stars["source_id"]])
+    else:
+        sourceids = []
+
+    used_sids = []
     for file in files:
         specname = file.split("\\")[-2]
-        filedata = np.genfromtxt(file, delimiter=',')
-        culumvs = filedata[1:, 0]
-        culumv_errs = filedata[1:, 1]
+        if "_merged" in specname:
+            continue
+        sid = catalogue.loc[catalogue["file"] == specname]["source_id"].iloc[0]
+        if sid in used_sids:
+            continue
+        if sid in sourceids.tolist():
+            files_to_combine = catalogue.loc[catalogue["source_id"] == sid]["file"].tolist()
+            filedata = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/RV_variation.csv"), delimiter=',')[1:] for f in files_to_combine])
+            mergedir(files_to_combine, sid)
+            used_sids.append(sid)
+        else:
+            filedata = np.genfromtxt(file, delimiter=',')[1:]
+            files_to_combine = specname
+        culumvs = filedata[:, 0]
+        culumv_errs = filedata[:, 1]
         logp = vrad_pvalue(culumvs, culumv_errs)
 
         analysis_params = pd.concat([analysis_params, pd.DataFrame({
-            "spec": [specname],
-            "logp": [logp]
+            "source_id": [str(sid)],
+            "logp": [logp],
+            "associated_files": [files_to_combine]
         })])
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
@@ -86,7 +143,7 @@ def result_analysis_with_rvfit():
         if logp < -4 and len(culumvs) > 4:
             [A, p], [u_A, u_p] = fit_rv_curve(specname, "auto", False, False)
             if type(A) != str:
-                if A/u_A < 2:
+                if A / u_A < 2:
                     A = p = u_A = u_p = "--"
         else:
             A = p = u_A = u_p = "--"

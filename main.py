@@ -26,6 +26,7 @@ USE_CATALOGUE = True  # whether only a subset of stars defined by a catalogue sh
 CATALOGUE = "1selected_sdB_sdOB.csv"  # the location of the catalogue
 FILE_LOC = "spectra/"  # directory that holds the spectrum files
 VERBOSE = False  # enable/disable verbose output
+CHECK_FOR_DOUBLES = True  # check if there are any stars for which multiple spectra files exist (needs catalogue)
 
 ### FIT SETTINGS
 
@@ -46,7 +47,7 @@ COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to d
 ### PLOT AND STORAGE SETTINGS
 
 mpl.rcParams['figure.dpi'] = 300  # DPI value of plots that are created, if they are not pdf files
-PLOT_FMT = ".pdf"  # File format of plots
+PLOT_FMT = ".png"  # File format of plots
 SHOW_PLOTS = False  # Show matplotlib plotting window for each plot
 PLOTOVERVIEW = False  # Plot overview of entire subspectrum
 SAVE_SINGLE_IMGS = False  # Save individual plots of fits as images in the respective folders !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!
@@ -974,7 +975,7 @@ def print_status(file, fileset, catalogue):
         print(f"Doing Fits for System {file_prefix.split('_')[0]} [{(fileset.index(file) + 1)}/{(len(fileset))}]")
 
 
-def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
+def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
     plt.figure().clear()
     plt.close()
     plt.cla()
@@ -1095,7 +1096,10 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
         axs.scatter(times, vels, zorder=5, color=colors[0])
         axs.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
 
-    fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+    if not merged:
+        fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+    else:
+        fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
     if SHOW_PLOTS:
         plt.show()
     else:
@@ -1104,7 +1108,7 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix):
         plt.close()
 
 
-def plot_rvcurve(vels, verrs, times, fprefix):
+def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
     plt.figure().clear()
     plt.close()
     plt.cla()
@@ -1127,7 +1131,11 @@ def plot_rvcurve(vels, verrs, times, fprefix):
         ax1.set_ylim((vels.min() - 2 * culumvs_range, vels.max() + 2 * culumvs_range))
 
     plt.tight_layout()
-    plt.savefig(f"output/{fprefix.split('_')[0]}/RV_variation{PLOT_FMT}", dpi=300)
+    if not merged:
+        fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation{PLOT_FMT}", dpi=300)
+    else:
+        fig.savefig(f"output/{fprefix}_merged/RV_variation{PLOT_FMT}", dpi=300)
+
     if SHOW_PLOTS:
         plt.show()
     else:
@@ -1166,6 +1174,8 @@ if __name__ == "__main__":
     file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
     for file_prefix in file_prefixes:
         fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
+        if os.path.isfile(f'output/.{file_prefix}') and not REDO_STARS:
+            continue
         if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
             if os.path.isfile(f'output/{file_prefix}/RV_variation{PLOT_FMT}'):
                 if not SAVE_SINGLE_IMGS:
@@ -1225,10 +1235,10 @@ if __name__ == "__main__":
         })
         rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
         if SAVE_COMPOSITE_IMG:
-            plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
-            plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix)
+            plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
+            plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
     print("Fits are completed, analysing results...")
-    result_analysis()
+    result_analysis(True, catalogue)
     if CREATE_PDF:
         create_pdf()
     print("All done!")
