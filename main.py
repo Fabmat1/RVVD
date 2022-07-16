@@ -1,18 +1,20 @@
 import glob
 import os
 import re
-from datetime import datetime
-import img2pdf
-import pandas as pd
-import numpy as np
 import warnings
+from datetime import datetime
+
+import astropy.time as atime
+import img2pdf
+import matplotlib as mpl
+import numpy as np
+import pandas as pd
+from astropy.io import fits
 from matplotlib import pyplot as plt
+from scipy.constants import c
 from scipy.optimize import curve_fit
 from scipy.special import erf
-from scipy.constants import c
-from astropy.io import fits
-import astropy.time as atime
-import matplotlib as mpl
+
 from analyse_results import result_analysis
 
 ############################## SETTINGS ##############################
@@ -57,7 +59,6 @@ REDO_STARS = False  # Whether to redo stars for which RVs have already be determ
 PLOT_LABELS_FONT_SIZE = 12  # Label font size
 PLOT_TITLE_FONT_SIZE = 17  # Title font size
 CREATE_PDF = True  # Group all RV-plots into one big .pdf at the end of the calculations !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!
-
 
 # Lines that can potentially be used in fitting:
 lines = {
@@ -231,9 +232,9 @@ def to_sigma(gamma):
 
 
 def height_err(eta, gamma, scaling, u_eta, u_gamma, u_scaling):
-    return np.sqrt((u_scaling * 2 / (np.pi*gamma)*(eta*(np.sqrt(np.log(2)*np.pi)-1)+1)) ** 2 + \
-                   (u_gamma*2*scaling/(np.pi*gamma**2)*(eta*(np.sqrt(np.log(2)*np.pi)-1)+1)) ** 2 + \
-                   (u_eta*2*scaling/(np.pi*gamma)*(np.sqrt(np.log(2)*np.pi)-1)) ** 2)
+    return np.sqrt((u_scaling * 2 / (np.pi * gamma) * (eta * (np.sqrt(np.log(2) * np.pi) - 1) + 1)) ** 2 + \
+                   (u_gamma * 2 * scaling / (np.pi * gamma ** 2) * (eta * (np.sqrt(np.log(2) * np.pi) - 1) + 1)) ** 2 + \
+                   (u_eta * 2 * scaling / (np.pi * gamma) * (np.sqrt(np.log(2) * np.pi) - 1)) ** 2)
 
 
 def voigt(x, scaling, gamma, shift, slope, height):
@@ -444,7 +445,7 @@ def cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=np.array([])):
 
 
 def peak_amp_from_height(h, gamma, eta):
-    return h/(np.pi*gamma/(2*(1+(np.sqrt(np.pi*np.log(2))-1)*eta)))
+    return h / (np.pi * gamma / (2 * (1 + (np.sqrt(np.pi * np.log(2)) - 1) * eta)))
 
 
 def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False,
@@ -498,15 +499,14 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     if initial_s == np.nan:
         initial_s = 1
 
-
     # scaling, gamma, shift, slope, height, eta
     initial_params = [initial_s, 5, center, 0, initial_h, 0.5]
 
     if limit_peak_height[0]:
         bounds = (
-                     [0, 0, center - 15, -np.inf, 0, 0],
-                     [limit_peak_height[1], np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
-                 )
+            [0, 0, center - 15, -np.inf, 0, 0],
+            [limit_peak_height[1], np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
+        )
         try:
             for i, param in enumerate(initial_params):
                 assert bounds[0][i] < param < bounds[1][i]
@@ -518,15 +518,13 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
             [np.inf, np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
         )
 
-
-
     try:
         params, errs = curve_fit(pseudo_voigt,
                                  slicedwl,
                                  flux[loind:upind],
                                  initial_params,
                                  # scaling, gamma, shift, slope, height, eta
-                                 bounds= bounds,
+                                 bounds=bounds,
                                  sigma=flux_std[loind:upind]
                                  )
 
@@ -613,7 +611,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
 
 
 def pseudo_voigt_height(errs, scaling, eta, gamma):
-    height = 2*scaling/(np.pi*gamma)*(1+(np.sqrt(np.pi*np.log(2))-1)*eta)
+    height = 2 * scaling / (np.pi * gamma) * (1 + (np.sqrt(np.pi * np.log(2)) - 1) * eta)
     err = height_err(eta, gamma, scaling, errs[5], errs[1], errs[0])
     return height, err
 
@@ -845,9 +843,8 @@ def cumulative_shift(output_table_spec, file):
             specparamrow["flux_0"][0],
             specparamrow["eta"][0],
         ]
-        bounds[0] += [0, specparamrow["gamma"][0]/4, -np.inf, 0, 0]
-        bounds[1] += [specparamrow["scaling"][0]*2, np.inf, np.inf, np.inf, 1]
-
+        bounds[0] += [0, specparamrow["gamma"][0] / 4, -np.inf, 0, 0]
+        bounds[1] += [specparamrow["scaling"][0] * 2, np.inf, np.inf, np.inf, 1]
 
     wl_dataset = np.concatenate(wl_dataset, axis=0)
     flux_dataset = np.concatenate(flux_dataset, axis=0)
@@ -975,6 +972,57 @@ def print_status(file, fileset, catalogue):
         print(f"Doing Fits for System {file_prefix.split('_')[0]} [{(fileset.index(file) + 1)}/{(len(fileset))}]")
 
 
+def gap_detection(arr):
+    gaps = np.diff(arr)
+    gapsmean = np.mean(gaps)
+    gapsmed = np.median(gaps)
+
+    if len(gaps) > 4:
+        lo = np.median(gaps[np.where(gaps < gapsmed)[0]])
+        hi = np.median(gaps[np.where(gaps > gapsmed)[0]])
+
+        iqr = hi - lo
+
+        outlier_bound = hi + 1.5 * iqr
+        if not np.logical_and(gapsmean - 0.25 * gapsmean < gaps, gaps < gapsmean + 0.25 * gapsmean).all():
+            return gaps, list(np.where(np.logical_or(gaps > outlier_bound, gaps > 10 * np.amin(gaps)))[0])
+        else:
+            return gaps, []
+    else:
+        if not np.logical_and(gapsmean - 0.25 * gapsmean < gaps, gaps < gapsmean + 0.25 * gapsmean).all():
+            return gaps, list(np.where(np.logical_or(gaps > 2 * gapsmed, gaps > 10 * np.amin(gaps)))[0])
+        else:
+            return gaps, []
+
+
+def gap_inds(array, recursed=False):
+    if len(array) <= 2 and recursed:
+        return np.array([]), 0
+    elif len(array) <= 2 and not recursed:
+        return np.array([]), 1
+    gaps, gaps_inds = gap_detection(array)
+
+    splitinds = gaps_inds
+    if not recursed:
+        ncuts = len(gaps_inds) + 1
+        gaps_inds.append(len(gaps))
+        gaps_inds.insert(0, 0)
+        if ncuts == 1:
+            return np.array(gaps_inds), ncuts
+    else:
+        ncuts = len(gaps_inds)
+        if ncuts == 0:
+            return np.array(gaps_inds), ncuts
+
+    allgaps = np.array([])
+    for i, subarr in enumerate(np.split(array, np.array(splitinds) + 1)):
+        subgaps, subcuts = gap_inds(subarr, True)
+        allgaps = np.concatenate([allgaps, subgaps + gaps_inds[i - 1] if i != 0 else subgaps])
+        ncuts += subcuts
+    gaps_inds = np.concatenate([gaps_inds, allgaps])
+    return np.sort(gaps_inds.astype(int)), ncuts
+
+
 def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
     plt.figure().clear()
     plt.close()
@@ -982,16 +1030,7 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
     plt.clf()
 
     if len(times) > 2:
-        gaps = np.diff(times)
-        gapsstd = np.std(gaps)
-        gapsmean = np.mean(gaps)
-        if 2 * gapsmean < gapsstd:
-            gaps_inds = list(np.where(gaps > 1.5 * gapsstd)[0])
-        else:
-            gaps_inds = list(np.where(gaps > 4 * gapsmean)[0])
-        ncuts = len(gaps_inds) + 1
-        gaps_inds.append(len(gaps))
-        gaps_inds.insert(0, 0)
+        gaps_inds, ncuts = gap_inds(times)
         widths = []
         for ind, gapind in enumerate(gaps_inds):
             if ind != len(gaps_inds) - 1:
@@ -999,13 +1038,13 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
         widths = np.array(widths)
         toothin = np.where(widths < 0.05 * np.amax(widths))[0]
         widths[toothin] += 0.05 * np.amax(widths)
+
     else:
-        gaps = []
         gaps_inds = []
         ncuts = 1
         widths = np.array([1])
 
-    fig, axs = plt.subplots(1, ncuts, sharey="all", facecolor="w", gridspec_kw={'width_ratios': widths})
+    fig, axs = plt.subplots(1, ncuts, sharey="all", facecolor="w", gridspec_kw={'width_ratios': widths}, figsize=(4.8 * 16 / 9, 4.8))
     plt.subplots_adjust(wspace=.075)
 
     if type(axs) == np.ndarray:
@@ -1030,9 +1069,16 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
                          labelleft=False,
                          labelright=False)
 
-    invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
-    invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
-    plt.subplots_adjust(top=0.85)
+    normwidths = widths / np.linalg.norm(widths)
+
+    if np.any(normwidths < .5):
+        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=40)
+        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+        plt.subplots_adjust(top=0.85, bottom=.2)
+    else:
+        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
+        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+        plt.subplots_adjust(top=0.85)
 
     times = np.array(times)
     times -= np.amin(times)
@@ -1062,8 +1108,6 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
                         color=colors[1],
                         clip_on=False)
 
-            normwidths = widths / np.linalg.norm(widths)
-
             kwargs = dict(transform=fig.transFigure, color='k', clip_on=False)
             [xmin, ymin], [xmax, ymax] = ax.get_position().get_points()
             d = .0075
@@ -1091,7 +1135,20 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
                 ax.yaxis.tick_right()
                 ax.spines['left'].set_visible(False)
             if normwidths[ind] < 0.20:
-                plt.setp(ax.get_xticklabels(), rotation=90, ha='right')
+                ax.set_xticks([(start + end) / 2], [round((start + end) / 2, 2)])
+                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+            if 0.2 < normwidths[ind] < 0.5:
+                if ind == 0:
+                    ax.set_xticks(np.linspace(start, end - span * 0.3, 2).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 2), 2).tolist())
+                else:
+                    ax.set_xticks(np.linspace(start + span * 0.3, end - span * 0.3, 2).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 2), 2).tolist())
+                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+            if normwidths[ind] > 0.5:
+                if ind == 0:
+                    ax.set_xticks(np.linspace(start + span * 0.15, end - span * 0.15, 4).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 4), 2).tolist())
+                else:
+                    ax.set_xticks(np.linspace(start, end - span * 0.15, 4).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 4), 2).tolist())
+            # ax.ticklabel_format(useOffset=False)
     else:
         axs.scatter(times, vels, zorder=5, color=colors[0])
         axs.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
@@ -1216,10 +1273,11 @@ if __name__ == "__main__":
         else:
             gaia_id = file_prefix
 
-        single_output_table.drop("sanitized", axis=1)
-        single_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/single_spec_vals.csv", index=False)
-        cumulative_output_table.drop("sanitized", axis=1)
-        cumulative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)
+        with np.printoptions(linewidth=10000):
+            single_output_table.drop("sanitized", axis=1)
+            single_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/single_spec_vals.csv", index=False)
+            cumulative_output_table.drop("sanitized", axis=1)
+            cumulative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)
 
         specvels = np.array(specvels) / 1000
         specverrs = np.array(specverrs) / 1000
@@ -1233,7 +1291,8 @@ if __name__ == "__main__":
             "mjd": spectimes_mjd,
             "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
         })
-        rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
+        with np.printoptions(linewidth=10000):
+            rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
         if SAVE_COMPOSITE_IMG:
             plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
             plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
