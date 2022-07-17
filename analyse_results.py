@@ -1,9 +1,11 @@
 import os
+import shutil
+
 import numpy as np
 import pandas as pd
 from scipy import stats
+
 from fit_rv_curve import fit_rv_curve
-import shutil
 
 
 def vrad_pvalue(vrad, vrad_err):
@@ -34,16 +36,16 @@ def vrad_pvalue(vrad, vrad_err):
 
 def mergedir(dirs_to_combine, gaia_id):
     dirname = os.path.dirname(__file__)
-    rvdata = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/RV_variation.csv"), delimiter=',')[1:] for f in dirs_to_combine], dtype=None)
-    single_fit_data = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/single_spec_vals.csv"), delimiter=',')[1:] for f in dirs_to_combine], dtype=None)
-    culum_fit_data = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/culum_spec_vals.csv"), delimiter=',')[1:] for f in dirs_to_combine], dtype=None)
+    rvdata = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/RV_variation.csv"), delimiter=',', dtype=object)[1:] for f in dirs_to_combine])
+    single_fit_data = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/single_spec_vals.csv"), delimiter=',', dtype=object)[1:] for f in dirs_to_combine])
+    culum_fit_data = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/culum_spec_vals.csv"), delimiter=',', dtype=object)[1:] for f in dirs_to_combine])
 
+    rvdata = rvdata[rvdata[:, 4].argsort()]
     firstdir = dirs_to_combine[0]
 
     rvheader = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/RV_variation.csv"), delimiter=',', dtype=str)[:1]
     single_fit_header = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/single_spec_vals.csv"), delimiter=',', dtype=str)[:1]
     culum_fit_header = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/culum_spec_vals.csv"), delimiter=',', dtype=str)[:1]
-
 
     try:
         os.mkdir(os.path.join(dirname, f"output/{firstdir}_merged/"))
@@ -54,11 +56,13 @@ def mergedir(dirs_to_combine, gaia_id):
     single_fit_array = np.concatenate([single_fit_header, single_fit_data], axis=0)
     culum_fit_array = np.concatenate([culum_fit_header, culum_fit_data], axis=0)
 
-    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/RV_variation.csv"), rv_array, delimiter=",", fmt="%s")
-    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/single_spec_vals.csv"), single_fit_array, delimiter=",", fmt="%s")
-    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/culum_spec_vals.csv"), culum_fit_array, delimiter=",", fmt="%s")
+    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/RV_variation.csv"), rv_array.astype(np.str_), delimiter=",", fmt="%s")
+    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/single_spec_vals.csv"), single_fit_array.astype(np.str_), delimiter=",", fmt="%s")
+    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/culum_spec_vals.csv"), culum_fit_array.astype(np.str_), delimiter=",", fmt="%s")
 
     from main import plot_rvcurve, plot_rvcurve_brokenaxis
+    rvdata = rvdata[:, :-1].astype(float)
+
     plot_rvcurve(rvdata[:, 0], rvdata[:, 1], rvdata[:, 4], firstdir, gaia_id, True)
     plot_rvcurve_brokenaxis(rvdata[:, 0], rvdata[:, 1], rvdata[:, 4], firstdir, gaia_id, True)
 

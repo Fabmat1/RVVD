@@ -49,10 +49,10 @@ COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to d
 ### PLOT AND STORAGE SETTINGS
 
 mpl.rcParams['figure.dpi'] = 300  # DPI value of plots that are created, if they are not pdf files
-PLOT_FMT = ".png"  # File format of plots
+PLOT_FMT = ".pdf"  # File format of plots (.pdf is recommended due to smaller file sizes)
 SHOW_PLOTS = False  # Show matplotlib plotting window for each plot
 PLOTOVERVIEW = False  # Plot overview of entire subspectrum
-SAVE_SINGLE_IMGS = False  # Save individual plots of fits as images in the respective folders !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!
+SAVE_SINGLE_IMGS = True  # Save individual plots of fits as images in the respective folders !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!
 REDO_IMAGES = False  # Redo images already present in folders
 SAVE_COMPOSITE_IMG = True  # Save RV-Curve plot
 REDO_STARS = False  # Whether to redo stars for which RVs have already be determined
@@ -598,7 +598,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     if not os.path.isdir(f'output/{f_pre}/{subspec_ind}'):
         os.mkdir(f"output/{f_pre}/{subspec_ind}")
     if SAVE_SINGLE_IMGS:
-        plt.savefig(f"output/{f_pre}/{subspec_ind}/{round(center)}Å", dpi=500)
+        plt.savefig(f"output/{f_pre}/{subspec_ind}/{round(center)}Å{PLOT_FMT}")
         if SHOW_PLOTS:
             plt.show()
     plt.cla()
@@ -984,43 +984,34 @@ def gap_detection(arr):
         iqr = hi - lo
 
         outlier_bound = hi + 1.5 * iqr
-        if not np.logical_and(gapsmean - 0.25 * gapsmean < gaps, gaps < gapsmean + 0.25 * gapsmean).all():
-            return gaps, list(np.where(np.logical_or(gaps > outlier_bound, gaps > 10 * np.amin(gaps)))[0])
+        if not np.logical_and(gapsmed - 0.25 * gapsmed < gaps, gaps < gapsmed + 0.25 * gapsmed).all():
+            return gaps, list(np.where(np.logical_or(gaps > outlier_bound, gaps > 10 * np.amin(gaps)))[0] + 1)
         else:
             return gaps, []
     else:
-        if not np.logical_and(gapsmean - 0.25 * gapsmean < gaps, gaps < gapsmean + 0.25 * gapsmean).all():
-            return gaps, list(np.where(np.logical_or(gaps > 2 * gapsmed, gaps > 10 * np.amin(gaps)))[0])
+        if not np.logical_and(gapsmed - 0.25 * gapsmed < gaps, gaps < gapsmed + 0.25 * gapsmed).all():
+            return gaps, list(np.where(np.logical_or(gaps > 2 * gapsmed, gaps > 10 * np.amin(gaps)))[0] + 1)
         else:
             return gaps, []
 
 
-def gap_inds(array, recursed=False):
-    if len(array) <= 2 and recursed:
-        return np.array([]), 0
-    elif len(array) <= 2 and not recursed:
-        return np.array([]), 1
+def gap_inds(array):
+    if len(array) <= 2:
+        return np.array([])
     gaps, gaps_inds = gap_detection(array)
 
-    splitinds = gaps_inds
-    if not recursed:
-        ncuts = len(gaps_inds) + 1
-        gaps_inds.append(len(gaps))
-        gaps_inds.insert(0, 0)
-        if ncuts == 1:
-            return np.array(gaps_inds), ncuts
-    else:
-        ncuts = len(gaps_inds)
-        if ncuts == 0:
-            return np.array(gaps_inds), ncuts
+    if len(gaps_inds) == 0:
+        return np.array(gaps_inds)
 
     allgaps = np.array([])
-    for i, subarr in enumerate(np.split(array, np.array(splitinds) + 1)):
-        subgaps, subcuts = gap_inds(subarr, True)
+    for i, subarr in enumerate(np.split(array, np.array(gaps_inds))):
+        subgaps = gap_inds(subarr)
         allgaps = np.concatenate([allgaps, subgaps + gaps_inds[i - 1] if i != 0 else subgaps])
-        ncuts += subcuts
+
     gaps_inds = np.concatenate([gaps_inds, allgaps])
-    return np.sort(gaps_inds.astype(int)), ncuts
+    gaps_inds, counts = np.unique(gaps_inds.astype(int), return_counts=True)
+
+    return np.sort(gaps_inds)
 
 
 def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
@@ -1030,21 +1021,17 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
     plt.clf()
 
     if len(times) > 2:
-        gaps_inds, ncuts = gap_inds(times)
-        widths = []
-        for ind, gapind in enumerate(gaps_inds):
-            if ind != len(gaps_inds) - 1:
-                widths.append(times[gaps_inds[ind + 1]] - times[gaps_inds[ind] + 1 if gaps_inds[ind] != 0 else 0])
+        gaps_inds = gap_inds(times)
+
+        widths = [arr[-1] - arr[0] for arr in np.split(np.array(times), gaps_inds)]
+
         widths = np.array(widths)
         toothin = np.where(widths < 0.05 * np.amax(widths))[0]
         widths[toothin] += 0.05 * np.amax(widths)
-
     else:
         gaps_inds = []
-        ncuts = 1
         widths = np.array([1])
-
-    fig, axs = plt.subplots(1, ncuts, sharey="all", facecolor="w", gridspec_kw={'width_ratios': widths}, figsize=(4.8 * 16 / 9, 4.8))
+    fig, axs = plt.subplots(1, len(widths), sharey="all", facecolor="w", gridspec_kw={'width_ratios': widths}, figsize=(4.8 * 16 / 9, 4.8))
     plt.subplots_adjust(wspace=.075)
 
     if type(axs) == np.ndarray:
@@ -1071,24 +1058,28 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
 
     normwidths = widths / np.linalg.norm(widths)
 
-    if np.any(normwidths < .5):
-        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=40)
+    if np.any(normwidths < .5) or np.amax(times) > 100:
+        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=45)
         invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
-        plt.subplots_adjust(top=0.85, bottom=.2)
+        plt.subplots_adjust(top=0.85, bottom=.2, left=.1, right=.95)
     else:
         invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
         invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
-        plt.subplots_adjust(top=0.85)
+        plt.subplots_adjust(top=0.85, left=.1, right=.95)
 
     times = np.array(times)
     times -= np.amin(times)
 
+    splittimes = np.split(times, gaps_inds)
+
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    if ncuts > 1:
+    if len(widths) > 1:
         for ind, ax in enumerate(axs):
-            start = times[gaps_inds[ind] + 1 if gaps_inds[ind] != 0 else 0]
-            end = times[gaps_inds[ind + 1]]
+            start = splittimes[ind][0]
+            end = splittimes[ind][-1]
             span = end - start
+            if span == 0:
+                span = 0.05 * np.amax(widths)
             start -= span * 0.1
             end += span * 0.1
             ax.set_xlim(start, end)
@@ -1138,16 +1129,24 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
                 ax.set_xticks([(start + end) / 2], [round((start + end) / 2, 2)])
                 plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
             if 0.2 < normwidths[ind] < 0.5:
+                N = 2
+                if np.amax(np.unique(np.round(np.linspace(start, end - span * 0.15, 2), N), return_counts=True)[1]) > 1:
+                    N = 3
                 if ind == 0:
-                    ax.set_xticks(np.linspace(start, end - span * 0.3, 2).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 2), 2).tolist())
+                    ax.set_xticks(np.linspace(start, end - span * 0.3, 2).tolist(), np.round(np.linspace(start, end - span * 0.15, 2), N).tolist())
                 else:
-                    ax.set_xticks(np.linspace(start + span * 0.3, end - span * 0.3, 2).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 2), 2).tolist())
+                    ax.set_xticks(np.linspace(start + span * 0.3, end - span * 0.3, 2).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 2), N).tolist())
                 plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
             if normwidths[ind] > 0.5:
+                N = 2
+                if np.amax(np.unique(np.round(np.linspace(start, end - span * 0.15, 4), N), return_counts=True)[1]) > 1:
+                    N = 3
+                if end > 100:
+                    plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
                 if ind == 0:
-                    ax.set_xticks(np.linspace(start + span * 0.15, end - span * 0.15, 4).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 4), 2).tolist())
+                    ax.set_xticks(np.linspace(start, end - span * 0.15, 4).tolist(), np.round(np.linspace(start, end - span * 0.15, 4), N).tolist())
                 else:
-                    ax.set_xticks(np.linspace(start, end - span * 0.15, 4).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 4), 2).tolist())
+                    ax.set_xticks(np.linspace(start + span * 0.15, end - span * 0.15, 4).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 4), N).tolist())
             # ax.ticklabel_format(useOffset=False)
     else:
         axs.scatter(times, vels, zorder=5, color=colors[0])
@@ -1170,7 +1169,7 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
     plt.close()
     plt.cla()
     plt.clf()
-    fig, ax1 = plt.subplots()
+    fig, ax1 = plt.subplots(figsize=(4.8 * 16 / 9, 4.8))
     fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE)
     ax1.set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
     ax1.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE)
@@ -1211,12 +1210,25 @@ def create_pdf():
         dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
         files = [os.path.join(d, f"RV_variation{PLOT_FMT}") for d in dirs]
         files_brokenaxis = [os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}") for d in dirs]
-        if not plotpdf_exists:
-            with open("all_RV_plots.pdf", "wb") as f:
-                f.write(img2pdf.convert(files))
-        if not plotpdfbroken_exists:
-            with open("all_RV_plots_broken_axis.pdf", "wb") as f:
-                f.write(img2pdf.convert(files_brokenaxis))
+        if PLOT_FMT.lower() != ".pdf":
+            if not plotpdf_exists:
+                with open("all_RV_plots.pdf", "wb") as f:
+                    f.write(img2pdf.convert(files))
+            if not plotpdfbroken_exists:
+                with open("all_RV_plots_broken_axis.pdf", "wb") as f:
+                    f.write(img2pdf.convert(files_brokenaxis))
+        else:
+            from PyPDF2 import PdfFileMerger
+            if not plotpdf_exists:
+                merger = PdfFileMerger()
+                [merger.append(pdf) for pdf in files]
+                with open("all_RV_plots.pdf", "wb") as new_file:
+                    merger.write(new_file)
+            if not plotpdfbroken_exists:
+                merger = PdfFileMerger()
+                [merger.append(pdf) for pdf in files_brokenaxis]
+                with open("all_RV_plots_broken_axis.pdf", "wb") as new_file:
+                    merger.write(new_file)
 
 
 ############################## EXECUTION ##############################
@@ -1235,13 +1247,14 @@ if __name__ == "__main__":
             continue
         if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
             if os.path.isfile(f'output/{file_prefix}/RV_variation{PLOT_FMT}'):
-                if not SAVE_SINGLE_IMGS:
-                    continue
-                if not REDO_IMAGES:
-                    continue
-                nspec = len(fileset)
-                if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
-                    continue
+                if os.path.isfile(f'output/{file_prefix}/RV_variation_broken_axis{PLOT_FMT}'):
+                    if not SAVE_SINGLE_IMGS:
+                        continue
+                    if not REDO_IMAGES:
+                        continue
+                    nspec = len(fileset)
+                    if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
+                        continue
         spectimes = []
         spectimes_mjd = []
         specvels = []
