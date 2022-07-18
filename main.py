@@ -25,7 +25,7 @@ from analyse_results import result_analysis
 EXTENSION = ".txt"  # extension of the ASCII spectra files
 SPECTRUM_FILE_SEPARATOR = " "  # Separator between columns in the ASCII file
 USE_CATALOGUE = True  # whether only a subset of stars defined by a catalogue should be used
-CATALOGUE = "1selected_sdB_sdOB.csv"  # the location of the catalogue
+CATALOGUE = "all_objects.csv"  # the location of the catalogue
 FILE_LOC = "spectra/"  # directory that holds the spectrum files
 VERBOSE = False  # enable/disable verbose output
 CHECK_FOR_DOUBLES = True  # check if there are any stars for which multiple spectra files exist (needs catalogue)
@@ -853,15 +853,18 @@ def cumulative_shift(output_table_spec, file):
     flux_std_dataset[flux_std_dataset == 0] = np.mean(
         flux_std_dataset)  # Zeros in the std-dataset will raise exceptions (And are scientifically nonsensical)
 
-    params, errs = curve_fit(
-        culum_fit_funciton,
-        wl_dataset,
-        flux_dataset,
-        p0=p0,
-        bounds=bounds,
-        sigma=flux_std_dataset,
-        max_nfev=100000
-    )
+    try:
+        params, errs = curve_fit(
+            culum_fit_funciton,
+            wl_dataset,
+            flux_dataset,
+            p0=p0,
+            bounds=bounds,
+            sigma=flux_std_dataset,
+            max_nfev=100000
+        )
+    except RuntimeError:
+        return None, None, None, False
 
     errs = np.sqrt(np.diag(errs))
 
@@ -933,7 +936,7 @@ def cumulative_shift(output_table_spec, file):
 
         output_table = pd.concat([output_table, output_table_row], axis=0)
 
-    return culumv, culumv_errs, output_table
+    return culumv, culumv_errs, output_table, True
 
 
 def open_spec_files(loc, fpre, end=".txt"):
@@ -1056,6 +1059,32 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
                          labelleft=False,
                          labelright=False)
 
+    if len(times) == 0:
+        left, width = .25, .5
+        bottom, height = .25, .5
+        right = left + width
+        top = bottom + height
+        p = plt.Rectangle((left, bottom), width, height, fill=False)
+        p.set_transform(invis_ax.transAxes)
+        p.set_clip_on(False)
+        invis_ax.add_patch(p)
+        invis_ax.text(0.5 * (left + right), 0.5 * (bottom + top), 'NO GOOD SUBSPECTRA FOUND!',
+                      horizontalalignment='center',
+                      verticalalignment='center',
+                      transform=invis_ax.transAxes,
+                      color="red")
+        if not merged:
+            fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+        else:
+            fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+        if SHOW_PLOTS:
+            plt.show()
+        else:
+            plt.cla()
+            plt.clf()
+            plt.close()
+        return
+
     normwidths = widths / np.linalg.norm(widths)
 
     if np.any(normwidths < .5) or np.amax(times) > 100:
@@ -1174,6 +1203,33 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
     ax1.set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
     ax1.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE)
 
+    if len(times) == 0:
+        left, width = .25, .5
+        bottom, height = .25, .5
+        right = left + width
+        top = bottom + height
+        p = plt.Rectangle((left, bottom), width, height, fill=False)
+        p.set_transform(ax1.transAxes)
+        p.set_clip_on(False)
+        ax1.add_patch(p)
+        ax1.text(0.5 * (left + right), 0.5 * (bottom + top), 'NO GOOD SUBSPECTRA FOUND!',
+                 horizontalalignment='center',
+                 verticalalignment='center',
+                 transform=ax1.transAxes,
+                 color="red")
+        if not merged:
+            fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation{PLOT_FMT}", dpi=300)
+        else:
+            fig.savefig(f"output/{fprefix}_merged/RV_variation{PLOT_FMT}", dpi=300)
+
+        if SHOW_PLOTS:
+            plt.show()
+        else:
+            plt.cla()
+            plt.clf()
+            plt.close()
+        return
+
     times = np.array(times)
     times -= np.amin(times)
 
@@ -1272,7 +1328,9 @@ if __name__ == "__main__":
             elif VERBOSE:
                 print(f"Fits for {len(output_table_spec.index)} Lines complete!")
             single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
-            culumv, culumv_errs, output_table_spec = cumulative_shift(output_table_spec, file)
+            culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file)
+            if not success:
+                continue
             cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
             culumvs.append(culumv)
             culumvs_errs.append(culumv_errs)

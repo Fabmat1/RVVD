@@ -31,6 +31,11 @@ def vrad_pvalue(vrad, vrad_err):
     pval = stats.chi2.sf(chisq_sum, dof)
     logp = np.log10(pval)
 
+    if pval == 0:
+        return -500
+    if np.isnan(logp):
+        return 0
+
     return logp
 
 
@@ -95,6 +100,18 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     for file in files:
         specname = file.split("\\")[-2]
         if "_merged" in specname:
+            sid = catalogue.loc[catalogue["file"] == specname.replace("_merged", "")]["source_id"].iloc[0]
+            filedata = np.genfromtxt(file, delimiter=',')[1:]
+            files_combined = catalogue.loc[catalogue["source_id"] == sid]["file"].tolist()
+            culumvs = filedata[:, 0]
+            culumv_errs = filedata[:, 1]
+            logp = vrad_pvalue(culumvs, culumv_errs)
+
+            analysis_params = pd.concat([analysis_params, pd.DataFrame({
+                "source_id": [str(sid)],
+                "logp": [logp],
+                "associated_files": [files_combined]
+            })])
             continue
         sid = catalogue.loc[catalogue["file"] == specname]["source_id"].iloc[0]
         if sid in used_sids:

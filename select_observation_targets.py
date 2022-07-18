@@ -1,8 +1,9 @@
 import matplotlib.pyplot as plt
-import pandas as pd
-from astropy.table import Table
 import numpy as np
+import pandas as pd
 from astropy.io import fits
+from astropy.table import Table
+
 from main import open_spec_files
 
 N_STARS = 100
@@ -100,16 +101,16 @@ plt.gca().invert_yaxis()
 plt.savefig("hotsdBs.png", dpi=250)
 plt.show()
 
-sdb_subset = for_selection.loc[["sdB" in c or "sdOB" in c for c in for_selection["SPEC_CLASS"]]]
-sdb_subset["gmag-nspec"] = sdb_subset["gmag"] - sdb_subset["nspec"] / 2
-final_table = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
+final_table = for_selection
+# sdb_subset = for_selection.loc[["sdB" in c or "sdOB" in c for c in for_selection["SPEC_CLASS"]]]
+# sdb_subset["gmag-nspec"] = sdb_subset["gmag"] - sdb_subset["nspec"] / 2
+# final_table = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
 
 mag = final_table[["gmag"]].to_numpy()
 color = final_table[["bp_rp"]].to_numpy()
 nspec = final_table[["nspec"]].to_numpy()
 
-
-plt.scatter(color, mag, 0.7*nspec ** 2, color=list(final_table["plot_color"]), alpha=0.7,
+plt.scatter(color, mag, 0.7 * nspec ** 2, color=list(final_table["plot_color"]), alpha=0.7,
             label="_nolegend_")
 
 plt.scatter([], [], color="darkred")
@@ -128,4 +129,4 @@ plt.grid(which='major', axis='y', linestyle='--')
 plt.gca().invert_yaxis()
 plt.savefig("subset.png", dpi=250)
 plt.show()
-final_table.drop("plot_color", axis=1).to_csv("selected_objects.csv", index=False)
+final_table.drop("plot_color", axis=1).to_csv("all_objects.csv", index=False)
