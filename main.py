@@ -37,6 +37,7 @@ OUTLIER_MAX_SIGMA = 3
 OUTLIER_MAX_SIGMA: Sigma value above which a line from the individual gets rejected as a fit to a wrong line.
 Outliers do not get used in the cumulative fit.
 """
+MAX_ERR = 100000  # Maximum allowed error above which a RV gets rejected as bad [m/s]
 CUT_MARGIN = 20  # Margin used for cutting out disturbing lines, if their standard deviation was not yet determined [Å]
 MARGIN = 100  # Window margin around lines used in determining fits [Å]
 AUTO_REMOVE_OUTLIERS = True  # Whether an input from the user is required to remove outliers from being used in the cumulative fit 
@@ -243,6 +244,7 @@ def voigt(x, scaling, gamma, shift, slope, height):
     return -scaling * (np.real(faddeeva(z)) / (sigma * np.sqrt(2 * np.pi))) + slope * (x - shift) + height
 
 
+# TODO: NONONO, no more normalizing! make h only dependent on I!!
 def pseudo_voigt(x, scaling, gamma, shift, slope, height, eta):
     return -scaling * (eta * gaussian(x, gamma, shift) + (1 - eta) * lorentzian(x, gamma, shift)) + slope * x + height
 
@@ -473,6 +475,15 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     if sanitize:
         flux, cut_flux, mask = sanitize_flux(flux, center, wavelength)
     slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
+    try:
+        assert len(slicedwl) > 0
+    except AssertionError:
+        print("Seems like the line(s) you want to look at are not in the spectrum " + file_prefix)
+        print("Line @ " + str(center))
+        print("Check your files!")
+        return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
+               [False, False, False], False, False
+
     plt.plot(slicedwl, flux[loind:upind], zorder=5)
 
     fluxmin = flux[loind:upind].min()
@@ -535,7 +546,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
             if cr and np.sum(cr_ind) > 0:
                 cr_ind += loind
                 cr_true_inds = wavelengthdata.searchsorted(wavelength[cr_ind])
-                plt.cla()
+                plt.close()
                 for i in cr_ind:
                     plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
                 return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
@@ -551,7 +562,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                                         color="red")
                 if not sanitize:
                     warn_text.set_visible(False)
-                    plt.cla()
+                    plt.close()
                     return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix,
                                             sanitize=True)
             warnings.warn(f"WL {center}Å: Signal-to-Noise ratio out of bounds!",
@@ -561,8 +572,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         fluxspan = np.amax(flux[loind:upind]) - np.amin(flux[loind:upind])
 
         if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > 1.5 * fluxspan and sucess and not limit_peak_height[0]:
-            plt.cla()
-            plt.clf()
+            plt.close()
             return plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize, used_cr_inds, limit_peak_height=(True, 5 * peak_amp_from_height(fluxspan, np.mean(np.diff(slicedwl)), 0.5)))
 
         plt.plot(slicedwl, pseudo_voigt(slicedwl, *params), zorder=5)
@@ -575,7 +585,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                                 color="red")
         if not sanitize:
             warn_text.set_visible(False)
-            plt.cla()
+            plt.close()
             return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
         plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
     except ValueError as e:
@@ -586,7 +596,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                                 color="red")
         if not sanitize:
             warn_text.set_visible(False)
-            plt.cla()
+            plt.close()
             return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
         sucess = False
         plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
@@ -601,8 +611,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         plt.savefig(f"output/{f_pre}/{subspec_ind}/{round(center)}Å{PLOT_FMT}")
         if SHOW_PLOTS:
             plt.show()
-    plt.cla()
-    plt.clf()
+    plt.close()
     if sucess:
         return sucess, errs, params, [sstr, nstr, SNR], sanitize, used_cr_inds
     else:
@@ -612,8 +621,11 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
 
 def pseudo_voigt_height(errs, scaling, eta, gamma):
     height = 2 * scaling / (np.pi * gamma) * (1 + (np.sqrt(np.pi * np.log(2)) - 1) * eta)
-    err = height_err(eta, gamma, scaling, errs[5], errs[1], errs[0])
-    return height, err
+    if errs is not None:
+        err = height_err(eta, gamma, scaling, errs[5], errs[1], errs[0])
+        return height, err
+    else:
+        return height
 
 
 def print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc):
@@ -874,6 +886,9 @@ def cumulative_shift(output_table_spec, file):
     culumv = v_from_doppler_rel(r_factor)
     culumv_errs = v_from_doppler_rel_err(r_factor, r_factor_err)
 
+    if np.abs(culumv_errs) > MAX_ERR or culumv_errs == 0.0:
+        return None, None, None, False
+
     errs = np.split(np.array(errs)[1:], len(np.array(errs)[1:]) / 5)
     params = np.split(np.array(params)[1:], len(np.array(params)[1:]) / 5)
 
@@ -883,6 +898,15 @@ def cumulative_shift(output_table_spec, file):
     for i, paramset in enumerate(params):
         lname = list(output_table_spec['line_name'])[i]
         lines = list(linelist)
+
+        scaling, gamma, slope, height, eta = paramset
+        shift = r_factor * lines[i]
+        scalingerr, gammaerr, slopeerr, heighterr, etaerr = errs[i]
+        shifterr = r_factor_err * lines[i]
+
+        p_height = pseudo_voigt_height(None, scaling, eta, gamma)
+        p_height_err = height_err(eta, gamma, scaling, etaerr, gammaerr, scalingerr)
+
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
         plt.xlabel("Wavelength [Å]")
         plt.title(f"cumulative Fit for Line {lname} @ {round(lines[i])}Å")
@@ -890,25 +914,27 @@ def cumulative_shift(output_table_spec, file):
         plt.plot(wl_dataset[i], flux_dataset[i])
         wllinspace = np.linspace(wl_dataset[i][0], wl_dataset[i][-1], 1000)
         plt.plot(wllinspace, make_dataset(wllinspace, r_factor, i, paramset))
+        if p_height < p_height_err or p_height > 1.5 * np.ptp(flux_dataset[i]):
+            plt.figtext(0.3, 0.95, f"FIT REJECTED!",
+                        horizontalalignment='right',
+                        verticalalignment='bottom',
+                        color="red")
+            if SAVE_SINGLE_IMGS:
+                plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
+            return None, None, None, False
         if SAVE_SINGLE_IMGS:
             subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
-            plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}", dpi=300)
+            plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if SHOW_PLOTS:
                 plt.show()
-        plt.clf()
-        plt.cla()
-
-        scaling, gamma, slope, height, eta = paramset
-        shift = r_factor * lines[i]
-        scalingerr, gammaerr, slopeerr, heighterr, etaerr = errs[i]
-        shifterr = r_factor_err * lines[i]
+        plt.close()
 
         output_table_row = pd.DataFrame({
             "subspectrum": [list(output_table_spec["subspectrum"])[0]],
             "line_name": [lname],
             "line_loc": [lines[i]],
-            "height": ["--"],
-            "u_height": ["--"],
+            "height": [p_height],
+            "u_height": [p_height_err],
             "reduction_factor": [r_factor],
             "u_reduction_factor": [r_factor_err],
             "lambda_0": [shift],
@@ -1018,10 +1044,7 @@ def gap_inds(array):
 
 
 def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
-    plt.figure().clear()
     plt.close()
-    plt.cla()
-    plt.clf()
 
     if len(times) > 2:
         gaps_inds = gap_inds(times)
@@ -1080,8 +1103,6 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
         if SHOW_PLOTS:
             plt.show()
         else:
-            plt.cla()
-            plt.clf()
             plt.close()
         return
 
@@ -1188,16 +1209,11 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
     if SHOW_PLOTS:
         plt.show()
     else:
-        plt.cla()
-        plt.clf()
         plt.close()
 
 
 def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
-    plt.figure().clear()
     plt.close()
-    plt.cla()
-    plt.clf()
     fig, ax1 = plt.subplots(figsize=(4.8 * 16 / 9, 4.8))
     fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE)
     ax1.set_ylabel("Radial Velocity [km/s]", fontsize=PLOT_LABELS_FONT_SIZE)
@@ -1225,8 +1241,6 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
         if SHOW_PLOTS:
             plt.show()
         else:
-            plt.cla()
-            plt.clf()
             plt.close()
         return
 
@@ -1251,8 +1265,6 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
     if SHOW_PLOTS:
         plt.show()
     else:
-        plt.cla()
-        plt.clf()
         plt.close()
 
 
@@ -1262,10 +1274,19 @@ def create_pdf():
 
     if not plotpdf_exists or not plotpdfbroken_exists:
         dirname = os.path.dirname(__file__)
-        dirs = os.walk(os.path.join(dirname, "output"))
-        dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
+        dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
         files = [os.path.join(d, f"RV_variation{PLOT_FMT}") for d in dirs]
         files_brokenaxis = [os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}") for d in dirs]
+
+        restable = pd.read_csv("result_parameters.csv", delimiter=",", dtype={"source_id": np.int64,
+                                                                              "logp": "float",
+                                                                              "associated_files": "string"})
+
+        restable.reset_index(inplace=True, drop=True)
+
+        files.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("\\")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
+        files_brokenaxis.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("\\")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
+
         if PLOT_FMT.lower() != ".pdf":
             if not plotpdf_exists:
                 with open("all_RV_plots.pdf", "wb") as f:
@@ -1346,6 +1367,8 @@ if __name__ == "__main__":
 
         with np.printoptions(linewidth=10000):
             single_output_table.drop("sanitized", axis=1)
+            if not os.path.isdir(f"output/{file_prefix.split('_')[0]}"):
+                os.mkdir(f"output/{file_prefix.split('_')[0]}")
             single_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/single_spec_vals.csv", index=False)
             cumulative_output_table.drop("sanitized", axis=1)
             cumulative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)

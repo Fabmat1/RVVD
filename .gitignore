@@ -13,6 +13,7 @@ images/*
 *.png
 *.zip
 test.py
+cleanup.py
 *.xcf
 count_files.py
 local_*
