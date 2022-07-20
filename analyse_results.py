@@ -124,6 +124,97 @@ def result_statistics(analysis_params, catalogue, dirs):
     plt.savefig("images/errorstatistic.pdf")
 
 
+def compare_results():
+    catalog = pd.read_csv("sd_catalogue_v56_pub.csv", delimiter=",")
+    idents = dict(zip(catalog.NAME, [str(g).replace("Gaia EDR3 ", "") for g in catalog.GAIA_DESIG.to_list()]))
+    comparetable = pd.read_csv("rvs_all_final.csv", delimiter=",", names=["Identifier", "mjd", "RV", "u_RV", "source"]).replace({"Identifier": idents})
+    RVs = comparetable.loc[comparetable["source"] == "SDSS"].groupby(["Identifier"])["RV"].apply(list).to_frame()
+    u_RVs = comparetable.loc[comparetable["source"] == "SDSS"].groupby(["Identifier"])["u_RV"].apply(list).to_frame()
+    times = comparetable.loc[comparetable["source"] == "SDSS"].groupby(["Identifier"])["mjd"].apply(list).to_frame()
+
+    restable = pd.read_csv("result_parameters.csv", delimiter=",")
+
+    differences = np.array([])  # TODO: calculate differences, create overview pdf, calculate ratio in 1 sigma bounds
+    allerrratio = np.array([])
+    overlap = np.array([])
+
+    for ind, row in RVs.iterrows():
+        try:
+            gaia_id = np.int64(ind)
+        except ValueError:
+            continue
+        u_RVlist = np.array(u_RVs.loc[ind].iloc[0])
+        RVlist = np.array(row.iloc[0])
+        timelist = np.array(times.loc[ind].iloc[0])
+
+        timelist -= np.amin(timelist)
+
+        specfile = restable.loc[restable["source_id"] == gaia_id]
+        m = False
+
+        if len(specfile) == 1:
+            specfile = specfile["associated_files"].iloc[0]
+            if "," in specfile:
+                m = True
+                specfiles = [s for s in specfile.split("'") if "spec" in s]
+                for s in specfiles:
+                    dirname = os.path.dirname(__file__)
+                    if os.path.exists(os.path.join(dirname, f"output/{s}_merged")):
+                        specfile = s
+            if "," in specfile:
+                continue
+            if not m:
+                otherRVvals = np.genfromtxt(os.path.join(os.path.dirname(__file__), f"output/{specfile}/RV_variation.csv"), delimiter=",")
+            else:
+                otherRVvals = np.genfromtxt(os.path.join(os.path.dirname(__file__), f"output/{specfile}_merged/RV_variation.csv"), delimiter=",")
+
+            if otherRVvals.ndim == 1:
+                continue
+
+            otherRVvals = otherRVvals[1:, :]
+            otherRVlist = otherRVvals[:, 0]
+            otheruRVlist = otherRVvals[:, 1]
+            othertimelist = otherRVvals[:, 4]
+            othertimelist -= np.amin(othertimelist)
+
+            from main import plot_rvcurve_brokenaxis
+            plot_rvcurve_brokenaxis(
+                otherRVlist,
+                otheruRVlist,
+                othertimelist,
+                specfile,
+                gaia_id,
+                merged=m,
+                extravels=RVlist,
+                extraverrs=u_RVlist,
+                extratimes=timelist
+            )
+            if len(otherRVlist) == len(RVlist):
+                differences = np.concatenate([differences, np.abs(otherRVlist - RVlist)])
+                allerrratio = np.concatenate([allerrratio, np.abs(otheruRVlist / u_RVlist)])
+                overlap = np.concatenate([overlap, np.logical_or(np.logical_and(otherRVlist - otheruRVlist < RVlist + u_RVlist, otherRVlist > RVlist), np.logical_and(otherRVlist + otheruRVlist > RVlist - u_RVlist, otherRVlist < RVlist))])
+
+    from main import PLOT_FMT
+    from PyPDF2 import PdfFileMerger
+    dirname = os.path.dirname(__file__)
+    dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
+    files = [os.path.join(d, f"RV_variation_broken_axis_comparison{PLOT_FMT}") for d in dirs if os.path.isfile(os.path.join(d, f"RV_variation_broken_axis_comparison{PLOT_FMT}"))]
+    merger = PdfFileMerger()
+    [merger.append(pdf) for pdf in files]
+    with open("all_RV_plots_comparison.pdf", "wb") as new_file:
+        merger.write(new_file)
+
+    plt.hist(differences, np.linspace(0, 200, 25), color="crimson", edgecolor="black", zorder=10)
+    plt.xlabel("RV difference [km/s]")
+    plt.ylabel("#")
+    plt.grid(True, linestyle="--", color="darkgray")
+    plt.title("Statistic of RV differences between the different methods")
+    plt.savefig(f"images/RVdiffstat{PLOT_FMT}")
+    plt.show()
+    print(f"Average error ratio: {np.mean(allerrratio)}")
+    print(f"Overlap in {np.sum(overlap)} out of {len(overlap)} cases (Ratio of {np.sum(overlap) / len(overlap)})")
+
+
 def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     dirname = os.path.dirname(__file__)
     dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
@@ -261,7 +352,7 @@ def result_analysis_with_rvfit():
 
 
 if __name__ == "__main__":
-    from main import CATALOGUE, create_pdf
-
-    result_analysis(True, pd.read_csv(CATALOGUE))
-    create_pdf()
+    # from main import CATALOGUE, create_pdf
+    # result_analysis(True, pd.read_csv(CATALOGUE))
+    # create_pdf()
+    compare_results()

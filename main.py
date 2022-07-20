@@ -7,11 +7,11 @@ from datetime import datetime
 import astropy.time as atime
 import img2pdf
 import matplotlib as mpl
+import numexpr as ne
 import numpy as np
 import pandas as pd
 from astropy.io import fits
 from matplotlib import pyplot as plt
-from scipy.constants import c
 from scipy.optimize import curve_fit
 from scipy.special import erf
 
@@ -138,6 +138,8 @@ output_table_cols = pd.DataFrame({
 wl_splitinds, flux_splitinds, flux_std_splitinds = [0, 0, 0]
 linelist = []
 
+log_two = np.log(2)
+
 
 class NoiseWarning(UserWarning):
     pass
@@ -183,12 +185,12 @@ def faddeeva(z):
 
 
 def lorentzian(x, gamma, x_0):
-    return 1 / np.pi * (gamma / 2) / ((x - x_0) ** 2 + (gamma / 2) ** 2)
+    return ne.evaluate("1 / pi * (gamma / 2) / ((x - x_0) ** 2 + (gamma / 2) ** 2)")
 
 
 def gaussian(x, gamma, x_0):
-    sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
-    return 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp((-(x - x_0) ** 2) / (2 * sigma ** 2))
+    sigma = ne.evaluate("gamma / (2 * sqrt(2 * log_two))")
+    return ne.evaluate("1 / (sigma * sqrt(2 * pi)) * exp((-(x - x_0) ** 2) / (2 * sigma ** 2))")
 
 
 def v_from_doppler(lambda_o, lambda_s):
@@ -197,7 +199,7 @@ def v_from_doppler(lambda_o, lambda_s):
     :param lambda_s: Source Wavelength
     :return: Radial Velocity calculated from relativistic doppler effect
     """
-    return c * (lambda_o ** 2 - lambda_s ** 2) / (lambda_o ** 2 + lambda_s ** 2)
+    return ne.evaluate("c * (lambda_o ** 2 - lambda_s ** 2) / (lambda_o ** 2 + lambda_s ** 2)")
 
 
 def v_from_doppler_err(lambda_o, lambda_s, u_lambda_o):
@@ -207,8 +209,7 @@ def v_from_doppler_err(lambda_o, lambda_s, u_lambda_o):
     :param u_lambda_o: Uncertainty of Observed Wavelength
     :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
     """
-    return c * ((4 * lambda_o * lambda_s ** 2) / (
-            (lambda_o ** 2 + lambda_s ** 2) ** 2) * u_lambda_o)
+    return ne.evaluate("c * ((4 * lambda_o * lambda_s ** 2) / ((lambda_o ** 2 + lambda_s ** 2) ** 2) * u_lambda_o)")
 
 
 def v_from_doppler_rel(r_factor):
@@ -216,7 +217,7 @@ def v_from_doppler_rel(r_factor):
     :param r_factor: Wavelength reduction factor lambda_o/lambda_s
     :return: Radial Velocity calculated from relativistic doppler effect
     """
-    return c * (r_factor ** 2 - 1) / (1 + r_factor ** 2)
+    return ne.evaluate("c * (r_factor ** 2 - 1) / (1 + r_factor ** 2)")
 
 
 def v_from_doppler_rel_err(r_factor, u_r_factor):
@@ -225,17 +226,17 @@ def v_from_doppler_rel_err(r_factor, u_r_factor):
     :param u_r_factor: Uncertainty for wavelength reduction factor
     :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
     """
-    return 4 * c * r_factor / (np.power((r_factor ** 2 + 1), 2)) * u_r_factor
+    return ne.evaluate("4 * c * r_factor / ((r_factor ** 2 + 1)**2) * u_r_factor")
 
 
 def to_sigma(gamma):
-    return gamma / (2 * np.sqrt(2 * np.log(2)))
+    return ne.evaluate("gamma / (2 * sqrt(2 * log_two))")
 
 
 def height_err(eta, gamma, scaling, u_eta, u_gamma, u_scaling):
-    return np.sqrt((u_scaling * 2 / (np.pi * gamma) * (eta * (np.sqrt(np.log(2) * np.pi) - 1) + 1)) ** 2 + \
-                   (u_gamma * 2 * scaling / (np.pi * gamma ** 2) * (eta * (np.sqrt(np.log(2) * np.pi) - 1) + 1)) ** 2 + \
-                   (u_eta * 2 * scaling / (np.pi * gamma) * (np.sqrt(np.log(2) * np.pi) - 1)) ** 2)
+    return np.sqrt((u_scaling * 2 / (np.pi * gamma) * (eta * (np.sqrt(log_two * np.pi) - 1) + 1)) ** 2 + \
+                   (u_gamma * 2 * scaling / (np.pi * gamma ** 2) * (eta * (np.sqrt(log_two * np.pi) - 1) + 1)) ** 2 + \
+                   (u_eta * 2 * scaling / (np.pi * gamma) * (np.sqrt(log_two * np.pi) - 1)) ** 2)
 
 
 def voigt(x, scaling, gamma, shift, slope, height):
@@ -244,9 +245,10 @@ def voigt(x, scaling, gamma, shift, slope, height):
     return -scaling * (np.real(faddeeva(z)) / (sigma * np.sqrt(2 * np.pi))) + slope * (x - shift) + height
 
 
-# TODO: NONONO, no more normalizing! make h only dependent on I!!
 def pseudo_voigt(x, scaling, gamma, shift, slope, height, eta):
-    return -scaling * (eta * gaussian(x, gamma, shift) + (1 - eta) * lorentzian(x, gamma, shift)) + slope * x + height
+    g = gaussian(x, gamma, shift)
+    l = lorentzian(x, gamma, shift)
+    return ne.evaluate("-scaling * (eta *  g+ (1 - eta) * l) + slope * x + height")
 
 
 def load_spectrum(filename, filetype="noncoadded_txt"):
@@ -331,7 +333,7 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
     """
     scaling, gamma, shift, slope, height, eta = params
     flux = flux - slope * wavelength - height
-    sigma = gamma / (2 * np.sqrt(2 * np.log(2)))
+    sigma = gamma / (2 * np.sqrt(2 * log_two))
 
     slicedwl, loind, upind = slicearr(wavelength, shift - SNR_PEAK_SIGMA * sigma, shift + SNR_PEAK_SIGMA * sigma)
     signalstrength = np.mean(np.square(flux[loind:upind]))
@@ -447,7 +449,7 @@ def cosmic_ray(slicedwl, flux, params, wl_pov, predetermined_crs=np.array([])):
 
 
 def peak_amp_from_height(h, gamma, eta):
-    return h / (np.pi * gamma / (2 * (1 + (np.sqrt(np.pi * np.log(2)) - 1) * eta)))
+    return h / (np.pi * gamma / (2 * (1 + (np.sqrt(np.pi * log_two) - 1) * eta)))
 
 
 def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False,
@@ -466,12 +468,6 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
 
     f_pre, subspec_ind = file_prefix.split("_")
 
-    for key, val in lines.items():
-        if round(val) == round(center):
-            lstr = key
-    if "lstr" not in locals():
-        lstr = "unknown"
-    plt.title(f"Fit for Line {lstr} @ {round(center)}Å")
     if sanitize:
         flux, cut_flux, mask = sanitize_flux(flux, center, wavelength)
     slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
@@ -484,17 +480,20 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
                [False, False, False], False, False
 
-    plt.plot(slicedwl, flux[loind:upind], zorder=5)
-
-    fluxmin = flux[loind:upind].min()
-    fluxmax = flux[loind:upind].max()
-    pltrange = fluxmax - fluxmin
-    plt.ylim((fluxmin - 0.05 * pltrange, fluxmax + 0.05 * pltrange))
+    if SAVE_SINGLE_IMGS:
+        for key, val in lines.items():
+            if round(val) == round(center):
+                lstr = key
+        if "lstr" not in locals():
+            lstr = "unknown"
+        plt.title(f"Fit for Line {lstr} @ {round(center)}Å")
+        plt.plot(slicedwl, flux[loind:upind], zorder=5)
 
     sucess = True
 
     if sanitize:
-        plt.plot(slicedwl, cut_flux[loind:upind], color="lightgrey", label='_nolegend_', zorder=1)
+        if SAVE_SINGLE_IMGS:
+            plt.plot(slicedwl, cut_flux[loind:upind], color="lightgrey", label='_nolegend_', zorder=1)
         wavelength = wavelength[mask]
         flux = flux.compressed()
         flux_std = flux_std[mask]
@@ -516,7 +515,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     if limit_peak_height[0]:
         bounds = (
             [0, 0, center - 15, -np.inf, 0, 0],
-            [limit_peak_height[1], np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
+            [limit_peak_height[1], np.sqrt(2 * log_two) * margin / 4, center + 15, np.inf, np.inf, 1]
         )
         try:
             for i, param in enumerate(initial_params):
@@ -526,7 +525,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     else:
         bounds = (
             [0, 0, center - 15, -np.inf, 0, 0],
-            [np.inf, np.sqrt(2 * np.log(2)) * margin / 4, center + 15, np.inf, np.inf, 1]
+            [np.inf, np.sqrt(2 * log_two) * margin / 4, center + 15, np.inf, np.inf, 1]
         )
 
     try:
@@ -547,22 +546,26 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                 cr_ind += loind
                 cr_true_inds = wavelengthdata.searchsorted(wavelength[cr_ind])
                 plt.close()
-                for i in cr_ind:
-                    plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
+                if SAVE_SINGLE_IMGS:
+                    for i in cr_ind:
+                        plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
                 return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
                                         np.delete(flux_std, cr_ind), center, margin, file_prefix,
                                         used_cr_inds=cr_true_inds)
         sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin, sanitize)
-        plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}", (10, 10), xycoords="figure pixels")
+        if SAVE_SINGLE_IMGS:
+            plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}", (10, 10), xycoords="figure pixels")
         if SNR < MIN_ALLOWED_SNR:
             if sucess:
-                warn_text = plt.figtext(0.3, 0.95, f"BAD SIGNAL!",
-                                        horizontalalignment='right',
-                                        verticalalignment='bottom',
-                                        color="red")
+                if SAVE_SINGLE_IMGS:
+                    warn_text = plt.figtext(0.3, 0.95, f"BAD SIGNAL!",
+                                            horizontalalignment='right',
+                                            verticalalignment='bottom',
+                                            color="red")
                 if not sanitize:
-                    warn_text.set_visible(False)
-                    plt.close()
+                    if SAVE_SINGLE_IMGS:
+                        warn_text.set_visible(False)
+                        plt.close()
                     return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix,
                                             sanitize=True)
             warnings.warn(f"WL {center}Å: Signal-to-Noise ratio out of bounds!",
@@ -575,19 +578,24 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
             plt.close()
             return plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize, used_cr_inds, limit_peak_height=(True, 5 * peak_amp_from_height(fluxspan, np.mean(np.diff(slicedwl)), 0.5)))
 
-        plt.plot(slicedwl, pseudo_voigt(slicedwl, *params), zorder=5)
+        if SAVE_SINGLE_IMGS:
+            plt.plot(slicedwl, pseudo_voigt(slicedwl, *params), zorder=5)
+
     except RuntimeError:
         sucess = False
         warnings.warn("Could not find a good Fit!", FitUnsuccessfulWarning)
-        warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
-                                horizontalalignment='right',
-                                verticalalignment='bottom',
-                                color="red")
+
+        if SAVE_SINGLE_IMGS:
+            warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
+                                    horizontalalignment='right',
+                                    verticalalignment='bottom',
+                                    color="red")
+            plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
         if not sanitize:
-            warn_text.set_visible(False)
-            plt.close()
+            if SAVE_SINGLE_IMGS:
+                warn_text.set_visible(False)
+                plt.close()
             return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
-        plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
     except ValueError as e:
         print("No peak found:", e)
         warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
@@ -599,9 +607,11 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
             plt.close()
             return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
         sucess = False
-        plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
-    plt.axvline(center, linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
-    plt.legend(["Flux", "Best Fit"])
+        if SAVE_SINGLE_IMGS:
+            plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
+    if SAVE_SINGLE_IMGS:
+        plt.axvline(center, linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
+        plt.legend(["Flux", "Best Fit"])
 
     if not os.path.isdir(f'output/{f_pre}/'):
         os.mkdir(f"output/{f_pre}/")
@@ -620,7 +630,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
 
 
 def pseudo_voigt_height(errs, scaling, eta, gamma):
-    height = 2 * scaling / (np.pi * gamma) * (1 + (np.sqrt(np.pi * np.log(2)) - 1) * eta)
+    height = 2 * scaling / (np.pi * gamma) * (1 + (np.sqrt(np.pi * log_two) - 1) * eta)
     if errs is not None:
         err = height_err(eta, gamma, scaling, errs[5], errs[1], errs[0])
         return height, err
@@ -1043,7 +1053,7 @@ def gap_inds(array):
     return np.sort(gaps_inds)
 
 
-def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
+def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, extravels=None, extraverrs=None, extratimes=None):
     plt.close()
 
     if len(times) > 2:
@@ -1091,6 +1101,8 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
         p.set_transform(invis_ax.transAxes)
         p.set_clip_on(False)
         invis_ax.add_patch(p)
+        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=45)
+        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
         invis_ax.text(0.5 * (left + right), 0.5 * (bottom + top), 'NO GOOD SUBSPECTRA FOUND!',
                       horizontalalignment='center',
                       verticalalignment='center',
@@ -1149,6 +1161,23 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
                         color=colors[1],
                         clip_on=False)
 
+            if extravels is not None:
+                extramask = np.logical_and(extratimes >= start, extratimes <= end)
+
+                ax.scatter(extratimes[extramask],
+                           extravels[extramask],
+                           zorder=5,
+                           color="C2",
+                           clip_on=False)
+                ax.errorbar(extratimes[extramask],
+                            extravels[extramask],
+                            yerr=extraverrs[extramask],
+                            capsize=3,
+                            linestyle='',
+                            zorder=1,
+                            color="C3",
+                            clip_on=False)
+
             kwargs = dict(transform=fig.transFigure, color='k', clip_on=False)
             [xmin, ymin], [xmax, ymax] = ax.get_position().get_points()
             d = .0075
@@ -1203,9 +1232,15 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False):
         axs.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
 
     if not merged:
-        fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+        if extravels is None:
+            fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis{PLOT_FMT}")
+        else:
+            fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis_comparison{PLOT_FMT}")
     else:
-        fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+        if extravels is None:
+            fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis{PLOT_FMT}")
+        else:
+            fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis_comparison{PLOT_FMT}")
     if SHOW_PLOTS:
         plt.show()
     else:

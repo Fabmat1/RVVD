@@ -18,3 +18,5 @@ cleanup.py
 count_files.py
 local_*
 all_*
+*.pdf
+*.ods
