@@ -39,3 +39,4 @@ wheel>=0.36.2
 zipp>=3.8.0
 img2pdf~=0.4.4
 PyPDF2~=2.5.0
+numexpr~=2.8.3

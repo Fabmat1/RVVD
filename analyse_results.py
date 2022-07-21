@@ -40,11 +40,16 @@ def vrad_pvalue(vrad, vrad_err):
     return logp
 
 
+def replace_first_col(array, file_pre):
+    array[:, 0] = np.core.defchararray.add(array[:, 0].astype(str), "_" + file_pre)
+    return array
+
+
 def mergedir(dirs_to_combine, gaia_id, add_dirs=[]):
     dirname = os.path.dirname(__file__)
     rvdata = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/RV_variation.csv"), delimiter=',', dtype=object)[1:] for f in dirs_to_combine])
-    single_fit_data = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/single_spec_vals.csv"), delimiter=',', dtype=object)[1:] for f in dirs_to_combine])
-    culum_fit_data = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/culum_spec_vals.csv"), delimiter=',', dtype=object)[1:] for f in dirs_to_combine])
+    single_fit_data = np.concatenate([replace_first_col(np.genfromtxt(os.path.join(dirname, f"output/{f}/single_spec_vals.csv"), delimiter=',', dtype=object)[1:], f) for f in dirs_to_combine])
+    culum_fit_data = np.concatenate([replace_first_col(np.genfromtxt(os.path.join(dirname, f"output/{f}/culum_spec_vals.csv"), delimiter=',', dtype=object)[1:], f) for f in dirs_to_combine])
 
     rvdata = rvdata[rvdata[:, 4].argsort()]
     firstdir = dirs_to_combine[0]
@@ -82,7 +87,10 @@ def mergedir(dirs_to_combine, gaia_id, add_dirs=[]):
         shutil.rmtree(dpath)
 
 
-def result_statistics(analysis_params, catalogue, dirs):
+def result_statistics(analysis_params, catalogue):
+    dirname = os.path.dirname(__file__)
+    dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
+    files = [os.path.join(d, "RV_variation.csv") for d in dirs]
     # catalogue = catalogue.groupby('source_id').agg({'source_id': 'first',
     #                                                 'file': ', '.join,
     #                                                 'SPEC_CLASS': 'first',
@@ -304,7 +312,7 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
     analysis_params.to_csv("result_parameters.csv", index=False)
     print("Creating Statistics...")
-    result_statistics(analysis_params, catalogue, dirs)
+    result_statistics(analysis_params, catalogue)
 
 
 def result_analysis_with_rvfit():

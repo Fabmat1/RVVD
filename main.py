@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 from matplotlib import pyplot as plt
+from scipy.constants import c, pi
 from scipy.optimize import curve_fit
 from scipy.special import erf
 
@@ -25,10 +26,14 @@ from analyse_results import result_analysis
 EXTENSION = ".txt"  # extension of the ASCII spectra files
 SPECTRUM_FILE_SEPARATOR = " "  # Separator between columns in the ASCII file
 USE_CATALOGUE = True  # whether only a subset of stars defined by a catalogue should be used
-CATALOGUE = "all_objects.csv"  # the location of the catalogue
+CATALOGUE = "smallselection.csv"  # "all_objects.csv"  # the location of the catalogue
 FILE_LOC = "spectra/"  # directory that holds the spectrum files
 VERBOSE = False  # enable/disable verbose output
 CHECK_FOR_DOUBLES = True  # check if there are any stars for which multiple spectra files exist (needs catalogue)
+NO_NEGATIVE_FLUX = (True, 0.075)
+"""
+NO_NEGATIVE_FLUX: check for negative flux values (bool value at index 0) and filter spectra files with significant portions (Max allowed negative percentage at index 1)
+"""
 
 ### FIT SETTINGS
 
@@ -37,6 +42,7 @@ OUTLIER_MAX_SIGMA = 3
 OUTLIER_MAX_SIGMA: Sigma value above which a line from the individual gets rejected as a fit to a wrong line.
 Outliers do not get used in the cumulative fit.
 """
+ALLOW_SINGLE_DATAPOINT_PEAKS = False  # Whether to accept lines that are made up by only one datapoint.
 MAX_ERR = 100000  # Maximum allowed error above which a RV gets rejected as bad [m/s]
 CUT_MARGIN = 20  # Margin used for cutting out disturbing lines, if their standard deviation was not yet determined [Å]
 MARGIN = 100  # Window margin around lines used in determining fits [Å]
@@ -103,6 +109,8 @@ disturbing_lines = {
 
 ############################## FUNCTIONS ##############################
 
+c = c
+pi = pi
 
 output_table_cols = pd.DataFrame({
     "subspectrum": [],
@@ -321,7 +329,7 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
     return wavelength, flux, t, flux_std
 
 
-def calc_SNR(params, flux, wavelength, margin, sanitized=False):
+def calc_SNR(params, flux, wavelength, margin):
     """
     :param params: parameters of Fit
     :param flux: Flux array
@@ -333,10 +341,14 @@ def calc_SNR(params, flux, wavelength, margin, sanitized=False):
     """
     scaling, gamma, shift, slope, height, eta = params
     flux = flux - slope * wavelength - height
-    sigma = gamma / (2 * np.sqrt(2 * log_two))
+    sigma = to_sigma(gamma)
 
     slicedwl, loind, upind = slicearr(wavelength, shift - SNR_PEAK_SIGMA * sigma, shift + SNR_PEAK_SIGMA * sigma)
     signalstrength = np.mean(np.square(flux[loind:upind]))
+
+    if upind == loind + 1 and not ALLOW_SINGLE_DATAPOINT_PEAKS:
+        warnings.warn("Peak is only a single datapoint, Fit rejected.", FitUnsuccessfulWarning)
+        return 0, 1, 0
 
     if SNR_PEAK_SIGMA * sigma < margin:
         slicedwl, lloind, lupind = slicearr(wavelength, shift - margin, shift - SNR_PEAK_SIGMA * sigma)
@@ -552,7 +564,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                 return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
                                         np.delete(flux_std, cr_ind), center, margin, file_prefix,
                                         used_cr_inds=cr_true_inds)
-        sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin, sanitize)
+        sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin)
         if SAVE_SINGLE_IMGS:
             plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}", (10, 10), xycoords="figure pixels")
         if SNR < MIN_ALLOWED_SNR:
@@ -673,8 +685,7 @@ def check_for_outliers(array):
     return np.array(outlierloc)
 
 
-def single_spec_shift(filename):
-    wl, flx, time, flx_std = load_spectrum(filename)
+def single_spec_shift(filename, wl, flx, flx_std):
     file_prefix = filename.split("/")[-1].split(".")[0]
     velocities = []
     verrs = []
@@ -760,7 +771,7 @@ def single_spec_shift(filename):
     complete_v_shift = np.mean(velocities)
     print_single_spec_results(complete_v_shift, v_std, filename)
 
-    return complete_v_shift, v_std, time, file_prefix, output_table
+    return complete_v_shift, v_std, file_prefix, output_table
 
 
 def outer_fit(params, wl_dataset, flux_dataset, lines, curvetypes):
@@ -1377,7 +1388,10 @@ if __name__ == "__main__":
         cumulative_output_table = output_table_cols.copy()
         for file in fileset:
             print_status(file, fileset, catalogue)
-            complete_v_shift, v_std, time, file_prefix, output_table_spec = single_spec_shift(file)
+            wl, flx, time, flx_std = load_spectrum(file)
+            if np.sum(flx < 0) / len(flx) > NO_NEGATIVE_FLUX[1]:
+                continue
+            complete_v_shift, v_std, file_prefix, output_table_spec = single_spec_shift(file, wl, flx, flx_std)
             if len(output_table_spec.index) == 0 or pd.isnull(complete_v_shift):
                 print("Not a single good line was found in this subspectrum!")
                 continue
