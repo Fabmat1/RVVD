@@ -30,7 +30,7 @@ CATALOGUE = "smallselection.csv"  # "all_objects.csv"  # the location of the cat
 FILE_LOC = "spectra/"  # directory that holds the spectrum files
 VERBOSE = False  # enable/disable verbose output
 CHECK_FOR_DOUBLES = True  # check if there are any stars for which multiple spectra files exist (needs catalogue)
-NO_NEGATIVE_FLUX = (True, 0.075)
+NO_NEGATIVE_FLUX = (True, 0.1)
 """
 NO_NEGATIVE_FLUX: check for negative flux values (bool value at index 0) and filter spectra files with significant portions (Max allowed negative percentage at index 1)
 """
@@ -271,30 +271,14 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
     """
     # Modify this to account for your specific needs!
     if filetype == "noncoadded_txt":
-        wavelength = []
-        flux = []
-        flux_std = []
-        with open(filename) as dsource:
-            for row in dsource:
-                if "#" not in row:
-                    wl, flx, flx_std = row.split(SPECTRUM_FILE_SEPARATOR)
-                    wavelength.append(float(wl))
-                    flux.append(float(flx))
-                    flux_std.append(float(flx_std))
-        wavelength = np.array(wavelength)
-        flux = np.array(flux)
-        flux_std = np.array(flux_std)
+        data = np.loadtxt(filename, comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)
+        wavelength = data[:, 0]
+        flux = data[:, 1]
+        flux_std = data[:, 2]
         filename_prefix, nspec = filename.split("_")
         nspec = nspec.replace(".txt", "")
         nspec = int(nspec)
-        with open(filename.split("_")[0] + "_mjd.txt") as dateinfo:
-            n = 0
-            for d in dateinfo:
-                if "#" not in d:
-                    n += 1
-                    if nspec == n:
-                        mjd = float(d)
-                        t = atime.Time(mjd, format="mjd")
+        t = atime.Time(np.loadtxt(filename.split("_")[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)[nspec - 1], format="mjd")
 
     elif filetype == "simple_csv":
         data = pd.read_csv(filename)
@@ -357,10 +341,11 @@ def calc_SNR(params, flux, wavelength, margin):
         slicedwl, lloind, lupind = slicearr(wavelength, shift - margin, shift - sigma)
         slicedwl, uloind, uupind = slicearr(wavelength, shift + sigma, shift + margin)
         warnings.warn("Sigma very large, Fit seems improbable!", NoiseWarning)
-        plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
-                    horizontalalignment='right',
-                    verticalalignment='bottom',
-                    color="red")
+        if SAVE_SINGLE_IMGS:
+            plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
+                        horizontalalignment='right',
+                        verticalalignment='bottom',
+                        color="red")
     noisestrength = np.mean(np.square(np.array(flux[lloind:lupind].tolist() + flux[uloind:uupind].tolist())))
 
     SNR = signalstrength / noisestrength
@@ -499,6 +484,8 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         if "lstr" not in locals():
             lstr = "unknown"
         plt.title(f"Fit for Line {lstr} @ {round(center)}Å")
+        plt.ylabel("Flux [ergs/s/cm^2/Å]")
+        plt.xlabel("Wavelength [Å]")
         plt.plot(slicedwl, flux[loind:upind], zorder=5)
 
     sucess = True
@@ -695,9 +682,6 @@ def single_spec_shift(filename, wl, flx, flx_std):
     linewidths = {}
 
     for lstr, loc in lines.items():
-        plt.ylabel("Flux [ergs/s/cm^2/Å]")
-        plt.xlabel("Wavelength [Å]")
-        # plt.title(f"Fit for Line {lstr} @ {round(loc)}Å")
         sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,
                                                                     SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
                                                                                                                flx_std,
@@ -928,19 +912,20 @@ def cumulative_shift(output_table_spec, file):
         p_height = pseudo_voigt_height(None, scaling, eta, gamma)
         p_height_err = height_err(eta, gamma, scaling, etaerr, gammaerr, scalingerr)
 
-        plt.ylabel("Flux [ergs/s/cm^2/Å]")
-        plt.xlabel("Wavelength [Å]")
-        plt.title(f"cumulative Fit for Line {lname} @ {round(lines[i])}Å")
-        plt.axvline(lines[i], linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
-        plt.plot(wl_dataset[i], flux_dataset[i])
-        wllinspace = np.linspace(wl_dataset[i][0], wl_dataset[i][-1], 1000)
-        plt.plot(wllinspace, make_dataset(wllinspace, r_factor, i, paramset))
+        if SAVE_SINGLE_IMGS:
+            plt.ylabel("Flux [ergs/s/cm^2/Å]")
+            plt.xlabel("Wavelength [Å]")
+            plt.title(f"cumulative Fit for Line {lname} @ {round(lines[i])}Å")
+            plt.axvline(lines[i], linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
+            plt.plot(wl_dataset[i], flux_dataset[i])
+            wllinspace = np.linspace(wl_dataset[i][0], wl_dataset[i][-1], 1000)
+            plt.plot(wllinspace, make_dataset(wllinspace, r_factor, i, paramset))
         if p_height < p_height_err or p_height > 1.5 * np.ptp(flux_dataset[i]):
-            plt.figtext(0.3, 0.95, f"FIT REJECTED!",
-                        horizontalalignment='right',
-                        verticalalignment='bottom',
-                        color="red")
             if SAVE_SINGLE_IMGS:
+                plt.figtext(0.3, 0.95, f"FIT REJECTED!",
+                            horizontalalignment='right',
+                            verticalalignment='bottom',
+                            color="red")
                 plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             return None, None, None, False
         if SAVE_SINGLE_IMGS:

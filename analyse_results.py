@@ -126,10 +126,13 @@ def result_statistics(analysis_params, catalogue):
     plt.xlabel("G-band Magnitude")
     plt.ylabel("Program error rate per subspectrum")
     plt.scatter(mags, frate, 5, color="lightgray")
-    binned_frate = stats.binned_statistic(mags, frate, "mean", 25)
-    plt.plot(np.linspace(np.amin(mags), np.amax(mags), 25), binned_frate[0], color="darkred")
-    plt.tight_layout()
-    plt.savefig("images/errorstatistic.pdf")
+    try:
+        binned_frate = stats.binned_statistic(mags, frate, "mean", 25)
+        plt.plot(np.linspace(np.amin(mags), np.amax(mags), 25), binned_frate[0], color="darkred")
+        plt.tight_layout()
+        plt.savefig("images/errorstatistic.pdf")
+    except ValueError:
+        pass
 
 
 def compare_results():
