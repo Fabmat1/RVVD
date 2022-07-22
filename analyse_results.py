@@ -145,7 +145,7 @@ def compare_results():
 
     restable = pd.read_csv("result_parameters.csv", delimiter=",")
 
-    differences = np.array([])  # TODO: calculate differences, create overview pdf, calculate ratio in 1 sigma bounds
+    differences = np.array([])
     allerrratio = np.array([])
     overlap = np.array([])
 

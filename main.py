@@ -26,7 +26,7 @@ from analyse_results import result_analysis
 EXTENSION = ".txt"  # extension of the ASCII spectra files
 SPECTRUM_FILE_SEPARATOR = " "  # Separator between columns in the ASCII file
 USE_CATALOGUE = True  # whether only a subset of stars defined by a catalogue should be used
-CATALOGUE = "smallselection.csv"  # "all_objects.csv"  # the location of the catalogue
+CATALOGUE = "all_objects.csv"  # the location of the catalogue
 FILE_LOC = "spectra/"  # directory that holds the spectrum files
 VERBOSE = False  # enable/disable verbose output
 CHECK_FOR_DOUBLES = True  # check if there are any stars for which multiple spectra files exist (needs catalogue)
@@ -276,9 +276,17 @@ def load_spectrum(filename, filetype="noncoadded_txt"):
         flux = data[:, 1]
         flux_std = data[:, 2]
         filename_prefix, nspec = filename.split("_")
+        if NO_NEGATIVE_FLUX[0]:
+            mask = flux > 0
+            wavelength = wavelength[mask]
+            flux_std = flux_std[mask]
+            flux = flux[mask]
         nspec = nspec.replace(".txt", "")
         nspec = int(nspec)
-        t = atime.Time(np.loadtxt(filename.split("_")[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)[nspec - 1], format="mjd")
+        try:
+            t = atime.Time(np.loadtxt(filename.split("_")[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)[nspec - 1], format="mjd")
+        except IndexError:
+            t = atime.Time(np.loadtxt(filename.split("_")[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR), format="mjd")
 
     elif filetype == "simple_csv":
         data = pd.read_csv(filename)
