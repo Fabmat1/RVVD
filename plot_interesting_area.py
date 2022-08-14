@@ -1,18 +1,19 @@
 import os.path
 
 import numpy as np
-from matplotlib import pyplot as plt, cm
-from main import pseudo_voigt, slicearr, load_spectrum, v_from_doppler_rel, lines, expand_mask
 import pandas as pd
+from matplotlib import pyplot as plt, cm
 
-SPECFILE_NAME = "spec-2682-54401-0569" #"spec-2821-54393-0606"
+from main import pseudo_voigt, slicearr, load_spectrum, lines, expand_mask
+
+SPECFILE_NAME = ['spec-0565-52225-0449', 'spec-2913-54526-0559', 'spec-3814-55535-0152']  # "spec-2318-54628-0236" #"spec-2533-54585-0156"#"spec-2552-54632-0483" #"spec-2682-54401-0569" #"spec-2821-54393-0606"
 TITLE = ""
 SUBSPEC = "all"
 GAIA_ID = ""
 MARGIN = 100
-LINE_LOC = 5015.678# "all"
+LINE_LOC = 5015.678  # "all"
 PLOT_OVERVIEW = True
-OVERVIEW_SEP = .2
+OVERVIEW_SEP = 1
 PLOT_INDIVIDUAL = False
 PLOT_FITTED_LINE = False
 CULUMFIT = True
@@ -58,14 +59,14 @@ color = cm.rainbow(np.linspace(0, 1, n))
 if PLOT_OVERVIEW:
     for ind, filename in enumerate(filenames):
         wl, flux, _, flux_std = load_spectrum(filename)
-        plt.plot(wl, flux+OVERVIEW_SEP*ind*np.mean(flux), color=color[ind])
-    plt.title(f"Overview of {SPECFILE_NAME}")#, fontsize=TITLE_SIZE)
-    plt.ylabel("Flux [ergs/s/cm^2/Å] + Offset")#, fontsize=LABEL_SIZE)
-    plt.xlabel("Wavelength [Å]")#, fontsize=LABEL_SIZE)
-    plt.xticks()#fontsize=TICK_SIZE)
-    plt.yticks()#fontsize=TICK_SIZE)
-    plt.xlim((4720, 5000))
-    plt.ylim((200, 1000))
+        plt.plot(wl, flux + OVERVIEW_SEP * ind * np.mean(flux), color=color[ind])
+    plt.title(f"Overview of {SPECFILE_NAME}")  # , fontsize=TITLE_SIZE)
+    plt.ylabel("Flux [ergs/s/cm^2/Å] + Offset")  # , fontsize=LABEL_SIZE)
+    plt.xlabel("Wavelength [Å]")  # , fontsize=LABEL_SIZE)
+    plt.xticks()  # fontsize=TICK_SIZE)
+    plt.yticks()  # fontsize=TICK_SIZE)
+    # plt.xlim((4720, 5000))
+    # plt.ylim((200, 1000))
     plt.tight_layout()
     plt.savefig(f"images/{SPECFILE_NAME}_overviewplot.png")
     plt.show()

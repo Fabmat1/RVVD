@@ -42,13 +42,13 @@ OUTLIER_MAX_SIGMA = 3
 OUTLIER_MAX_SIGMA: Sigma value above which a line from the individual gets rejected as a fit to a wrong line.
 Outliers do not get used in the cumulative fit.
 """
-ALLOW_SINGLE_DATAPOINT_PEAKS = False  # Whether to accept lines that are made up by only one datapoint.
+ALLOW_SINGLE_DATAPOINT_PEAKS = True  # Whether to accept lines that are made up by only one datapoint.
 MAX_ERR = 100000  # Maximum allowed error above which a RV gets rejected as bad [m/s]
 CUT_MARGIN = 20  # Margin used for cutting out disturbing lines, if their standard deviation was not yet determined [Å]
 MARGIN = 100  # Window margin around lines used in determining fits [Å]
 AUTO_REMOVE_OUTLIERS = True  # Whether an input from the user is required to remove outliers from being used in the cumulative fit 
 MIN_ALLOWED_SNR = 5  # Minimum allowed SNR to include a line in the cumulative fit
-SNR_PEAK_SIGMA = 3  # Standard deviation width of the peak that is considered the "signal"
+SNR_PEAK_RANGE = 1.5  # Width of the peak that is considered the "signal" [Multiples of the
 COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 
@@ -333,21 +333,23 @@ def calc_SNR(params, flux, wavelength, margin):
     """
     scaling, gamma, shift, slope, height, eta = params
     flux = flux - slope * wavelength - height
-    sigma = to_sigma(gamma)
 
-    slicedwl, loind, upind = slicearr(wavelength, shift - SNR_PEAK_SIGMA * sigma, shift + SNR_PEAK_SIGMA * sigma)
+    slicedwl, loind, upind = slicearr(wavelength, shift - SNR_PEAK_RANGE * gamma, shift + SNR_PEAK_RANGE * gamma)
     signalstrength = np.mean(np.square(flux[loind:upind]))
 
     if upind == loind + 1 and not ALLOW_SINGLE_DATAPOINT_PEAKS:
         warnings.warn("Peak is only a single datapoint, Fit rejected.", FitUnsuccessfulWarning)
         return 0, 1, 0
+    elif upind == loind + 1 and ALLOW_SINGLE_DATAPOINT_PEAKS:
+        # Maybe resample here
+        pass
 
-    if SNR_PEAK_SIGMA * sigma < margin:
-        slicedwl, lloind, lupind = slicearr(wavelength, shift - margin, shift - SNR_PEAK_SIGMA * sigma)
-        slicedwl, uloind, uupind = slicearr(wavelength, shift + SNR_PEAK_SIGMA * sigma, shift + margin)
+    if 2 * SNR_PEAK_RANGE * gamma < margin:
+        slicedwl, lloind, lupind = slicearr(wavelength, shift - margin, shift - SNR_PEAK_RANGE * gamma)
+        slicedwl, uloind, uupind = slicearr(wavelength, shift + SNR_PEAK_RANGE * gamma, shift + margin)
     else:
-        slicedwl, lloind, lupind = slicearr(wavelength, shift - margin, shift - sigma)
-        slicedwl, uloind, uupind = slicearr(wavelength, shift + sigma, shift + margin)
+        slicedwl, lloind, lupind = slicearr(wavelength, shift - margin, shift - gamma)
+        slicedwl, uloind, uupind = slicearr(wavelength, shift + gamma, shift + margin)
         warnings.warn("Sigma very large, Fit seems improbable!", NoiseWarning)
         if SAVE_SINGLE_IMGS:
             plt.figtext(0.3, 0.95, f"FIT SEEMS INACCURATE!",
@@ -531,8 +533,8 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
             sucess = False
     else:
         bounds = (
-            [0, 0, center - 15, -np.inf, 0, 0],
-            [np.inf, np.sqrt(2 * log_two) * margin / 4, center + 15, np.inf, np.inf, 1]
+            [0, 0, center - MARGIN * 0.15, -np.inf, 0, 0],
+            [np.inf, np.sqrt(2 * log_two) * margin / 4, center + MARGIN * 0.15, np.inf, np.inf, 1]
         )
 
     try:
