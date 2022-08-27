@@ -6,7 +6,8 @@ from matplotlib import pyplot as plt, cm
 
 from main import pseudo_voigt, slicearr, load_spectrum, lines, expand_mask
 
-SPECFILE_NAME = ['spec-0565-52225-0449', 'spec-2913-54526-0559', 'spec-3814-55535-0152']  # "spec-2318-54628-0236" #"spec-2533-54585-0156"#"spec-2552-54632-0483" #"spec-2682-54401-0569" #"spec-2821-54393-0606"
+SPECFILE_NAME = ["spec-0292-51609-0013",
+                 "spec-3794-55241-0598"]  # "spec-2804-54368-0010" #"spec-2552-54632-0483" #['spec-0927-52559-0077', 'spec-0927-52577-0079']#"spec-0619-52056-0594" #['spec-0565-52225-0449', 'spec-2913-54526-0559', 'spec-3814-55535-0152'] #['spec-1230-52672-0324', 'spec-5394-56001-0192']  # "spec-6178-56213-0312"   # "spec-2318-54628-0236" #"spec-2533-54585-0156"#"spec-2552-54632-0483" #"spec-2682-54401-0569" #"spec-2821-54393-0606"
 TITLE = ""
 SUBSPEC = "all"
 GAIA_ID = ""
@@ -26,21 +27,48 @@ LABEL_SIZE = 14
 TICK_SIZE = 12
 SUBSPECCOLORS = ["navy"]
 
-#plt.rcParams["figure.figsize"] = (10, 4.5)
+# plt.rcParams["figure.figsize"] = (10, 4.5)
 plt.rcParams["figure.dpi"] = 300
 
 filenames = []
 
+
+def get_params_from_filename(filename, paramtable: pd.DataFrame):
+    specname, subspec = filename.split("/")[1].split(".")[0].split("_")
+    if type(SPECFILE_NAME) == list:
+        subspec = str(int(subspec))
+        prow = paramtable.loc[paramtable["subspectrum"] == subspec + "_" + specname]
+    else:
+        subspec = int(subspec)
+        prow = paramtable.loc[paramtable["subspectrum"] == subspec]
+    # scaling, gamma, shift, slope, height, eta
+    if len(prow) != 0:
+        return prow["scaling"], prow["gamma"], prow["lambda_0"], prow["slope"], prow["flux_0"], prow["eta"]
+    else:
+        return None, None, None, None, None, None
+
+
 if type(SUBSPEC) == str:
     if SUBSPEC.lower() == "all":
         n = 1
-        while True:
-            filename = f"spectra/{SPECFILE_NAME}_{n if len(str(n)) > 1 else '0' + str(n)}.txt"
-            if os.path.isfile(filename):
-                n += 1
-                filenames.append(filename)
-            else:
-                break
+        if type(SPECFILE_NAME == str):
+            while True:
+                filename = f"spectra/{SPECFILE_NAME}_{n if len(str(n)) > 1 else '0' + str(n)}.txt"
+                if os.path.isfile(filename):
+                    n += 1
+                    filenames.append(filename)
+                else:
+                    break
+        if type(SPECFILE_NAME == type):
+            for spfile in SPECFILE_NAME:
+                while True:
+                    filename = f"spectra/{spfile}_{n if len(str(n)) > 1 else '0' + str(n)}.txt"
+                    if os.path.isfile(filename):
+                        n += 1
+                        filenames.append(filename)
+                    else:
+                        break
+                n = 1
 
 
 else:
@@ -53,13 +81,26 @@ else:
             filenames.append(
                 f"spectra/{spectra_table['file'][0]}_{specn if len(str(specn)) > 1 else '0' + str(specn)}.txt")
 
+if type(SPECFILE_NAME) == list:
+    for f in SPECFILE_NAME:
+        if os.path.isdir(f"output/{f}_merged"):
+            csvpath = f"output/{f}_merged/culum_spec_vals.csv"
+            break
+else:
+    csvpath = f"output/{SPECFILE_NAME}/culum_spec_vals.csv"
+culumfit_table = pd.read_csv(csvpath)
 
-
-color = cm.rainbow(np.linspace(0, 1, n))
+color = cm.rainbow(np.linspace(0, 1, len(filenames)))
 if PLOT_OVERVIEW:
+    for line in lines.values():
+        plt.axvline(line, color="darkgrey", linestyle="--", linewidth=1)
     for ind, filename in enumerate(filenames):
+        params = get_params_from_filename(filename, culumfit_table)
         wl, flux, _, flux_std = load_spectrum(filename)
         plt.plot(wl, flux + OVERVIEW_SEP * ind * np.mean(flux), color=color[ind])
+        if params[1] is not None:
+            wlforfit = np.linspace(params[2] - MARGIN, params[2] + MARGIN, 100)
+            plt.plot(wlforfit, pseudo_voigt(wlforfit, *params) + OVERVIEW_SEP * ind * np.mean(flux))
     plt.title(f"Overview of {SPECFILE_NAME}")  # , fontsize=TITLE_SIZE)
     plt.ylabel("Flux [ergs/s/cm^2/Å] + Offset")  # , fontsize=LABEL_SIZE)
     plt.xlabel("Wavelength [Å]")  # , fontsize=LABEL_SIZE)

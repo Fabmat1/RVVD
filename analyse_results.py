@@ -235,6 +235,7 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
         {
             "source_id": [],
             "logp": [],
+            "deltaRV": [],
             "associated_files": []
         }
     )
@@ -256,6 +257,7 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "logp": [0],
+                    "deltaRV": [0],
                     "associated_files": [files_combined]
                 })])
                 continue
@@ -263,10 +265,10 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
             culumvs = filedata[:, 0]
             culumv_errs = filedata[:, 1]
             logp = vrad_pvalue(culumvs, culumv_errs)
-
             analysis_params = pd.concat([analysis_params, pd.DataFrame({
                 "source_id": [str(sid)],
                 "logp": [logp],
+                "deltaRV": [np.ptp(culumvs)],
                 "associated_files": [files_combined]
             })])
             continue
@@ -282,6 +284,7 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "logp": [0],
+                    "deltaRV": [0],
                     "associated_files": [files_to_combine]
                 })])
                 used_sids.append(sid)
@@ -298,6 +301,7 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "logp": [0],
+                    "deltaRV": [0],
                     "associated_files": [specname]
                 })])
                 continue
@@ -309,6 +313,7 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
         analysis_params = pd.concat([analysis_params, pd.DataFrame({
             "source_id": [str(sid)],
             "logp": [logp],
+            "deltaRV": [np.ptp(culumvs)],
             "associated_files": [files_to_combine]
         })])
 

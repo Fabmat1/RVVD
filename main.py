@@ -460,7 +460,7 @@ def peak_amp_from_height(h, gamma, eta):
 
 
 def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False,
-                     used_cr_inds=[], limit_peak_height=(False, 0)):
+                     used_cr_inds=[]):
     wavelength = np.copy(wavelengthdata)
     flux = np.copy(fluxdata)
     flux_std = np.copy(flux_stddata)
@@ -510,32 +510,23 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
 
     flux_std[flux_std == 0] = np.mean(flux_std)
 
-    initial_h = np.mean(flux[loind:upind])
-    initial_s = np.abs((initial_h - np.min(flux[
-                                           round(loind + abs(upind - loind) / 2 - abs(upind - loind) / 20):round(
-                                               loind + abs(upind - loind) / 2 + abs(
-                                                   upind - loind) / 20)])) / 0.71725216658522349)
+    initial_slope = (np.mean(flux[loind:upind][-round(len(flux[loind:upind]) / 5):]) - np.mean(flux[loind:upind][:round(len(flux[loind:upind]) / 5)])) / (slicedwl[-1] - slicedwl[0])
+    initial_h = np.mean(flux[loind:upind][:round(len(flux[loind:upind]) / 5)]) - np.mean(slicedwl[:round(len(flux[loind:upind]) / 5)]) * initial_slope
+
+    flx_for_initial = flux[loind:upind] - slicedwl * initial_slope + initial_h
+
+    initial_s = np.ptp(flx_for_initial) * np.pi * 5 / ((np.sqrt(np.log(2 * np.pi)) - 1) + 2)
+
     if initial_s == np.nan:
         initial_s = 1
 
     # scaling, gamma, shift, slope, height, eta
-    initial_params = [initial_s, 5, center, 0, initial_h, 0.5]
+    initial_params = [initial_s, 5, center, initial_slope, initial_h, 0.5]
 
-    if limit_peak_height[0]:
-        bounds = (
-            [0, 0, center - 15, -np.inf, 0, 0],
-            [limit_peak_height[1], np.sqrt(2 * log_two) * margin / 4, center + 15, np.inf, np.inf, 1]
-        )
-        try:
-            for i, param in enumerate(initial_params):
-                assert bounds[0][i] < param < bounds[1][i]
-        except AssertionError:
-            sucess = False
-    else:
-        bounds = (
-            [0, 0, center - MARGIN * 0.15, -np.inf, 0, 0],
-            [np.inf, np.sqrt(2 * log_two) * margin / 4, center + MARGIN * 0.15, np.inf, np.inf, 1]
-        )
+    bounds = (
+        [0, 0, center - MARGIN * 0.25, -np.inf, -np.inf, 0],
+        [np.inf, margin / 4, center + MARGIN * 0.25, np.inf, np.inf, 1]
+    )
 
     try:
         params, errs = curve_fit(pseudo_voigt,
@@ -581,11 +572,11 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                           NoiseWarning)
             sucess = False
 
-        fluxspan = np.amax(flux[loind:upind]) - np.amin(flux[loind:upind])
-
-        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > 1.5 * fluxspan and sucess and not limit_peak_height[0]:
+        # Maybe do resampling here someday
+        if pseudo_voigt_height(errs, params[0], params[5], params[1])[0] > 1.5 * np.ptp(flux[loind:upind]) and sucess:
             plt.close()
-            return plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize, used_cr_inds, limit_peak_height=(True, 5 * peak_amp_from_height(fluxspan, np.mean(np.diff(slicedwl)), 0.5)))
+            sucess = False
+        #     return plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize, used_cr_inds)
 
         if SAVE_SINGLE_IMGS:
             plt.plot(slicedwl, pseudo_voigt(slicedwl, *params), zorder=5)
@@ -606,6 +597,8 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                 plt.close()
             return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
     except ValueError as e:
+        print(initial_params)
+        print(bounds)
         print("No peak found:", e)
         warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
                                 horizontalalignment='right',
@@ -675,9 +668,9 @@ def print_single_spec_results(complete_v_shift, v_std, filename):
 
 
 def check_for_outliers(array):
-    mean = np.mean(array)
+    med = np.median(array)
     standard_deviation = np.std(array)
-    distance_from_mean = abs(array - mean)
+    distance_from_mean = abs(array - med)
     outlierloc = distance_from_mean < OUTLIER_MAX_SIGMA * standard_deviation
     return np.array(outlierloc)
 
@@ -746,7 +739,7 @@ def single_spec_shift(filename, wl, flx, flx_std):
     velocities = np.array(velocities)
     verrs = np.array(verrs)
     outloc = check_for_outliers(velocities)
-    if np.invert(outloc).sum() != 0 and len(velocities) > 2:
+    if np.invert(outloc).sum() != 0 and len(velocities) > 4:
         if not AUTO_REMOVE_OUTLIERS:
             print(f"! DETECTED OUTLIER CANDIDATE (DEVIATION > {OUTLIER_MAX_SIGMA}σ), REMOVE OUTLIER? [Y/N]")
             print(f"IN ARRAY: {velocities}; SPECIFICALLY {velocities[~outloc]}")
@@ -801,13 +794,17 @@ def culum_fit_funciton(wl, r_factor, *args):
     return np.concatenate(resids)
 
 
-def cumulative_shift(output_table_spec, file):
+def cumulative_shift(output_table_spec, file, exclude_lines=[]):
     global linelist
     wl, flx, time, flx_std = load_spectrum(file)
     linelist = output_table_spec["line_loc"]
+    linelist = list(linelist)
     flux_sanitized = output_table_spec["sanitized"]
     cr_ind = output_table_spec["cr_ind"]
     subspec_ind = list(output_table_spec["subspectrum"])[0]
+
+    linelist = [l for l in linelist if l not in exclude_lines]
+
     wl_dataset = []
     flux_dataset = []
     flux_std_dataset = []
@@ -851,8 +848,6 @@ def cumulative_shift(output_table_spec, file):
     flux_splitinds = [sum(flux_splitinds[:ind + 1]) for ind, flx in enumerate(flux_splitinds)]
     flux_std_splitinds = [sum(flux_std_splitinds[:ind + 1]) for ind, flxstd in enumerate(flux_std_splitinds)]
 
-    linelist = list(linelist)
-
     rmean = output_table_spec["reduction_factor"].mean()
 
     p0 = [rmean]
@@ -870,12 +865,16 @@ def cumulative_shift(output_table_spec, file):
             specparamrow["flux_0"][0],
             specparamrow["eta"][0],
         ]
-        bounds[0] += [0, specparamrow["gamma"][0] / 4, -np.inf, 0, 0]
-        bounds[1] += [specparamrow["scaling"][0] * 2, np.inf, np.inf, np.inf, 1]
+        bounds[0] += [specparamrow["scaling"][0] / 2, specparamrow["gamma"][0] / 2, -np.inf, -np.inf, 0]
+        bounds[1] += [specparamrow["scaling"][0] * 1.5, specparamrow["gamma"][0] * 1.5, np.inf, np.inf, 1]
 
-    wl_dataset = np.concatenate(wl_dataset, axis=0)
-    flux_dataset = np.concatenate(flux_dataset, axis=0)
-    flux_std_dataset = np.concatenate(flux_std_dataset, axis=0)
+    try:
+        wl_dataset = np.concatenate(wl_dataset, axis=0)
+        flux_dataset = np.concatenate(flux_dataset, axis=0)
+        flux_std_dataset = np.concatenate(flux_std_dataset, axis=0)
+    except ValueError:
+        print("Cumulative fit failed!")
+        return None, None, None, False
 
     flux_std_dataset[flux_std_dataset == 0] = np.mean(
         flux_std_dataset)  # Zeros in the std-dataset will raise exceptions (And are scientifically nonsensical)
@@ -891,6 +890,7 @@ def cumulative_shift(output_table_spec, file):
             max_nfev=100000
         )
     except RuntimeError:
+        print("Cumulative fit failed!")
         return None, None, None, False
 
     errs = np.sqrt(np.diag(errs))
@@ -901,11 +901,18 @@ def cumulative_shift(output_table_spec, file):
     culumv = v_from_doppler_rel(r_factor)
     culumv_errs = v_from_doppler_rel_err(r_factor, r_factor_err)
 
-    if np.abs(culumv_errs) > MAX_ERR or culumv_errs == 0.0:
-        return None, None, None, False
-
     errs = np.split(np.array(errs)[1:], len(np.array(errs)[1:]) / 5)
     params = np.split(np.array(params)[1:], len(np.array(params)[1:]) / 5)
+
+    if np.abs(culumv_errs) > MAX_ERR or culumv_errs == 0.0:
+        if len(linelist) > 1:
+            u_heights = np.array([height_err(p[4], p[1], p[0], e[4], e[1], e[0]) for p, e in zip(params, errs)])
+            exclude_lines.append(linelist[np.argmax(u_heights)])
+            print(u_heights)
+            return cumulative_shift(output_table_spec, file, exclude_lines)
+        else:
+            print("Cumulative fit spurious!")
+            return None, None, None, False
 
     wl_dataset = np.split(wl_dataset, wl_splitinds)
     flux_dataset = np.split(flux_dataset, flux_splitinds)
@@ -936,8 +943,14 @@ def cumulative_shift(output_table_spec, file):
                             horizontalalignment='right',
                             verticalalignment='bottom',
                             color="red")
+                subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
                 plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
-            return None, None, None, False
+            if len(linelist) > 1:
+                exclude_lines.append(lines[i])
+                return cumulative_shift(output_table_spec, file, exclude_lines)
+            else:
+                print("Cumulative shift rejected!")
+                return None, None, None, False
         if SAVE_SINGLE_IMGS:
             subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
             plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
@@ -983,7 +996,7 @@ def cumulative_shift(output_table_spec, file):
 
 def open_spec_files(loc, fpre, end=".txt"):
     """
-    :param loc: Directory of spectrum files
+    :param loc: list of files in output
     :param fpre: file prefix
     :param end: file extension
     :return: list of spectrumfiles
@@ -991,9 +1004,10 @@ def open_spec_files(loc, fpre, end=".txt"):
     flist = []
     if "." not in end:
         end = "." + end
-    for fname in os.listdir(loc):
-        if re.match(fpre + r"_[0-9]+" + end, fname):
-            flist.append(loc + fname)
+    for fname in loc:
+        if fpre in fname:
+            if re.match(fpre + r"_[0-9]+" + end, fname):
+                flist.append(FILE_LOC + fname)
     return flist
 
 
@@ -1359,10 +1373,11 @@ if __name__ == "__main__":
         warnings.filterwarnings("ignore")
     print("Loading spectrum files...")
     file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
+    dirfiles = os.listdir(FILE_LOC)
     for file_prefix in file_prefixes:
-        fileset = open_spec_files(FILE_LOC, file_prefix, end=EXTENSION)
         if os.path.isfile(f'output/.{file_prefix}') and not REDO_STARS:
             continue
+        fileset = open_spec_files(dirfiles, file_prefix, end=EXTENSION)
         if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
             if os.path.isfile(f'output/{file_prefix}/RV_variation{PLOT_FMT}'):
                 if os.path.isfile(f'output/{file_prefix}/RV_variation_broken_axis{PLOT_FMT}'):

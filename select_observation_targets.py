@@ -1,3 +1,6 @@
+import copy
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -37,6 +40,7 @@ for_selection = pd.DataFrame({
 
 n = 0
 l = len(startable)
+dirfiles = os.listdir("spectra/")
 for star in startable:
     n += 1
     if n % 100 == 0:
@@ -59,7 +63,7 @@ for star in startable:
         except IndexError:
             continue
 
-    flist = open_spec_files("spectra/", file.split(".")[0])
+    flist = open_spec_files(dirfiles, file.split(".")[0])
 
     stardata = {
         "source_id": [source_id],
@@ -76,16 +80,30 @@ for_selection.loc[(["sdOB" in c for c in for_selection["SPEC_CLASS"]]), "plot_co
 for_selection.loc[(["sdO" in c and "sdOB" not in c for c in for_selection["SPEC_CLASS"]]), "plot_color"] = "red"
 for_selection.loc[(["sdB" in c for c in for_selection["SPEC_CLASS"]]), "plot_color"] = "gold"
 
+final_table = copy.deepcopy(for_selection)
+
+final_table.drop("plot_color", axis=1).to_csv("all_objects.csv", index=False)
+
+print(for_selection)
+for_selection = for_selection.groupby(["source_id"], as_index=False).agg({
+    'file': 'first',
+    "SPEC_CLASS": "first",
+    'plot_color': 'first',
+    'bp_rp': 'first',
+    'gmag': 'first',
+    "nspec": "sum"})
+
 print(for_selection)
 
 mag = for_selection[["gmag"]].to_numpy()
 color = for_selection[["bp_rp"]].to_numpy()
 nspec = for_selection[["nspec"]].to_numpy()
 
-plt.scatter(color, mag, 0.7*nspec ** 2, color=list(for_selection["plot_color"]), alpha=0.7,
+plt.scatter(color, mag, 0.7 * nspec ** 2, color=list(for_selection["plot_color"]), alpha=0.7,
             label="_nolegend_")
-plt.scatter([], [], color="darkred")
+
 plt.scatter([], [], color="red")
+plt.scatter([], [], color="darkred")
 plt.scatter([], [], color="gold")
 plt.scatter([], [], color="darkgray")
 
@@ -98,29 +116,28 @@ plt.xlim((-0.7, 0.6))
 plt.ylim((13, 21))
 plt.grid(which='major', axis='y', linestyle='--')
 plt.gca().invert_yaxis()
-plt.savefig("hotsdBs.png", dpi=250)
+plt.savefig("images/hotsdBs.png", dpi=250)
 plt.show()
 
-final_table = for_selection
-# sdb_subset = for_selection.loc[["sdB" in c or "sdOB" in c for c in for_selection["SPEC_CLASS"]]]
-# sdb_subset["gmag-nspec"] = sdb_subset["gmag"] - sdb_subset["nspec"] / 2
-# final_table = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
+sdb_subset = for_selection.loc[["sdB" in c or "sdOB" in c for c in for_selection["SPEC_CLASS"]]]
+sdb_subset["gmag-nspec"] = sdb_subset["gmag"] - sdb_subset["nspec"] / 2
+for_selection = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
 
-mag = final_table[["gmag"]].to_numpy()
-color = final_table[["bp_rp"]].to_numpy()
-nspec = final_table[["nspec"]].to_numpy()
+mag = for_selection[["gmag"]].to_numpy()
+color = for_selection[["bp_rp"]].to_numpy()
+nspec = for_selection[["nspec"]].to_numpy()
 
-plt.scatter(color, mag, 0.7 * nspec ** 2, color=list(final_table["plot_color"]), alpha=0.7,
+plt.scatter(color, mag, 0.7 * nspec ** 2, color=list(for_selection["plot_color"]), alpha=0.7,
             label="_nolegend_")
 
-plt.scatter([], [], color="darkred")
 plt.scatter([], [], color="red")
+plt.scatter([], [], color="darkred")
 plt.scatter([], [], color="gold")
 plt.scatter([], [], color="darkgray")
 
 plt.legend(["sdO", "sdOB", "sdB", "uncategorized"])
 
-plt.title("Best subset of stars")
+plt.title("Initial subset of stars")
 plt.xlabel("BP-RP color [mag]")
 plt.ylabel("G band magnitude [mag]")
 plt.xlim((-0.7, 0.6))
@@ -129,4 +146,3 @@ plt.grid(which='major', axis='y', linestyle='--')
 plt.gca().invert_yaxis()
 plt.savefig("subset.png", dpi=250)
 plt.show()
-final_table.drop("plot_color", axis=1).to_csv("all_objects.csv", index=False)
