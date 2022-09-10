@@ -1,9 +1,9 @@
+import astropy.time as atime
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from astropy.timeseries import LombScargle
 from scipy.optimize import curve_fit
-import pandas as pd
-import astropy.time as atime
-import numpy as np
 
 ############################## SETTINGS ##############################
 
@@ -13,8 +13,7 @@ It is not recommended to use this script for RV-curves with large variations in 
 or RV-curves with little datapoints (<20 good datapoints), as results will be very inaccurate.
 """
 
-
-FILE_PREFIX = "spec-2682-54401-0569"  # File prefix of the RV-Curve to be plotted
+FILE_PREFIX = "spec-0443-51873-0030_merged"  # File prefix of the RV-Curve to be plotted
 PERIOD_UNIT = "auto"
 """
 PERIOD_UNIT: Unit the Period is outputted as, may be any of 
@@ -33,21 +32,51 @@ Frequency [1/day]
 RV Offset [km/s]
 Period shift phi [1/day]
 """
+GAIA_ID = ""
+
 
 ############################## FUNCTIONS ##############################
+
+
+class Sinusfit:
+    def __init__(self, A, b, h, shift, errs):
+        self.A = A
+        self.b = b
+        self.h = h
+        self.shift = shift
+        self.errs = errs
+
+    def evaluate(self, x):
+        return self.h + self.A * np.sin(self.b * 2 * np.pi * (x - self.shift))
+
+    def get_params(self):
+        return [self.A, self.b, self.h, self.shift]
+
+
+class Cosinefit:
+    def __init__(self, A, b, h, shift, errs):
+        self.A = A
+        self.b = b
+        self.h = h
+        self.shift = shift
+        self.errs = errs
+
+    def evaluate(self, x):
+        return self.h + self.A * np.cos(self.b * 2 * np.pi * (x - self.shift))
+
+    def get_params(self):
+        return [self.A, self.b, self.h, self.shift]
 
 
 def sinusoid(x, A, b, h, shift):
     return h + A * np.sin(b * 2 * np.pi * (x - shift))
 
 
-def compute_nfft(sample_instants, sample_values):
-    x = np.fft.fftfreq(len(sample_instants), (sample_instants[1] - sample_instants[0]))  # assume uniform spacing
-    y = abs(np.fft.fft(sample_values))
-    return x, y
+def cosinusoid(x, A, b, h, shift):
+    return h + A * np.cos(b * 2 * np.pi * (x - shift))
 
 
-def fit_rv_curve(fpre=FILE_PREFIX, punit=PERIOD_UNIT, showplot=True, verbose=True):
+def fit_rv_curve(fpre=FILE_PREFIX, showplot=True):
     data = pd.read_csv(rf"output\{fpre}\RV_variation.csv")
 
     stime = np.array([atime.Time(t, format="mjd").to_value(format="mjd") for t in data["mjd"]])
@@ -56,12 +85,20 @@ def fit_rv_curve(fpre=FILE_PREFIX, punit=PERIOD_UNIT, showplot=True, verbose=Tru
     RV_err = data["u_culum_fit_RV"]
 
     # Compute guess parameters via Lomb-Scrargle periodogram (https://doi.org/10.1007/BF00648343)
-    frequency, power = LombScargle(stime, RV).autopower()
+    frequency, power = LombScargle(stime, RV, RV_err, nterms=100).autopower()
 
-    freq = abs(frequency[np.argmax(power)+1 if np.argmax(power)+1 != len(power) else np.argmax(power)])
-    amp = np.std(RV) * 2. ** 0.5
+    plt.plot(frequency, power)
+    plt.show()
+
+    freq = abs(frequency[np.argmax(power)])
+    amp = np.ptp(RV) / 2
     offset = np.mean(RV)
     p0 = [amp, freq, offset, 0]
+
+    plt.scatter(stime, RV)
+    timespace = np.linspace(np.amin(stime), np.amax(stime), 1000)
+    plt.plot(timespace, sinusoid(timespace, *p0))
+    plt.show()
 
     try:
         params, errs = curve_fit(sinusoid,
@@ -71,63 +108,52 @@ def fit_rv_curve(fpre=FILE_PREFIX, punit=PERIOD_UNIT, showplot=True, verbose=Tru
                                  sigma=RV_err,
                                  bounds=[
                                      [0, 0, -np.inf, -np.inf],
-                                     [0.75*(np.abs(np.amax(RV)-np.amin(RV))), np.inf, np.inf, np.inf]
+                                     [0.75 * (np.abs(np.amax(RV) - np.amin(RV))), np.inf, np.inf, np.inf]
                                  ],
-                                 maxfev=10000)
+                                 maxfev=100000)
     except RuntimeError:
-        return ["--", "--"], ["--", "--"]
+        return None
 
-
-    A, b, h, shift = params
     errs = np.sqrt(np.diag(errs))
-    u_A, u_b, u_h, u_shift = errs
 
-    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fit = Sinusfit(*params, errs)
 
-    p = 1/b
-    u_p = u_b / b ** 2
+    from main import plot_rvcurve_brokenaxis
 
-    if verbose:
-        print(f"Half-Amplitude K = [{np.abs(A)}+-{u_A}] km/s")
-        punits = ["m", "h", "d", "y"]
-        if punit not in punits:
-            punit = punits[np.argmin([
-                np.abs(1 - (60 * 24 / b)),
-                np.abs(1 - (24 / b)),
-                np.abs(1 - 1 / b),
-                np.abs(1 - 1 / (365 * b))]
-                )]
+    plot_rvcurve_brokenaxis(RV, RV_err, stime, fpre, GAIA_ID, fit=fit, custom_saveloc=f"images/{fpre}.pdf")
 
-        if punit == "m":
-            print(f"Period p = [{60 * 24 / b}+-{60 * 24 * u_b / b ** 2}] m")
-        elif punit == "h":
-            print(f"Period p = [{24 / b}+-{24 * u_b / b ** 2}] h")
-        elif punit == "d":
-            print(f"Period p = [{1 / b}+-{u_b / b ** 2}] d")
-        elif punit == "y":
-            print(f"Period p = [{1 / (365 * b)}+-{u_b / (365 * b ** 2)}] y")
-
-    mjd_linspace = np.linspace(np.amin(stime), np.amax(stime), 1000)
-
-    plt.title(f"Radial Velocity over Time\n Gaia EDR3 944390774983674496")
-    plt.ylabel("Radial Velocity [km/s]")
-    plt.xlabel("Date")
-    plt.scatter(stime, RV, zorder=5, color=colors[0])
-    plt.plot(mjd_linspace, sinusoid(mjd_linspace, *params), zorder=2, color=colors[2])
-    plt.errorbar(stime, RV, yerr=RV_err, capsize=3, linestyle='', zorder=3, color=colors[1], label='_nolegend_')
-    plt.legend(["Measured Values", "Best Fit"], loc="upper left")
-    plt.savefig(rf"output\{fpre}\RV_var_plusfit.png", dpi=300)
     if showplot:
         plt.show()
     else:
         plt.close()
         plt.clf()
         plt.cla()
-    return [A, p], [u_A, u_p]
+    return fit
 
 
 ############################## EXECUTION ##############################
 
 
 if __name__ == "__main__":
-    fit_rv_curve()
+    fit = fit_rv_curve()
+
+    A, b, h, shift = fit.get_params()
+    u_A, u_b, _, _ = fit.errs
+
+    print(f"Half-Amplitude K = [{np.abs(A)}+-{u_A}] km/s")
+    punits = ["m", "h", "d", "y"]
+    punit = punits[np.argmin([
+        np.abs(1 - (60 * 24 / b)),
+        np.abs(1 - (24 / b)),
+        np.abs(1 - 1 / b),
+        np.abs(1 - 1 / (365 * b))]
+    )]
+
+    if punit == "m":
+        print(f"Period p = [{60 * 24 / b}+-{60 * 24 * u_b / b ** 2}] m")
+    elif punit == "h":
+        print(f"Period p = [{24 / b}+-{24 * u_b / b ** 2}] h")
+    elif punit == "d":
+        print(f"Period p = [{1 / b}+-{u_b / b ** 2}] d")
+    elif punit == "y":
+        print(f"Period p = [{1 / (365 * b)}+-{u_b / (365 * b ** 2)}] y")
