@@ -126,6 +126,7 @@ for_selection = sdb_subset.nsmallest(N_STARS, 'gmag-nspec')
 mag = for_selection[["gmag"]].to_numpy()
 color = for_selection[["bp_rp"]].to_numpy()
 nspec = for_selection[["nspec"]].to_numpy()
+print(np.amin(nspec), np.amax(nspec))
 
 plt.scatter(color, mag, 0.7 * nspec ** 2, color=list(for_selection["plot_color"]), alpha=0.7,
             label="_nolegend_")
