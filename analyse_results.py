@@ -149,10 +149,14 @@ def compare_results():
     times = comparetable.loc[comparetable["source"] == "SDSS"].groupby(["Identifier"])["mjd"].apply(list).to_frame()
 
     restable = pd.read_csv("result_parameters.csv", delimiter=",")
+    input_catalogue = pd.read_csv("all_objects.csv")
 
     differences = np.array([])
+    error_differences = np.array([])
     allerrratio = np.array([])
     overlap = np.array([])
+    gmags = []
+    nspecs = []
 
     for ind, row in RVs.iterrows():
         try:
@@ -165,11 +169,11 @@ def compare_results():
 
         timelist -= np.amin(timelist)
 
-        specfile = restable.loc[restable["source_id"] == gaia_id]
+        corr = restable.loc[restable["source_id"] == gaia_id]
         m = False
 
-        if len(specfile) == 1:
-            specfile = specfile["associated_files"].iloc[0]
+        if len(corr) == 1:
+            specfile = corr["associated_files"].iloc[0]
             if "," in specfile:
                 m = True
                 specfiles = [s for s in specfile.split("'") if "spec" in s]
@@ -207,8 +211,16 @@ def compare_results():
             )
             if len(otherRVlist) == len(RVlist):
                 differences = np.concatenate([differences, np.abs(otherRVlist - RVlist)])
+                error_differences = np.concatenate([error_differences, np.abs(otheruRVlist - u_RVlist)])
                 allerrratio = np.concatenate([allerrratio, np.abs(otheruRVlist / u_RVlist)])
                 overlap = np.concatenate([overlap, np.logical_or(np.logical_and(otherRVlist - otheruRVlist < RVlist + u_RVlist, otherRVlist > RVlist), np.logical_and(otherRVlist + otheruRVlist > RVlist - u_RVlist, otherRVlist < RVlist))])
+                if sum(np.abs(otheruRVlist / u_RVlist) > 3.5) > 0:
+                    print(gaia_id)
+                for i in range(len(otheruRVlist)):
+                    nspecs.append(corr["Nspec"].iloc[0])
+                gmag = input_catalogue.loc[input_catalogue["source_id"] == gaia_id]["gmag"].iloc[0]
+                for i in range(len(otheruRVlist)):
+                    gmags.append(gmag)
 
     from main import PLOT_FMT
     from PyPDF2 import PdfFileMerger
@@ -228,6 +240,18 @@ def compare_results():
     # plt.title("Statistic of RV differences between the different methods")
     plt.tight_layout()
     plt.savefig(f"images/RVdiffstat{PLOT_FMT}")
+    plt.show()
+    binned_erratio = stats.binned_statistic(gmags, allerrratio, "mean", 25)
+    plt.figure(figsize=(4.8 * 16 / 9, 4.8))
+    plt.scatter(gmags, allerrratio, color="lightgrey")
+    plt.plot(np.linspace(np.amin(gmags), np.amax(gmags), 25), binned_erratio[0], color="darkred")
+    plt.grid(True)
+    plt.xlabel("G Band magnitude of the host star [mag]", fontsize=15)
+    plt.ylabel("Error ratio [no unit]", fontsize=15)
+    plt.legend(["Datapoints", "Binned average"], fontsize=13)
+    plt.gca().tick_params(axis='both', which='major', labelsize=13)
+    plt.tight_layout()
+    plt.savefig(f"images/erratio_gmag{PLOT_FMT}")
     plt.show()
     print(f"Average error ratio: {np.mean(allerrratio)}")
     print(f"Overlap in {np.sum(overlap)} out of {len(overlap)} cases (Ratio of {np.sum(overlap) / len(overlap)})")

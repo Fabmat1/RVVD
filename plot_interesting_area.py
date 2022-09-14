@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt, cm
 
 from main import pseudo_voigt, slicearr, load_spectrum, lines, expand_mask
 
-SPECFILE_NAME = ['spec-3699-55517-0846', 'spec-4527-55590-0851']
+SPECFILE_NAME = ['spec-0923-52404-0387', 'spec-4017-55329-0200']
 TITLE = ""
 SUBSPEC = "all"
 GAIA_ID = ""
@@ -44,7 +44,7 @@ def get_params_from_filename(filename, paramtable: pd.DataFrame, sfilename=None)
         prow = paramtable.loc[paramtable["subspectrum"] == subspec]
     # scaling, gamma, shift, slope, height, eta
     if len(prow) != 0:
-        return prow["scaling"], prow["gamma"], prow["lambda_0"], prow["slope"], prow["flux_0"], prow["eta"]
+        return prow["scaling"].iloc[0], prow["gamma"].iloc[0], prow["lambda_0"].iloc[0], prow["slope"].iloc[0], prow["flux_0"].iloc[0], prow["eta"].iloc[0]
     else:
         return None, None, None, None, None, None
 
