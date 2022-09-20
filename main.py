@@ -3,11 +3,11 @@ import os
 import re
 import warnings
 from datetime import datetime
+from multiprocessing import Pool
 
 import astropy.time as atime
 import img2pdf
 import matplotlib as mpl
-import numexpr as ne
 import numpy as np
 import pandas as pd
 from astropy.io import fits
@@ -34,6 +34,7 @@ NO_NEGATIVE_FLUX = (True, 0.1)
 """
 NO_NEGATIVE_FLUX: check for negative flux values (bool value at index 0) and filter spectra files with significant portions (Max allowed negative percentage at index 1)
 """
+SUBDWARF_SPECIFIC_ADJUSTMENTS = True  # Apply some tweaks for the script to be optimized to hot subdwarfs
 
 ### FIT SETTINGS
 
@@ -52,7 +53,6 @@ SNR_PEAK_RANGE = 1.5  # Width of the peak that is considered the "signal" [Multi
 COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
 
-
 ### PLOT AND STORAGE SETTINGS
 
 mpl.rcParams['figure.dpi'] = 300  # DPI value of plots that are created, if they are not pdf files
@@ -69,7 +69,7 @@ CREATE_PDF = True  # Group all RV-plots into one big .pdf at the end of the calc
 CREATE_RESULTTABLE = True  # Create pdf with result parameters (requires pdflatex)
 
 # Lines that can potentially be used in fitting:
-lines = {
+lines_to_fit = {
     "H_alpha": 6562.79,
     "H_beta": 4861.35,
     "H_gamma": 4340.472,
@@ -77,6 +77,10 @@ lines = {
     # "H_epsilon": 3970.075,
     # "H_zeta": 3888.052,
     # "H_eta": 3835.387,
+    # "He_I_4100": 4100.0,
+    # "He_I_4339": 4338.7,
+    # "He_I_4859": 4859.35,
+    # "He_I_6560": 6560.15,
     "He_I_4026": 4026.19,
     "He_I_4472": 4471.4802,
     "He_I_4922": 4921.9313,
@@ -112,8 +116,8 @@ disturbing_lines = {
 
 c = c
 pi = pi
-
-avg_line_fwhm = dict.fromkeys(lines)
+avg_line_fwhm = dict.fromkeys(lines_to_fit)
+revlines = dict((v, k) for k, v in lines_to_fit.items())
 
 output_table_cols = pd.DataFrame({
     "subspectrum": [],
@@ -171,14 +175,13 @@ def slicearr(arr, lower, upper):
     :param upper: upper bound-value in array
     :return: sliced array, indices of subarray in old array
     """
-    try:
-        assert lower < upper
-        newarr = arr[arr > lower]
-        newarr = newarr[newarr < upper]
-    except AssertionError as e:
+    if lower > upper:
         loind = np.where(arr == arr[arr > lower][0])[0][0]
         upind = loind + 1
         newarr = np.array([])
+        return newarr, loind, upind
+    else:
+        newarr = arr[np.logical_and(arr > lower, arr < upper)]
     if len(newarr) == 0:
         if len(arr[arr > lower]) != 0:
             loind = np.where(arr == arr[arr > lower][0])[0][0]
@@ -196,12 +199,12 @@ def faddeeva(z):
 
 
 def lorentzian(x, gamma, x_0):
-    return ne.evaluate("1 / pi * (gamma / 2) / ((x - x_0) ** 2 + (gamma / 2) ** 2)")
+    return 1 / pi * (gamma / 2) / ((x - x_0) ** 2 + (gamma / 2) ** 2)
 
 
 def gaussian(x, gamma, x_0):
-    sigma = ne.evaluate("gamma / (2 * sqrt(2 * log_two))")
-    return ne.evaluate("1 / (sigma * sqrt(2 * pi)) * exp((-(x - x_0) ** 2) / (2 * sigma ** 2))")
+    sigma = gamma / (2 * np.sqrt(2 * log_two))
+    return 1 / (sigma * np.sqrt(2 * pi)) * np.exp((-(x - x_0) ** 2) / (2 * sigma ** 2))
 
 
 def v_from_doppler(lambda_o, lambda_s):
@@ -210,7 +213,7 @@ def v_from_doppler(lambda_o, lambda_s):
     :param lambda_s: Source Wavelength
     :return: Radial Velocity calculated from relativistic doppler effect
     """
-    return ne.evaluate("c * (lambda_o ** 2 - lambda_s ** 2) / (lambda_o ** 2 + lambda_s ** 2)")
+    return c * (lambda_o ** 2 - lambda_s ** 2) / (lambda_o ** 2 + lambda_s ** 2)
 
 
 def v_from_doppler_err(lambda_o, lambda_s, u_lambda_o):
@@ -220,7 +223,7 @@ def v_from_doppler_err(lambda_o, lambda_s, u_lambda_o):
     :param u_lambda_o: Uncertainty of Observed Wavelength
     :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
     """
-    return ne.evaluate("c * ((4 * lambda_o * lambda_s ** 2) / ((lambda_o ** 2 + lambda_s ** 2) ** 2) * u_lambda_o)")
+    return c * ((4 * lambda_o * lambda_s ** 2) / ((lambda_o ** 2 + lambda_s ** 2) ** 2) * u_lambda_o)
 
 
 def v_from_doppler_rel(r_factor):
@@ -228,7 +231,7 @@ def v_from_doppler_rel(r_factor):
     :param r_factor: Wavelength reduction factor lambda_o/lambda_s
     :return: Radial Velocity calculated from relativistic doppler effect
     """
-    return ne.evaluate("c * (r_factor ** 2 - 1) / (1 + r_factor ** 2)")
+    return c * (r_factor ** 2 - 1) / (1 + r_factor ** 2)
 
 
 def v_from_doppler_rel_err(r_factor, u_r_factor):
@@ -237,11 +240,11 @@ def v_from_doppler_rel_err(r_factor, u_r_factor):
     :param u_r_factor: Uncertainty for wavelength reduction factor
     :return: Uncertainty for Radial Velocity calculated from relativistic doppler effect
     """
-    return ne.evaluate("4 * c * r_factor / ((r_factor ** 2 + 1)**2) * u_r_factor")
+    return 4 * c * r_factor / ((r_factor ** 2 + 1) ** 2) * u_r_factor
 
 
 def to_sigma(gamma):
-    return ne.evaluate("gamma / (2 * sqrt(2 * log_two))")
+    return gamma / (2 * np.sqrt(2 * log_two))
 
 
 def height_err(eta, gamma, scaling, u_eta, u_gamma, u_scaling):
@@ -259,7 +262,7 @@ def voigt(x, scaling, gamma, shift, slope, height):
 def pseudo_voigt(x, scaling, gamma, shift, slope, height, eta):
     g = gaussian(x, gamma, shift)
     l = lorentzian(x, gamma, shift)
-    return ne.evaluate("-scaling * (eta *  g+ (1 - eta) * l) + slope * x + height")
+    return -scaling * (eta * g + (1 - eta) * l) + slope * x + height
 
 
 def load_spectrum(filename, filetype="noncoadded_txt", preserve_below_zero=False):
@@ -499,7 +502,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
                [False, False, False], False, False
 
-    for key, val in lines.items():
+    for key, val in lines_to_fit.items():
         if round(val) == round(center):
             lstr = key
     if "lstr" not in locals():
@@ -716,7 +719,7 @@ def single_spec_shift(filename, wl, flx, flx_std):
     global linewidths
     linewidths = {}
 
-    for lstr, loc in lines.items():
+    for lstr, loc in lines_to_fit.items():
         sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,
                                                                     SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
                                                                                                                flx_std,
@@ -785,6 +788,7 @@ def single_spec_shift(filename, wl, flx, flx_std):
         if del_outlier.lower() == "y":
             velocities = velocities[outloc]
             verrs = verrs[outloc]
+            output_table = output_table.loc[outloc, :]
 
     v_std = np.sqrt(np.sum(verrs ** 2))
     complete_v_shift = np.mean(velocities)
@@ -826,7 +830,7 @@ def culum_fit_funciton(wl, r_factor, *args):
     return np.concatenate(resids)
 
 
-def cumulative_shift(output_table_spec, file, exclude_lines=[]):
+def cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines=[]):
     global linelist
     wl, flx, time, flx_std = load_spectrum(file)
     linelist = output_table_spec["line_loc"]
@@ -834,8 +838,20 @@ def cumulative_shift(output_table_spec, file, exclude_lines=[]):
     flux_sanitized = output_table_spec["sanitized"]
     cr_ind = output_table_spec["cr_ind"]
     subspec_ind = list(output_table_spec["subspectrum"])[0]
+    lname = None
 
     linelist = [l for l in linelist if l not in exclude_lines]
+
+    if SUBDWARF_SPECIFIC_ADJUSTMENTS and "He-" in spec_class:
+        linenamelist = [revlines[l] for l in linelist]
+        if sum("He_" in lname for lname in linenamelist) > 1:
+            for lname, lloc in lines_to_fit.items():
+                if "H_" in lname:
+                    try:
+                        linelist.remove(lloc)
+                        exclude_lines.append(lloc)
+                    except ValueError:
+                        continue
 
     wl_dataset = []
     flux_dataset = []
@@ -955,7 +971,7 @@ def cumulative_shift(output_table_spec, file, exclude_lines=[]):
         if len(linelist) > 1:
             u_heights = np.array([height_err(p[4], p[1], p[0], e[4], e[1], e[0]) for p, e in zip(params, errs)])
             exclude_lines.append(linelist[np.argmax(u_heights)])
-            return cumulative_shift(output_table_spec, file, exclude_lines)
+            return cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines)
         else:
             print("Cumulative fit spurious!")
             return None, None, None, False
@@ -964,7 +980,8 @@ def cumulative_shift(output_table_spec, file, exclude_lines=[]):
     flux_dataset = np.split(flux_dataset, flux_splitinds)
 
     for i, paramset in enumerate(params):
-        lname = list(output_table_spec['line_name'])[i]
+        if lname is None:
+            lname = list(output_table_spec['line_name'])[i]
         lines = list(linelist)
 
         scaling, gamma, slope, height, eta = paramset
@@ -993,7 +1010,7 @@ def cumulative_shift(output_table_spec, file, exclude_lines=[]):
                 plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if len(linelist) > 1:
                 exclude_lines.append(lines[i])
-                return cumulative_shift(output_table_spec, file, exclude_lines)
+                return cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines)
             else:
                 print("Cumulative shift rejected!")
                 return None, None, None, False
@@ -1073,7 +1090,7 @@ def files_from_catalogue(cat):
         return fileprefixes, None
 
 
-def print_status(file, fileset, catalogue):
+def print_status(file, fileset, catalogue, file_prefix):
     if USE_CATALOGUE:
         gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
         print(
@@ -1427,6 +1444,93 @@ def create_pdf():
                     merger.write(new_file)
 
 
+def initial_variables():
+    global dirfiles
+    dirfiles = os.listdir(FILE_LOC)
+    global catalogue, file_prefixes
+    file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
+    if not VERBOSE:
+        warnings.filterwarnings("ignore")
+
+
+def main_loop(file_prefix):
+    if os.path.isfile(f'output/.{file_prefix}') and not REDO_STARS:
+        return
+    fileset = open_spec_files(dirfiles, file_prefix, end=EXTENSION)
+    if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
+        if os.path.isfile(f'output/{file_prefix}/RV_variation{PLOT_FMT}'):
+            if os.path.isfile(f'output/{file_prefix}/RV_variation_broken_axis{PLOT_FMT}'):
+                if not SAVE_SINGLE_IMGS:
+                    return
+                if not REDO_IMAGES:
+                    return
+                nspec = len(fileset)
+                if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
+                    return
+    spectimes = []
+    spectimes_mjd = []
+    specvels = []
+    specverrs = []
+    culumvs = []
+    culumvs_errs = []
+    single_output_table = output_table_cols.copy()
+    cumulative_output_table = output_table_cols.copy()
+    spec_class = catalogue["spec_class"][file_prefixes.index(file_prefix.split('_')[0])]
+    for file in fileset:
+        print_status(file, fileset, catalogue, file_prefix)
+        wl, flx, time, flx_std = load_spectrum(file)
+        if np.sum(flx < 0) / len(flx) > NO_NEGATIVE_FLUX[1]:
+            continue
+        complete_v_shift, v_std, file_prefix, output_table_spec = single_spec_shift(file, wl, flx, flx_std)
+        if len(output_table_spec.index) == 0 or pd.isnull(complete_v_shift):
+            print("Not a single good line was found in this subspectrum!")
+            continue
+        elif VERBOSE:
+            print(f"Fits for {len(output_table_spec.index)} Lines complete!")
+        single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
+        culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix, spec_class)
+        if not success:
+            continue
+        cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
+        culumvs.append(culumv)
+        culumvs_errs.append(culumv_errs)
+        spectimes.append(time.to_datetime())
+        spectimes_mjd.append(time.mjd)
+        specvels.append(complete_v_shift)
+        specverrs.append(v_std)
+
+    if USE_CATALOGUE:
+        gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
+    else:
+        gaia_id = file_prefix
+
+    with np.printoptions(linewidth=10000):
+        single_output_table.drop("sanitized", axis=1)
+        if not os.path.isdir(f"output/{file_prefix.split('_')[0]}"):
+            os.mkdir(f"output/{file_prefix.split('_')[0]}")
+        single_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/single_spec_vals.csv", index=False)
+        cumulative_output_table.drop("sanitized", axis=1)
+        cumulative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)
+
+    specvels = np.array(specvels) / 1000
+    specverrs = np.array(specverrs) / 1000
+    culumvs = np.array(culumvs) / 1000
+    culumvs_errs = np.array(culumvs_errs) / 1000
+    rvtable = pd.DataFrame({
+        "culum_fit_RV": culumvs,
+        "u_culum_fit_RV": culumvs_errs,
+        "single_fit_RV": specvels,
+        "u_single_fit_RV": specverrs,
+        "mjd": spectimes_mjd,
+        "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
+    })
+    with np.printoptions(linewidth=10000):
+        rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
+    if SAVE_COMPOSITE_IMG:
+        plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
+        plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
+
+
 ############################## EXECUTION ##############################
 
 
@@ -1437,82 +1541,9 @@ if __name__ == "__main__":
         warnings.filterwarnings("ignore")
     print("Loading spectrum files...")
     file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
-    dirfiles = os.listdir(FILE_LOC)
-    for file_prefix in file_prefixes:
-        if os.path.isfile(f'output/.{file_prefix}') and not REDO_STARS:
-            continue
-        fileset = open_spec_files(dirfiles, file_prefix, end=EXTENSION)
-        if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
-            if os.path.isfile(f'output/{file_prefix}/RV_variation{PLOT_FMT}'):
-                if os.path.isfile(f'output/{file_prefix}/RV_variation_broken_axis{PLOT_FMT}'):
-                    if not SAVE_SINGLE_IMGS:
-                        continue
-                    if not REDO_IMAGES:
-                        continue
-                    nspec = len(fileset)
-                    if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
-                        continue
-        spectimes = []
-        spectimes_mjd = []
-        specvels = []
-        specverrs = []
-        culumvs = []
-        culumvs_errs = []
-        single_output_table = output_table_cols.copy()
-        cumulative_output_table = output_table_cols.copy()
-        for file in fileset:
-            print_status(file, fileset, catalogue)
-            wl, flx, time, flx_std = load_spectrum(file)
-            if np.sum(flx < 0) / len(flx) > NO_NEGATIVE_FLUX[1]:
-                continue
-            complete_v_shift, v_std, file_prefix, output_table_spec = single_spec_shift(file, wl, flx, flx_std)
-            if len(output_table_spec.index) == 0 or pd.isnull(complete_v_shift):
-                print("Not a single good line was found in this subspectrum!")
-                continue
-            elif VERBOSE:
-                print(f"Fits for {len(output_table_spec.index)} Lines complete!")
-            single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
-            culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file)
-            if not success:
-                continue
-            cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
-            culumvs.append(culumv)
-            culumvs_errs.append(culumv_errs)
-            spectimes.append(time.to_datetime())
-            spectimes_mjd.append(time.mjd)
-            specvels.append(complete_v_shift)
-            specverrs.append(v_std)
 
-        if USE_CATALOGUE:
-            gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
-        else:
-            gaia_id = file_prefix
-
-        with np.printoptions(linewidth=10000):
-            single_output_table.drop("sanitized", axis=1)
-            if not os.path.isdir(f"output/{file_prefix.split('_')[0]}"):
-                os.mkdir(f"output/{file_prefix.split('_')[0]}")
-            single_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/single_spec_vals.csv", index=False)
-            cumulative_output_table.drop("sanitized", axis=1)
-            cumulative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)
-
-        specvels = np.array(specvels) / 1000
-        specverrs = np.array(specverrs) / 1000
-        culumvs = np.array(culumvs) / 1000
-        culumvs_errs = np.array(culumvs_errs) / 1000
-        rvtable = pd.DataFrame({
-            "culum_fit_RV": culumvs,
-            "u_culum_fit_RV": culumvs_errs,
-            "single_fit_RV": specvels,
-            "u_single_fit_RV": specverrs,
-            "mjd": spectimes_mjd,
-            "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
-        })
-        with np.printoptions(linewidth=10000):
-            rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
-        if SAVE_COMPOSITE_IMG:
-            plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
-            plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
+    pool = Pool(initializer=initial_variables)
+    pool.map(main_loop, file_prefixes)
     print("Fits are completed, analysing results...")
     result_analysis(True, catalogue)
     if CREATE_PDF:

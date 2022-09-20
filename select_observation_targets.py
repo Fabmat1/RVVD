@@ -32,6 +32,8 @@ fits_reftable = fits_reftable.to_pandas()
 
 for_selection = pd.DataFrame({
     "source_id": [],
+    "ra": [],
+    "dec": [],
     "file": [],
     "SPEC_CLASS": [],
     "bp_rp": [],
@@ -47,17 +49,21 @@ for star in startable:
         print(f"{n}/{l}")
     reference = reftable.loc[reftable['GAIA_DESIG'] == f'Gaia EDR3 {star["source_id"]}']
     try:
-        spclass = reference["SPEC_CLASS"].to_numpy()[0]
-        bp_rp = reference["BP_GAIA"].to_numpy()[0] - reference["RP_GAIA"].to_numpy()[0]
-        gmag = reference["G_GAIA"].to_numpy()[0]
+        spclass = reference["SPEC_CLASS"].iloc[0]
+        ra = reference["RA"].iloc[0]
+        dec = reference["DEC"].iloc[0]
+        bp_rp = reference["BP_GAIA"].iloc[0] - reference["RP_GAIA"].iloc[0]
+        gmag = reference["G_GAIA"].iloc[0]
         source_id = str(star["source_id"])
         file = star["File"]
     except IndexError:
         reference = fits_reftable.loc[fits_reftable['source_id'] == star["source_id"]]
         try:
             spclass = "unknown"
-            bp_rp = reference["bp_rp"].to_numpy()[0]
-            gmag = reference["phot_g_mean_mag"].to_numpy()[0]
+            ra = reference["ra"].iloc[0]
+            dec = reference["dec"].iloc[0]
+            bp_rp = reference["bp_rp"].iloc[0]
+            gmag = reference["phot_g_mean_mag"].iloc[0]
             source_id = str(star["source_id"])
             file = star["File"]
         except IndexError:
@@ -67,6 +73,8 @@ for star in startable:
 
     stardata = {
         "source_id": [source_id],
+        "ra": [ra],
+        "dec": [dec],
         "file": [file],
         "SPEC_CLASS": [spclass],
         "bp_rp": [bp_rp],
@@ -86,6 +94,8 @@ final_table.drop("plot_color", axis=1).to_csv("all_objects.csv", index=False)
 
 print(for_selection)
 for_selection = for_selection.groupby(["source_id"], as_index=False).agg({
+    'ra': 'first',
+    'dec': 'first',
     'file': 'first',
     "SPEC_CLASS": "first",
     'plot_color': 'first',

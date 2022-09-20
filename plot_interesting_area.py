@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt, cm
 
-from main import pseudo_voigt, slicearr, load_spectrum, lines, expand_mask
+from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask
 
-SPECFILE_NAME = ['spec-3699-55517-0846', 'spec-4527-55590-0851']
+SPECFILE_NAME = "spec-2318-54628-0236"
 TITLE = ""
 SUBSPEC = "all"
 GAIA_ID = ""
@@ -44,7 +44,7 @@ def get_params_from_filename(filename, paramtable: pd.DataFrame, sfilename=None)
         prow = paramtable.loc[paramtable["subspectrum"] == subspec]
     # scaling, gamma, shift, slope, height, eta
     if len(prow) != 0:
-        return prow["scaling"], prow["gamma"], prow["lambda_0"], prow["slope"], prow["flux_0"], prow["eta"]
+        return prow["scaling"].iloc[0], prow["gamma"].iloc[0], prow["lambda_0"].iloc[0], prow["slope"].iloc[0], prow["flux_0"].iloc[0], prow["eta"].iloc[0]
     else:
         return None, None, None, None, None, None
 
@@ -94,7 +94,7 @@ if __name__ == "__main__":
 
     color = cm.rainbow(np.linspace(0, 1, len(filenames)))
     if PLOT_OVERVIEW:
-        for line in lines.values():
+        for line in lines_to_fit.values():
             plt.axvline(line, color="darkgrey", linestyle="--", linewidth=1)
         for ind, filename in enumerate(filenames):
             params = get_params_from_filename(filename, culumfit_table)
@@ -120,7 +120,7 @@ if __name__ == "__main__":
             wl, flux, _, flux_std = load_spectrum(filename)
             if type(LINE_LOC) == str:
                 if LINE_LOC.lower() == "all":
-                    linelist = lines.values()
+                    linelist = lines_to_fit.values()
             else:
                 linelist = [LINE_LOC]
             for line in linelist:

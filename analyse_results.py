@@ -149,10 +149,14 @@ def compare_results():
     times = comparetable.loc[comparetable["source"] == "SDSS"].groupby(["Identifier"])["mjd"].apply(list).to_frame()
 
     restable = pd.read_csv("result_parameters.csv", delimiter=",")
+    input_catalogue = pd.read_csv("all_objects.csv")
 
     differences = np.array([])
+    error_differences = np.array([])
     allerrratio = np.array([])
     overlap = np.array([])
+    gmags = []
+    nspecs = []
 
     for ind, row in RVs.iterrows():
         try:
@@ -165,11 +169,11 @@ def compare_results():
 
         timelist -= np.amin(timelist)
 
-        specfile = restable.loc[restable["source_id"] == gaia_id]
+        corr = restable.loc[restable["source_id"] == gaia_id]
         m = False
 
-        if len(specfile) == 1:
-            specfile = specfile["associated_files"].iloc[0]
+        if len(corr) == 1:
+            specfile = corr["associated_files"].iloc[0]
             if "," in specfile:
                 m = True
                 specfiles = [s for s in specfile.split("'") if "spec" in s]
@@ -207,8 +211,16 @@ def compare_results():
             )
             if len(otherRVlist) == len(RVlist):
                 differences = np.concatenate([differences, np.abs(otherRVlist - RVlist)])
+                error_differences = np.concatenate([error_differences, np.abs(otheruRVlist - u_RVlist)])
                 allerrratio = np.concatenate([allerrratio, np.abs(otheruRVlist / u_RVlist)])
                 overlap = np.concatenate([overlap, np.logical_or(np.logical_and(otherRVlist - otheruRVlist < RVlist + u_RVlist, otherRVlist > RVlist), np.logical_and(otherRVlist + otheruRVlist > RVlist - u_RVlist, otherRVlist < RVlist))])
+                if sum(np.abs(otheruRVlist / u_RVlist) > 3.5) > 0:
+                    print(gaia_id)
+                for i in range(len(otheruRVlist)):
+                    nspecs.append(corr["Nspec"].iloc[0])
+                gmag = input_catalogue.loc[input_catalogue["source_id"] == gaia_id]["gmag"].iloc[0]
+                for i in range(len(otheruRVlist)):
+                    gmags.append(gmag)
 
     from main import PLOT_FMT
     from PyPDF2 import PdfFileMerger
@@ -229,6 +241,18 @@ def compare_results():
     plt.tight_layout()
     plt.savefig(f"images/RVdiffstat{PLOT_FMT}")
     plt.show()
+    binned_erratio = stats.binned_statistic(gmags, allerrratio, "mean", 25)
+    plt.figure(figsize=(4.8 * 16 / 9, 4.8))
+    plt.scatter(gmags, allerrratio, color="lightgrey")
+    plt.plot(np.linspace(np.amin(gmags), np.amax(gmags), 25), binned_erratio[0], color="darkred")
+    plt.grid(True)
+    plt.xlabel("G Band magnitude of the host star [mag]", fontsize=15)
+    plt.ylabel("Error ratio [no unit]", fontsize=15)
+    plt.legend(["Datapoints", "Binned average"], fontsize=13)
+    plt.gca().tick_params(axis='both', which='major', labelsize=13)
+    plt.tight_layout()
+    plt.savefig(f"images/erratio_gmag{PLOT_FMT}")
+    plt.show()
     print(f"Average error ratio: {np.mean(allerrratio)}")
     print(f"Overlap in {np.sum(overlap)} out of {len(overlap)} cases (Ratio of {np.sum(overlap) / len(overlap)})")
 
@@ -242,8 +266,8 @@ def overview(restable):
         r"\begin{center}",
         r"{\Large \textbf{Result Parameters}}",
         r"\end{center}",
-        r"\begin{xltabular}{\textwidth}{l|l|l|l|l|X|X}",
-        r"\textbf{Index} &\textbf{GAIA Identifier} & \textbf{Source folder} & \textbf{$\#$ Datapoints} & $\mathrm{RV}_{\mathrm{avg}}$ [$\mathrm{kms}^{-1}$] & $\Delta\mathrm{RV}_{\max}$ [$\mathrm{kms}^{-1}$] & $\log p$ [no unit]\\",
+        r"\begin{xltabular}{\textwidth}{l|l|l|l|l|l|l|X|X}",
+        r"\textbf{Index} &\textbf{GAIA Identifier} & \textbf{Right ascension} & \textbf{Declination} & \textbf{Classification} & \textbf{$N_{\mathrm{spec}}$} & $\mathrm{RV}_{\mathrm{avg}}$ [$\mathrm{kms}^{-1}$] & $\Delta\mathrm{RV}_{\max}$ [$\mathrm{kms}^{-1}$] & $\log p$ [no unit]\\",
         r"\hline"
     ]
     postamble = [
@@ -261,14 +285,14 @@ def overview(restable):
             if row["logp"] == np.nan:
                 print(row)
             if row["logp"] == 0:
-                outtex.write(f"{n}&" + "GAIA EDR3 " + row["source_id"] + r"& \verb|" + row[
-                    "source_folder"] + f"| &${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & NaN\\" + "\n")
+                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
+                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & NaN\\" + "\n")
             elif row["logp"] == -500:
-                outtex.write(f"{n}&" + "GAIA EDR3 " + row["source_id"] + r"& \verb|" + row[
-                    "source_folder"] + f"| &${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & $<-500$\\" + "\n")
+                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
+                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & $<-500$\\" + "\n")
             else:
-                outtex.write(f"{n}&" + "GAIA EDR3 " + row["source_id"] + r"& \verb|" + row[
-                    "source_folder"] + f"| &${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & ${round(row['logp'], 2)}$\\" + "\n")
+                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
+                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & ${round(row['logp'], 2)}$\\" + "\n")
         for line in postamble:
             outtex.write(line + "\n")
     os.system("pdflatex --enable-write18 --extra-mem-bot=10000000 --synctex=1 result_parameters.tex")
@@ -285,6 +309,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     analysis_params = pd.DataFrame(
         {
             "source_id": [],
+            "ra": [],
+            "dec": [],
+            "spec_class": [],
             "logp": [],
             "deltaRV": [],
             "deltaRV_err": [],
@@ -306,13 +333,22 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     for file in files:
         specname = file.split("\\")[-2]
         if "_merged" in specname:
-            sid = catalogue.loc[catalogue["file"] == specname.replace("_merged", "")]["source_id"].iloc[0]
+            star = catalogue.loc[catalogue["file"] == specname.replace("_merged", "")]
+            sid = star["source_id"].iloc[0]
             filedata = np.genfromtxt(file, delimiter=',')[1:]
             files_combined = catalogue.loc[catalogue["source_id"] == sid]["file"].tolist()
+
+            ra = star["ra"].iloc[0]
+            dec = star["dec"].iloc[0]
+            specclass = star["SPEC_CLASS"].iloc[0]
+
             if filedata.ndim == 1:
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [0],
                     "deltaRV": [0],
                     "deltaRV_err": [0],
@@ -330,6 +366,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [0],
                     "deltaRV": [0],
                     "deltaRV_err": [0],
@@ -342,6 +381,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [logp],
                     "deltaRV": [np.ptp(culumvs)],
                     "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
@@ -352,7 +394,13 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 })])
             continue
 
-        sid = catalogue.loc[catalogue["file"] == specname]["source_id"].iloc[0]
+        star = catalogue.loc[catalogue["file"] == specname]
+        sid = star["source_id"].iloc[0]
+
+        ra = star["ra"].iloc[0]
+        dec = star["dec"].iloc[0]
+        specclass = star["SPEC_CLASS"].iloc[0]
+
         if sid in used_sids:
             continue
         if sid in sourceids.tolist():
@@ -363,6 +411,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [0],
                     "deltaRV": [0],
                     "deltaRV_err": [0],
@@ -385,6 +436,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [0],
                     "deltaRV": [0],
                     "deltaRV_err": [0],
@@ -402,6 +456,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
             analysis_params = pd.concat([analysis_params, pd.DataFrame({
                 "source_id": [str(sid)],
                 "source_folder": [specname],
+                "ra": [ra],
+                "dec": [dec],
+                "spec_class": [specclass],
                 "logp": [0],
                 "deltaRV": [0],
                 "deltaRV_err": [0],
@@ -414,6 +471,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
             analysis_params = pd.concat([analysis_params, pd.DataFrame({
                 "source_id": [str(sid)],
                 "source_folder": [specname],
+                "ra": [ra],
+                "dec": [dec],
+                "spec_class": [specclass],
                 "logp": [logp],
                 "deltaRV": [np.ptp(culumvs)],
                 "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
