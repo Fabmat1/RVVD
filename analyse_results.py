@@ -266,8 +266,8 @@ def overview(restable):
         r"\begin{center}",
         r"{\Large \textbf{Result Parameters}}",
         r"\end{center}",
-        r"\begin{xltabular}{\textwidth}{l|l|l|l|l|X|X}",
-        r"\textbf{Index} &\textbf{GAIA Identifier} & \textbf{Source folder} & \textbf{$\#$ Datapoints} & $\mathrm{RV}_{\mathrm{avg}}$ [$\mathrm{kms}^{-1}$] & $\Delta\mathrm{RV}_{\max}$ [$\mathrm{kms}^{-1}$] & $\log p$ [no unit]\\",
+        r"\begin{xltabular}{\textwidth}{l|l|l|l|l|l|l|X|X}",
+        r"\textbf{Index} &\textbf{GAIA Identifier} & \textbf{Right ascension} & \textbf{Declination} & \textbf{Classification} & \textbf{$N_{\mathrm{spec}}$} & $\mathrm{RV}_{\mathrm{avg}}$ [$\mathrm{kms}^{-1}$] & $\Delta\mathrm{RV}_{\max}$ [$\mathrm{kms}^{-1}$] & $\log p$ [no unit]\\",
         r"\hline"
     ]
     postamble = [
@@ -285,14 +285,14 @@ def overview(restable):
             if row["logp"] == np.nan:
                 print(row)
             if row["logp"] == 0:
-                outtex.write(f"{n}&" + "GAIA EDR3 " + row["source_id"] + r"& \verb|" + row[
-                    "source_folder"] + f"| &${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & NaN\\" + "\n")
+                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
+                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & NaN\\" + "\n")
             elif row["logp"] == -500:
-                outtex.write(f"{n}&" + "GAIA EDR3 " + row["source_id"] + r"& \verb|" + row[
-                    "source_folder"] + f"| &${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & $<-500$\\" + "\n")
+                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
+                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & $<-500$\\" + "\n")
             else:
-                outtex.write(f"{n}&" + "GAIA EDR3 " + row["source_id"] + r"& \verb|" + row[
-                    "source_folder"] + f"| &${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & ${round(row['logp'], 2)}$\\" + "\n")
+                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
+                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & ${round(row['logp'], 2)}$\\" + "\n")
         for line in postamble:
             outtex.write(line + "\n")
     os.system("pdflatex --enable-write18 --extra-mem-bot=10000000 --synctex=1 result_parameters.tex")
@@ -309,6 +309,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     analysis_params = pd.DataFrame(
         {
             "source_id": [],
+            "ra": [],
+            "dec": [],
+            "spec_class": [],
             "logp": [],
             "deltaRV": [],
             "deltaRV_err": [],
@@ -330,13 +333,22 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     for file in files:
         specname = file.split("\\")[-2]
         if "_merged" in specname:
-            sid = catalogue.loc[catalogue["file"] == specname.replace("_merged", "")]["source_id"].iloc[0]
+            star = catalogue.loc[catalogue["file"] == specname.replace("_merged", "")]
+            sid = star["source_id"].iloc[0]
             filedata = np.genfromtxt(file, delimiter=',')[1:]
             files_combined = catalogue.loc[catalogue["source_id"] == sid]["file"].tolist()
+
+            ra = star["ra"].iloc[0]
+            dec = star["dec"].iloc[0]
+            specclass = star["SPEC_CLASS"].iloc[0]
+
             if filedata.ndim == 1:
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [0],
                     "deltaRV": [0],
                     "deltaRV_err": [0],
@@ -354,6 +366,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [0],
                     "deltaRV": [0],
                     "deltaRV_err": [0],
@@ -366,6 +381,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [logp],
                     "deltaRV": [np.ptp(culumvs)],
                     "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
@@ -376,7 +394,13 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 })])
             continue
 
-        sid = catalogue.loc[catalogue["file"] == specname]["source_id"].iloc[0]
+        star = catalogue.loc[catalogue["file"] == specname]
+        sid = star["source_id"].iloc[0]
+
+        ra = star["ra"].iloc[0]
+        dec = star["dec"].iloc[0]
+        specclass = star["SPEC_CLASS"].iloc[0]
+
         if sid in used_sids:
             continue
         if sid in sourceids.tolist():
@@ -387,6 +411,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [0],
                     "deltaRV": [0],
                     "deltaRV_err": [0],
@@ -409,6 +436,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
                 analysis_params = pd.concat([analysis_params, pd.DataFrame({
                     "source_id": [str(sid)],
                     "source_folder": [specname],
+                    "ra": [ra],
+                    "dec": [dec],
+                    "spec_class": [specclass],
                     "logp": [0],
                     "deltaRV": [0],
                     "deltaRV_err": [0],
@@ -426,6 +456,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
             analysis_params = pd.concat([analysis_params, pd.DataFrame({
                 "source_id": [str(sid)],
                 "source_folder": [specname],
+                "ra": [ra],
+                "dec": [dec],
+                "spec_class": [specclass],
                 "logp": [0],
                 "deltaRV": [0],
                 "deltaRV_err": [0],
@@ -438,6 +471,9 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
             analysis_params = pd.concat([analysis_params, pd.DataFrame({
                 "source_id": [str(sid)],
                 "source_folder": [specname],
+                "ra": [ra],
+                "dec": [dec],
+                "spec_class": [specclass],
                 "logp": [logp],
                 "deltaRV": [np.ptp(culumvs)],
                 "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],

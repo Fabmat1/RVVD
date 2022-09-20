@@ -34,6 +34,7 @@ NO_NEGATIVE_FLUX = (True, 0.1)
 """
 NO_NEGATIVE_FLUX: check for negative flux values (bool value at index 0) and filter spectra files with significant portions (Max allowed negative percentage at index 1)
 """
+SUBDWARF_SPECIFIC_ADJUSTMENTS = True  # Apply some tweaks for the script to be optimized to hot subdwarfs
 
 ### FIT SETTINGS
 
@@ -68,7 +69,7 @@ CREATE_PDF = True  # Group all RV-plots into one big .pdf at the end of the calc
 CREATE_RESULTTABLE = True  # Create pdf with result parameters (requires pdflatex)
 
 # Lines that can potentially be used in fitting:
-lines = {
+lines_to_fit = {
     "H_alpha": 6562.79,
     "H_beta": 4861.35,
     "H_gamma": 4340.472,
@@ -115,7 +116,8 @@ disturbing_lines = {
 
 c = c
 pi = pi
-avg_line_fwhm = dict.fromkeys(lines)
+avg_line_fwhm = dict.fromkeys(lines_to_fit)
+revlines = dict((v, k) for k, v in lines_to_fit.items())
 
 output_table_cols = pd.DataFrame({
     "subspectrum": [],
@@ -500,7 +502,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
                [False, False, False], False, False
 
-    for key, val in lines.items():
+    for key, val in lines_to_fit.items():
         if round(val) == round(center):
             lstr = key
     if "lstr" not in locals():
@@ -717,7 +719,7 @@ def single_spec_shift(filename, wl, flx, flx_std):
     global linewidths
     linewidths = {}
 
-    for lstr, loc in lines.items():
+    for lstr, loc in lines_to_fit.items():
         sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,
                                                                     SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
                                                                                                                flx_std,
@@ -828,7 +830,7 @@ def culum_fit_funciton(wl, r_factor, *args):
     return np.concatenate(resids)
 
 
-def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=[]):
+def cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines=[]):
     global linelist
     wl, flx, time, flx_std = load_spectrum(file)
     linelist = output_table_spec["line_loc"]
@@ -836,8 +838,20 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=[]):
     flux_sanitized = output_table_spec["sanitized"]
     cr_ind = output_table_spec["cr_ind"]
     subspec_ind = list(output_table_spec["subspectrum"])[0]
+    lname = None
 
     linelist = [l for l in linelist if l not in exclude_lines]
+
+    if SUBDWARF_SPECIFIC_ADJUSTMENTS and "He-" in spec_class:
+        linenamelist = [revlines[l] for l in linelist]
+        if sum("He_" in lname for lname in linenamelist) > 1:
+            for lname, lloc in lines_to_fit.items():
+                if "H_" in lname:
+                    try:
+                        linelist.remove(lloc)
+                        exclude_lines.append(lloc)
+                    except ValueError:
+                        continue
 
     wl_dataset = []
     flux_dataset = []
@@ -957,7 +971,7 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=[]):
         if len(linelist) > 1:
             u_heights = np.array([height_err(p[4], p[1], p[0], e[4], e[1], e[0]) for p, e in zip(params, errs)])
             exclude_lines.append(linelist[np.argmax(u_heights)])
-            return cumulative_shift(output_table_spec, file, file_prefix, exclude_lines)
+            return cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines)
         else:
             print("Cumulative fit spurious!")
             return None, None, None, False
@@ -966,7 +980,8 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=[]):
     flux_dataset = np.split(flux_dataset, flux_splitinds)
 
     for i, paramset in enumerate(params):
-        lname = list(output_table_spec['line_name'])[i]
+        if lname is None:
+            lname = list(output_table_spec['line_name'])[i]
         lines = list(linelist)
 
         scaling, gamma, slope, height, eta = paramset
@@ -995,7 +1010,7 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=[]):
                 plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if len(linelist) > 1:
                 exclude_lines.append(lines[i])
-                return cumulative_shift(output_table_spec, file, file_prefix, exclude_lines)
+                return cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines)
             else:
                 print("Cumulative shift rejected!")
                 return None, None, None, False
@@ -1460,6 +1475,7 @@ def main_loop(file_prefix):
     culumvs_errs = []
     single_output_table = output_table_cols.copy()
     cumulative_output_table = output_table_cols.copy()
+    spec_class = catalogue["spec_class"][file_prefixes.index(file_prefix.split('_')[0])]
     for file in fileset:
         print_status(file, fileset, catalogue, file_prefix)
         wl, flx, time, flx_std = load_spectrum(file)
@@ -1472,7 +1488,7 @@ def main_loop(file_prefix):
         elif VERBOSE:
             print(f"Fits for {len(output_table_spec.index)} Lines complete!")
         single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
-        culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix)
+        culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix, spec_class)
         if not success:
             continue
         cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
