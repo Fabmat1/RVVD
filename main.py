@@ -52,6 +52,7 @@ MIN_ALLOWED_SNR = 5  # Minimum allowed SNR to include a line in the cumulative f
 SNR_PEAK_RANGE = 1.5  # Width of the peak that is considered the "signal" [Multiples of the FWHM]
 COSMIC_RAY_DETECTION_LIM = 3  # minimum times peak height/flux std required to detect cr, minimum times diff
 # std required to detect cr
+USE_LINE_AVERAGES = False  # Determine guessed FWHM by examining previously fitted lines, not recommended when using multiprocessing!
 
 ### PLOT AND STORAGE SETTINGS
 
@@ -87,9 +88,9 @@ lines_to_fit = {
     "He_I_5016": 5015.678,
     "He_I_5876": 5875.6,
     "He_I_6678": 6678.15,
-    # "He_II_4541": 4541.59,
+    "He_II_4541": 4541.59,
     "He_II_4686": 4685.70,
-    # "He_II_5412": 5411.52
+    "He_II_5412": 5411.52
 }
 
 # Lines that need to potentially be cut out (also include all lines from above)
@@ -111,6 +112,20 @@ disturbing_lines = {
     "He_II_4686": 4685.70,
     "He_II_5412": 5411.52
 }
+
+line_FWHM_guesses = {'H_alpha': 13.893084511019556,  # FWHM guess for fitting for each line (only relevant if USE_LINE_AVERAGES is set to false)
+                     'H_beta': 14.60607925873273,
+                     'H_gamma': 13.98306118364695,
+                     'H_delta': 14.16665277785858,
+                     'He_I_4026': 5.823862835075121,
+                     'He_I_4472': 5.1500543269762975,
+                     'He_I_4922': 5.573968470249642,
+                     'He_I_5016': 3.6450408054430654,
+                     'He_I_5876': 4.513226333567151,
+                     'He_I_6678': 5.4447656874775,
+                     'He_II_4686': 6.364193877260614,
+                     "He_II_4541": 5,
+                     "He_II_5412": 5}
 
 ############################## FUNCTIONS ##############################
 
@@ -532,7 +547,10 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     flx_for_initial = flux[loind:upind] - slicedwl * initial_slope + initial_h
 
     if lstr != "unknown" and not reset_initial_param:
-        fwhmavg = avg_line_fwhm[lstr]
+        if USE_LINE_AVERAGES:
+            fwhmavg = avg_line_fwhm[lstr]
+        else:
+            fwhmavg = (line_FWHM_guesses[lstr], 100)
         if fwhmavg is not None:
             if fwhmavg[1] >= 10:
                 initial_g = fwhmavg[0]
@@ -830,7 +848,9 @@ def culum_fit_funciton(wl, r_factor, *args):
     return np.concatenate(resids)
 
 
-def cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines=[]):
+def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=None):
+    if exclude_lines is None:
+        exclude_lines = []
     global linelist
     wl, flx, time, flx_std = load_spectrum(file)
     linelist = output_table_spec["line_loc"]
@@ -841,17 +861,6 @@ def cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_l
     lname = None
 
     linelist = [l for l in linelist if l not in exclude_lines]
-
-    if SUBDWARF_SPECIFIC_ADJUSTMENTS and "He-" in spec_class:
-        linenamelist = [revlines[l] for l in linelist]
-        if sum("He_" in lname for lname in linenamelist) > 1:
-            for lname, lloc in lines_to_fit.items():
-                if "H_" in lname:
-                    try:
-                        linelist.remove(lloc)
-                        exclude_lines.append(lloc)
-                    except ValueError:
-                        continue
 
     wl_dataset = []
     flux_dataset = []
@@ -971,7 +980,7 @@ def cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_l
         if len(linelist) > 1:
             u_heights = np.array([height_err(p[4], p[1], p[0], e[4], e[1], e[0]) for p, e in zip(params, errs)])
             exclude_lines.append(linelist[np.argmax(u_heights)])
-            return cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines)
+            return cumulative_shift(output_table_spec, file, file_prefix, exclude_lines)
         else:
             print("Cumulative fit spurious!")
             return None, None, None, False
@@ -980,8 +989,7 @@ def cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_l
     flux_dataset = np.split(flux_dataset, flux_splitinds)
 
     for i, paramset in enumerate(params):
-        if lname is None:
-            lname = list(output_table_spec['line_name'])[i]
+        lname = list(output_table_spec['line_name'])[i]
         lines = list(linelist)
 
         scaling, gamma, slope, height, eta = paramset
@@ -1010,7 +1018,7 @@ def cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_l
                 plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if len(linelist) > 1:
                 exclude_lines.append(lines[i])
-                return cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_lines)
+                return cumulative_shift(output_table_spec, file, file_prefix, exclude_lines)
             else:
                 print("Cumulative shift rejected!")
                 return None, None, None, False
@@ -1021,10 +1029,11 @@ def cumulative_shift(output_table_spec, file, file_prefix, spec_class, exclude_l
                 plt.show()
         plt.close()
 
-        if avg_line_fwhm[lname] is not None:
-            avg_line_fwhm[lname] = ((avg_line_fwhm[lname][0] * avg_line_fwhm[lname][1] + gamma) / (avg_line_fwhm[lname][1] + 1), avg_line_fwhm[lname][1] + 1)
-        else:
-            avg_line_fwhm[lname] = (gamma, 1)
+        if USE_LINE_AVERAGES:
+            if avg_line_fwhm[lname] is not None:
+                avg_line_fwhm[lname] = ((avg_line_fwhm[lname][0] * avg_line_fwhm[lname][1] + gamma) / (avg_line_fwhm[lname][1] + 1), avg_line_fwhm[lname][1] + 1)
+            else:
+                avg_line_fwhm[lname] = (gamma, 1)
 
         output_table_row = pd.DataFrame({
             "subspectrum": [list(output_table_spec["subspectrum"])[0]],
@@ -1475,7 +1484,7 @@ def main_loop(file_prefix):
     culumvs_errs = []
     single_output_table = output_table_cols.copy()
     cumulative_output_table = output_table_cols.copy()
-    spec_class = catalogue["spec_class"][file_prefixes.index(file_prefix.split('_')[0])]
+    spec_class = catalogue["SPEC_CLASS"][file_prefixes.index(file_prefix.split('_')[0])]
     for file in fileset:
         print_status(file, fileset, catalogue, file_prefix)
         wl, flx, time, flx_std = load_spectrum(file)
@@ -1488,7 +1497,17 @@ def main_loop(file_prefix):
         elif VERBOSE:
             print(f"Fits for {len(output_table_spec.index)} Lines complete!")
         single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
-        culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix, spec_class)
+        if SUBDWARF_SPECIFIC_ADJUSTMENTS:
+            if "He-" in spec_class:
+                preexcluded_lines = []
+                for key, value in lines_to_fit.items():
+                    if "H_" in key:
+                        preexcluded_lines.append(value)
+                culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=preexcluded_lines)
+            else:
+                culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix)
+        else:
+            culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix)
         if not success:
             continue
         cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)

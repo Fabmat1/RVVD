@@ -1,52 +1,59 @@
 import os.path
 
+import matplotlib.colors as mcolor
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt, cm
+from matplotlib import pyplot as plt
 
 from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask
 
-SPECFILE_NAME = "spec-2318-54628-0236"
+SPECFILE_NAME = "spec-2682-54401-0569"
+GAIA_ID = "944390774983674496"
 TITLE = ""
 SUBSPEC = "all"
-GAIA_ID = ""
 MARGIN = 100
-LINE_LOC = 5015.678  # "all"
+LINE_LOC = 4861.35  # "all"
 PLOT_OVERVIEW = True
-OVERVIEW_SEP = 1
+OVERVIEW_SEP = .25
 PLOT_INDIVIDUAL = False
-PLOT_FITTED_LINE = False
+PLOT_FITTED_LINE = True
 CULUMFIT = True
 COLORS = ["navy", "crimson"]
 MANUALLIMITS = False
-YLIM = (75, 110)
-XLIM = (6550, 6575)
-TITLE_SIZE = 17
-LABEL_SIZE = 14
-TICK_SIZE = 12
+TITLE_SIZE = 18
+LABEL_SIZE = 15
+TICK_SIZE = 15
 SUBSPECCOLORS = ["navy"]
+MARK_LINE_LOCATIONS = True
+XLIM = (4761.35, 4961.35)
+YLIM = (175, 1175)
 
-# plt.rcParams["figure.figsize"] = (10, 4.5)
+plt.rcParams["figure.figsize"] = (4.8 * 16 / 9, 4.8)
 plt.rcParams["figure.dpi"] = 300
 
 filenames = []
 
 
 def get_params_from_filename(filename, paramtable: pd.DataFrame, sfilename=None):
+    paramdict = dict.fromkeys(lines_to_fit)
     if sfilename is None:
         sfilename = SPECFILE_NAME
     specname, subspec = filename.split("/")[1].split(".")[0].split("_")
-    if type(sfilename) == list:
-        subspec = str(int(subspec))
-        prow = paramtable.loc[paramtable["subspectrum"] == subspec + "_" + specname]
-    else:
-        subspec = int(subspec)
-        prow = paramtable.loc[paramtable["subspectrum"] == subspec]
+    for name in lines_to_fit.keys():
+        if type(sfilename) == list:
+            subspec = str(int(subspec))
+            prow = paramtable.loc[paramtable["subspectrum"] == subspec + "_" + specname]
+            prow = prow.loc[prow["line_name"] == name]
+            if len(prow) != 0:
+                paramdict[name] = [prow["scaling"].iloc[0], prow["gamma"].iloc[0], prow["lambda_0"].iloc[0], prow["slope"].iloc[0], prow["flux_0"].iloc[0], prow["eta"].iloc[0]]
+        else:
+            subspec = int(subspec)
+            prow = paramtable.loc[paramtable["subspectrum"] == subspec]
+            prow = prow.loc[prow["line_name"] == name]
+            if len(prow) != 0:
+                paramdict[name] = [prow["scaling"].iloc[0], prow["gamma"].iloc[0], prow["lambda_0"].iloc[0], prow["slope"].iloc[0], prow["flux_0"].iloc[0], prow["eta"].iloc[0]]
     # scaling, gamma, shift, slope, height, eta
-    if len(prow) != 0:
-        return prow["scaling"].iloc[0], prow["gamma"].iloc[0], prow["lambda_0"].iloc[0], prow["slope"].iloc[0], prow["flux_0"].iloc[0], prow["eta"].iloc[0]
-    else:
-        return None, None, None, None, None, None
+    return paramdict
 
 
 if __name__ == "__main__":
@@ -91,32 +98,53 @@ if __name__ == "__main__":
     else:
         csvpath = f"output/{SPECFILE_NAME}/culum_spec_vals.csv"
     culumfit_table = pd.read_csv(csvpath)
+    RV_table = pd.read_csv(csvpath.replace("culum_spec_vals", "RV_variation"))
+    RV_vals = RV_table["culum_fit_RV"].to_numpy()
+    RV_vals -= np.amin(RV_vals)
+    RV_vals /= np.amax(RV_vals)
 
-    color = cm.rainbow(np.linspace(0, 1, len(filenames)))
+    cmap = mcolor.LinearSegmentedColormap.from_list('blue_to_red', ['darkblue', 'gray', 'darkred'])
+
+    color = cmap(RV_vals)
+    fit_colors = color[:, 0:3] * 0.6
+    # color = cm.rainbow(np.linspace(0, 1, len(filenames)))
     if PLOT_OVERVIEW:
         for line in lines_to_fit.values():
-            plt.axvline(line, color="darkgrey", linestyle="--", linewidth=1)
+            if MARK_LINE_LOCATIONS and line == LINE_LOC:
+                plt.axvline(line, color="darkgrey", linestyle="--", linewidth=1)
         for ind, filename in enumerate(filenames):
             params = get_params_from_filename(filename, culumfit_table)
             wl, flux, _, flux_std = load_spectrum(filename)
-            plt.plot(wl, flux + OVERVIEW_SEP * ind * np.mean(flux), color=color[ind])
-            if params[1] is not None:
-                wlforfit = np.linspace(params[2] - MARGIN, params[2] + MARGIN, 100)
-                plt.plot(wlforfit, pseudo_voigt(wlforfit, *params) + OVERVIEW_SEP * ind * np.mean(flux))
-        plt.title(f"Overview of {SPECFILE_NAME}")  # , fontsize=TITLE_SIZE)
+            plt.plot(wl, flux + OVERVIEW_SEP * ind * np.mean(flux), color=color[ind])  # color="navy" if np.amax(wl) < 10000 else "darkred")
+            for lname, lloc in lines_to_fit.items():
+                if params[lname] is not None and PLOT_FITTED_LINE:
+                    wlforfit = np.linspace(params[lname][2] - MARGIN, params[lname][2] + MARGIN, 250)
+                    plt.plot(wlforfit, pseudo_voigt(wlforfit, *params[lname]) + OVERVIEW_SEP * ind * np.mean(flux), color=fit_colors[ind])
+        if GAIA_ID is None:
+            plt.title(f"Overview of {SPECFILE_NAME}")  # , fontsize=TITLE_SIZE)
+        else:
+            plt.title(fr"Vicinity of the $H_\beta$ line for different spectra of GAIA EDR3 {GAIA_ID}")
         plt.ylabel("Flux [ergs/s/cm^2/Å] + Offset")  # , fontsize=LABEL_SIZE)
         plt.xlabel("Wavelength [Å]")  # , fontsize=LABEL_SIZE)
         plt.xticks()  # fontsize=TICK_SIZE)
         plt.yticks()  # fontsize=TICK_SIZE)
-        # plt.xlim((4720, 5000))
-        # plt.ylim((200, 1000))
+        if XLIM is not None:
+            plt.xlim(XLIM)
+        if YLIM is not None:
+            plt.ylim(YLIM)
         plt.tight_layout()
-        plt.savefig(f"images/{SPECFILE_NAME}_overviewplot.png")
+        if GAIA_ID is None:
+            plt.savefig(f"images/{SPECFILE_NAME}_overviewplot.png")
+        else:
+            plt.savefig(f"images/{GAIA_ID}_overviewplot.pdf")
         plt.show()
 
     if PLOT_INDIVIDUAL:
-        for filename in filenames:
-            nspec = SUBSPEC[filenames.index(filename)]
+        for i, filename in enumerate(filenames):
+            if type(SUBSPEC) == list:
+                nspec = SUBSPEC[filenames.index(filename)]
+            else:
+                nspec = i + 1
             wl, flux, _, flux_std = load_spectrum(filename)
             if type(LINE_LOC) == str:
                 if LINE_LOC.lower() == "all":
