@@ -64,7 +64,7 @@ SAVE_SINGLE_IMGS = False  # Save individual plots of fits as images in the respe
 REDO_IMAGES = False  # Redo images already present in folders
 SAVE_COMPOSITE_IMG = True  # Save RV-Curve plot
 REDO_STARS = False  # Whether to redo stars for which RVs have already be determined
-PLOT_LABELS_FONT_SIZE = 12  # Label font size
+PLOT_LABELS_FONT_SIZE = 14  # Label font size
 PLOT_TITLE_FONT_SIZE = 17  # Title font size
 CREATE_PDF = True  # Group all RV-plots into one big .pdf at the end of the calculations !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!
 CREATE_RESULTTABLE = True  # Create pdf with result parameters (requires pdflatex)
@@ -183,6 +183,13 @@ class FitUnsuccessfulWarning(UserWarning):
     pass
 
 
+def splitname(name):
+    allsplit = name.split("_")
+    if len(allsplit) < 3:
+        return allsplit
+    return "_".join(allsplit[:-1]), allsplit[-1]
+
+
 def slicearr(arr, lower, upper):
     """
     :param arr: array to be sliced into parts
@@ -296,7 +303,7 @@ def load_spectrum(filename, filetype="noncoadded_txt", preserve_below_zero=False
         wavelength = data[:, 0]
         flux = data[:, 1]
         flux_std = data[:, 2]
-        filename_prefix, nspec = filename.split("_")
+        filename_prefix, nspec = splitname(filename)
         if NO_NEGATIVE_FLUX[0] and not preserve_below_zero:
             mask = flux > 0
             wavelength = wavelength[mask]
@@ -305,9 +312,9 @@ def load_spectrum(filename, filetype="noncoadded_txt", preserve_below_zero=False
         nspec = nspec.replace(".txt", "")
         nspec = int(nspec)
         try:
-            t = atime.Time(np.loadtxt(filename.split("_")[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)[nspec - 1], format="mjd")
+            t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)[nspec - 1], format="mjd")
         except IndexError:
-            t = atime.Time(np.loadtxt(filename.split("_")[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR), format="mjd")
+            t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR), format="mjd")
 
     elif filetype == "simple_csv":
         data = pd.read_csv(filename)
@@ -495,6 +502,13 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     flux = np.copy(fluxdata)
     flux_std = np.copy(flux_stddata)
 
+    coverage = [len(np.where(np.logical_and(wavelength > center - 2, wavelength < center + 2))[0]) == 0, len(np.where(np.logical_and(wavelength > center - margin - 2, wavelength < center - margin + 2))[0]) == 0,
+                len(np.where(np.logical_and(wavelength > center + margin - 2, wavelength < center + margin + 2))[0]) == 0]
+
+    if sum(coverage) != 0:
+        return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
+               [False, False, False], False, False
+
     for i in disturbing_lines.values():
         if i != center:
             if i - CUT_MARGIN < center + MARGIN or i + CUT_MARGIN > center - MARGIN:
@@ -503,7 +517,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     if used_cr_inds is None:
         used_cr_inds = []
 
-    f_pre, subspec_ind = file_prefix.split("_")
+    f_pre, subspec_ind = splitname(file_prefix)
 
     if sanitize:
         flux, cut_flux, mask = sanitize_flux(flux, center, wavelength)
@@ -511,9 +525,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     try:
         assert len(slicedwl) > 0
     except AssertionError:
-        print("Seems like the line(s) you want to look at are not in the spectrum " + file_prefix)
-        print("Line @ " + str(center))
-        print("Check your files!")
+        warnings.warn("Seems like the line(s) you want to look at are not in the spectrum " + file_prefix + " Line @ " + str(center) + " Check your files!", FitUnsuccessfulWarning)
         return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
                [False, False, False], False, False
 
@@ -541,10 +553,18 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
 
     flux_std[flux_std == 0] = np.mean(flux_std)
 
-    initial_slope = (np.mean(flux[loind:upind][-round(len(flux[loind:upind]) / 5):]) - np.mean(flux[loind:upind][:round(len(flux[loind:upind]) / 5)])) / (slicedwl[-1] - slicedwl[0])
-    initial_h = np.mean(flux[loind:upind][:round(len(flux[loind:upind]) / 5)]) - np.mean(slicedwl[:round(len(flux[loind:upind]) / 5)]) * initial_slope
+    try:
+        initial_slope = (np.mean(flux[loind:upind][-round(len(flux[loind:upind]) / 5):]) - np.mean(flux[loind:upind][:round(len(flux[loind:upind]) / 5)])) / (slicedwl[-1] - slicedwl[0])
+        initial_h = np.mean(flux[loind:upind][:round(len(flux[loind:upind]) / 5)]) - np.mean(slicedwl[:round(len(flux[loind:upind]) / 5)]) * initial_slope
+    except IndexError:
+        return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
+               [False, False, False], False, False
 
-    flx_for_initial = flux[loind:upind] - slicedwl * initial_slope + initial_h
+    try:
+        flx_for_initial = flux[loind:upind] - slicedwl * initial_slope + initial_h
+    except ValueError:
+        return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
+               [False, False, False], False, False
 
     if lstr != "unknown" and not reset_initial_param:
         if USE_LINE_AVERAGES:
@@ -728,12 +748,13 @@ def check_for_outliers(array):
     return np.array(outlierloc)
 
 
-def single_spec_shift(filename, wl, flx, flx_std):
-    file_prefix = filename.split("/")[-1].split(".")[0]
+def single_spec_shift(filepath, wl, flx, flx_std):
+    fname = filepath.split("/")[-1].split(".")[0]
     velocities = []
     verrs = []
     output_table = output_table_cols.copy()
-    subspec = int(filename.split("/")[-1].split("_")[1].split(".")[0])
+    file_prefix, subspec = splitname(fname)
+    subspec = int(subspec)
     global linewidths
     linewidths = {}
 
@@ -743,7 +764,7 @@ def single_spec_shift(filename, wl, flx, flx_std):
                                                                                                                flx_std,
                                                                                                                loc,
                                                                                                                MARGIN,
-                                                                                                               file_prefix)
+                                                                                                               fname)
 
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
@@ -810,7 +831,7 @@ def single_spec_shift(filename, wl, flx, flx_std):
 
     v_std = np.sqrt(np.sum(verrs ** 2))
     complete_v_shift = np.mean(velocities)
-    print_single_spec_results(complete_v_shift, v_std, filename)
+    print_single_spec_results(complete_v_shift, v_std, filepath)
 
     return complete_v_shift, v_std, file_prefix, output_table
 
@@ -1015,7 +1036,7 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=None):
                             verticalalignment='bottom',
                             color="red")
                 subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
-                plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
+                plt.savefig(f"output/{file_prefix}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if len(linelist) > 1:
                 exclude_lines.append(lines[i])
                 return cumulative_shift(output_table_spec, file, file_prefix, exclude_lines)
@@ -1024,7 +1045,7 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=None):
                 return None, None, None, False
         if SAVE_SINGLE_IMGS:
             subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
-            plt.savefig(f"output/{file_prefix.split('_')[0]}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
+            plt.savefig(f"output/{file_prefix}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if SHOW_PLOTS:
                 plt.show()
         plt.close()
@@ -1095,17 +1116,17 @@ def files_from_catalogue(cat):
     else:
         filelist = glob.glob("spectra/*.txt")
         filenamelist = [filepath.split("\\")[-1] for filepath in filelist]
-        fileprefixes = [filename.split("_")[0] for filename in filenamelist if "_mjd" in filename]
+        fileprefixes = [splitname(filename)[0] for filename in filenamelist if "_mjd" in filename]
         return fileprefixes, None
 
 
 def print_status(file, fileset, catalogue, file_prefix):
     if USE_CATALOGUE:
-        gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
+        gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix)]
         print(
-            f"Doing Fits for System GAIA EDR3 {gaia_id} ({file_prefix.split('_')[0]}) [{(fileset.index(file) + 1)}/{(len(fileset))}]")
+            f"Doing Fits for System GAIA EDR3 {gaia_id} ({file_prefix}) [{(fileset.index(file) + 1)}/{(len(fileset))}]")
     else:
-        print(f"Doing Fits for System {file_prefix.split('_')[0]} [{(fileset.index(file) + 1)}/{(len(fileset))}]")
+        print(f"Doing Fits for System {file_prefix} [{(fileset.index(file) + 1)}/{(len(fileset))}]")
 
 
 def gap_detection(arr):
@@ -1198,8 +1219,8 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
         p.set_transform(invis_ax.transAxes)
         p.set_clip_on(False)
         invis_ax.add_patch(p)
-        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=45)
-        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
+        invis_ax.set_title(f"Radial Velocity over Time: Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
         invis_ax.text(0.5 * (left + right), 0.5 * (bottom + top), 'NO GOOD SUBSPECTRA FOUND!',
                       horizontalalignment='center',
                       verticalalignment='center',
@@ -1207,7 +1228,7 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
                       color="red")
         if custom_saveloc is None:
             if not merged:
-                fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+                fig.savefig(f"output/{fprefix}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
             else:
                 fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
             if SHOW_PLOTS:
@@ -1221,12 +1242,12 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
     normwidths = widths / np.linalg.norm(widths)
 
     if np.any(normwidths < .5) or np.amax(times) > 100:
-        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=45)
-        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
+        invis_ax.set_title(f"Radial Velocity over Time: Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
         plt.subplots_adjust(top=0.85, bottom=.2, left=.1, right=.95)
     else:
         invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
-        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+        invis_ax.set_title(f"Radial Velocity over Time: Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
         plt.subplots_adjust(top=0.85, left=.1, right=.95)
 
     times = np.array(times)
@@ -1261,7 +1282,7 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
                         color=colors[1],
                         clip_on=False)
             if fit is not None:
-                timespace = np.linspace(np.amin(times[mask]), np.amax(times[mask]))
+                timespace = np.linspace(start, end)
                 ax.plot(timespace,
                         fit.evaluate(timespace),
                         color="darkred",
@@ -1340,9 +1361,9 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
     if custom_saveloc is None:
         if not merged:
             if extravels is None:
-                fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis{PLOT_FMT}")
+                fig.savefig(f"output/{fprefix}/RV_variation_broken_axis{PLOT_FMT}")
             else:
-                fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation_broken_axis_comparison{PLOT_FMT}")
+                fig.savefig(f"output/{fprefix}/RV_variation_broken_axis_comparison{PLOT_FMT}")
         else:
             if extravels is None:
                 fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis{PLOT_FMT}")
@@ -1379,7 +1400,7 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
                  transform=ax1.transAxes,
                  color="red")
         if not merged:
-            fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation{PLOT_FMT}", dpi=300)
+            fig.savefig(f"output/{fprefix}/RV_variation{PLOT_FMT}", dpi=300)
         else:
             fig.savefig(f"output/{fprefix}_merged/RV_variation{PLOT_FMT}", dpi=300)
 
@@ -1403,7 +1424,7 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
 
     plt.tight_layout()
     if not merged:
-        fig.savefig(f"output/{fprefix.split('_')[0]}/RV_variation{PLOT_FMT}", dpi=300)
+        fig.savefig(f"output/{fprefix}/RV_variation{PLOT_FMT}", dpi=300)
     else:
         fig.savefig(f"output/{fprefix}_merged/RV_variation{PLOT_FMT}", dpi=300)
 
@@ -1441,11 +1462,11 @@ def create_pdf():
                     f.write(img2pdf.convert(files_brokenaxis))
         else:
             from PyPDF2 import PdfFileMerger
-            if not plotpdf_exists:
-                merger = PdfFileMerger()
-                [merger.append(pdf) for pdf in files]
-                with open("all_RV_plots.pdf", "wb") as new_file:
-                    merger.write(new_file)
+            # if not plotpdf_exists:
+            #     merger = PdfFileMerger()
+            #     [merger.append(pdf) for pdf in files]
+            #     with open("all_RV_plots.pdf", "wb") as new_file:
+            #         merger.write(new_file)
             if not plotpdfbroken_exists:
                 merger = PdfFileMerger()
                 [merger.append(pdf) for pdf in files_brokenaxis]
@@ -1467,15 +1488,15 @@ def main_loop(file_prefix):
         return
     fileset = open_spec_files(dirfiles, file_prefix, end=EXTENSION)
     if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
-        if os.path.isfile(f'output/{file_prefix}/RV_variation{PLOT_FMT}'):
-            if os.path.isfile(f'output/{file_prefix}/RV_variation_broken_axis{PLOT_FMT}'):
-                if not SAVE_SINGLE_IMGS:
-                    return
-                if not REDO_IMAGES:
-                    return
-                nspec = len(fileset)
-                if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
-                    return
+        # TODO: Fix this mess
+        if os.path.isfile(f'output/{file_prefix}/RV_variation_broken_axis{PLOT_FMT}'):
+            if not SAVE_SINGLE_IMGS:
+                return
+            if not REDO_IMAGES:
+                return
+            nspec = len(fileset)
+            if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
+                return
     spectimes = []
     spectimes_mjd = []
     specvels = []
@@ -1484,7 +1505,7 @@ def main_loop(file_prefix):
     culumvs_errs = []
     single_output_table = output_table_cols.copy()
     cumulative_output_table = output_table_cols.copy()
-    spec_class = catalogue["SPEC_CLASS"][file_prefixes.index(file_prefix.split('_')[0])]
+    spec_class = catalogue["SPEC_CLASS"][file_prefixes.index(file_prefix)]
     for file in fileset:
         print_status(file, fileset, catalogue, file_prefix)
         wl, flx, time, flx_std = load_spectrum(file)
@@ -1519,22 +1540,23 @@ def main_loop(file_prefix):
         specverrs.append(v_std)
 
     if USE_CATALOGUE:
-        gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix.split('_')[0])]
+        gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix)]
     else:
         gaia_id = file_prefix
 
     with np.printoptions(linewidth=10000):
         single_output_table.drop("sanitized", axis=1)
-        if not os.path.isdir(f"output/{file_prefix.split('_')[0]}"):
-            os.mkdir(f"output/{file_prefix.split('_')[0]}")
-        single_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/single_spec_vals.csv", index=False)
+        if not os.path.isdir(f"output/{file_prefix}"):
+            os.mkdir(f"output/{file_prefix}")
+        single_output_table.to_csv(f"output/{file_prefix}/single_spec_vals.csv", index=False)
         cumulative_output_table.drop("sanitized", axis=1)
-        cumulative_output_table.to_csv(f"output/{file_prefix.split('_')[0]}/culum_spec_vals.csv", index=False)
+        cumulative_output_table.to_csv(f"output/{file_prefix}/culum_spec_vals.csv", index=False)
 
     specvels = np.array(specvels) / 1000
     specverrs = np.array(specverrs) / 1000
     culumvs = np.array(culumvs) / 1000
     culumvs_errs = np.array(culumvs_errs) / 1000
+
     rvtable = pd.DataFrame({
         "culum_fit_RV": culumvs,
         "u_culum_fit_RV": culumvs_errs,
@@ -1544,9 +1566,9 @@ def main_loop(file_prefix):
         "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
     })
     with np.printoptions(linewidth=10000):
-        rvtable.to_csv(f"output/{file_prefix.split('_')[0]}/RV_variation.csv", index=False)
+        rvtable.to_csv(f"output/{file_prefix}/RV_variation.csv", index=False)
     if SAVE_COMPOSITE_IMG:
-        plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
+        # plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
         plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
 
 

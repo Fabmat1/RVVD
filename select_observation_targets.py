@@ -31,6 +31,7 @@ fits_reftable = Table.read(fits_reftable[1])
 fits_reftable = fits_reftable.to_pandas()
 
 for_selection = pd.DataFrame({
+    "name": [],
     "source_id": [],
     "ra": [],
     "dec": [],
@@ -56,9 +57,11 @@ for star in startable:
         gmag = reference["G_GAIA"].iloc[0]
         source_id = str(star["source_id"])
         file = star["File"]
+        name = reference["NAME"].iloc[0]
     except IndexError:
         reference = fits_reftable.loc[fits_reftable['source_id'] == star["source_id"]]
         try:
+            name = "-"
             spclass = "unknown"
             ra = reference["ra"].iloc[0]
             dec = reference["dec"].iloc[0]
@@ -72,6 +75,7 @@ for star in startable:
     flist = open_spec_files(dirfiles, file.split(".")[0])
 
     stardata = {
+        "name": [name],
         "source_id": [source_id],
         "ra": [ra],
         "dec": [dec],
