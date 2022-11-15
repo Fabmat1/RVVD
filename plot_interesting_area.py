@@ -3,18 +3,17 @@ import os.path
 import matplotlib.colors as mcolor
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt, cm
+from matplotlib import pyplot as plt
 
-from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask, splitname
+from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask, splitname, MARGIN
 
-SPECFILE_NAME = ['med-58120-hip4695201_sp14-204', 'med-58089-hip4695201_sp14-204', 'med-58149-hip4695201_sp14-204', 'med-58179-hip4695201_sp14-204', 'med-58568-NT092350N343253M01_sp11-112', 'med-58150-hip4695202_sp14-204']
+SPECFILE_NAME = ['spec-56572-GAC077N35B1_sp12-222', 'spec-57064-GAC082N38B2_sp10-181']
 GAIA_ID = "944390774983674496"
 TITLE = ""
 SUBSPEC = "all"
-MARGIN = 50
-LINE_LOC = 4861.35  # "all"
+LINE_LOC = "all"
 PLOT_OVERVIEW = True
-OVERVIEW_SEP = 1
+OVERVIEW_SEP = .25
 PLOT_INDIVIDUAL = False
 PLOT_FITTED_LINE = True
 CULUMFIT = True
@@ -25,8 +24,6 @@ LABEL_SIZE = 15
 TICK_SIZE = 15
 SUBSPECCOLORS = ["navy"]
 MARK_LINE_LOCATIONS = True
-# XLIM = (4761.35, 4961.35)
-# YLIM = (175, 1175)
 XLIM = None
 YLIM = None
 
@@ -105,7 +102,7 @@ if __name__ == "__main__":
     # RV_vals -= np.amin(RV_vals)
     # RV_vals /= np.amax(RV_vals)
 
-    cmap = mcolor.LinearSegmentedColormap.from_list('blue_to_red', ['darkblue', 'gray', 'darkred'])
+    # cmap = mcolor.LinearSegmentedColormap.from_list('blue_to_red', ['darkblue', 'gray', 'darkred'])
 
     # color = cmap(RV_vals)
     # fit_colors = color[:, 0:3] * 0.6
@@ -121,7 +118,7 @@ if __name__ == "__main__":
             for lname, lloc in lines_to_fit.items():
                 if params[lname] is not None and PLOT_FITTED_LINE:
                     wlforfit = np.linspace(params[lname][2] - MARGIN, params[lname][2] + MARGIN, 250)
-                    plt.plot(wlforfit, pseudo_voigt(wlforfit, *params[lname]) + OVERVIEW_SEP * ind * np.mean(flux))  # , color=fit_colors[ind])
+                    plt.plot(wlforfit, pseudo_voigt(wlforfit, *params[lname]) + OVERVIEW_SEP * ind * np.mean(flux), color="black")
         if GAIA_ID is None:
             plt.title(f"Overview of {SPECFILE_NAME}")  # , fontsize=TITLE_SIZE)
         else:

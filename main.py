@@ -26,7 +26,7 @@ from analyse_results import result_analysis
 EXTENSION = ".txt"  # extension of the ASCII spectra files
 SPECTRUM_FILE_SEPARATOR = " "  # Separator between columns in the ASCII file
 USE_CATALOGUE = True  # whether only a subset of stars defined by a catalogue should be used
-CATALOGUE = "all_objects.csv"  # the location of the catalogue
+CATALOGUE = "all_objects_withlamost.csv"  # the location of the catalogue
 FILE_LOC = "spectra/"  # directory that holds the spectrum files
 VERBOSE = False  # enable/disable verbose output
 CHECK_FOR_DOUBLES = True  # check if there are any stars for which multiple spectra files exist (needs catalogue)
@@ -46,7 +46,7 @@ Outliers do not get used in the cumulative fit.
 ALLOW_SINGLE_DATAPOINT_PEAKS = True  # Whether to accept lines that are made up by only one datapoint.
 MAX_ERR = 100000  # Maximum allowed error above which a RV gets rejected as bad [m/s]
 CUT_MARGIN = 20  # Margin used for cutting out disturbing lines, if their standard deviation was not yet determined [Å]
-MARGIN = 100  # Window margin around lines used in determining fits [Å]
+MARGIN = 75  # Window margin around lines used in determining fits [Å]
 AUTO_REMOVE_OUTLIERS = True  # Whether an input from the user is required to remove outliers from being used in the cumulative fit 
 MIN_ALLOWED_SNR = 5  # Minimum allowed SNR to include a line in the cumulative fit
 SNR_PEAK_RANGE = 1.5  # Width of the peak that is considered the "signal" [Multiples of the FWHM]
@@ -1441,8 +1441,8 @@ def create_pdf():
     if not plotpdf_exists or not plotpdfbroken_exists:
         dirname = os.path.dirname(__file__)
         dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
-        files = [os.path.join(d, f"RV_variation{PLOT_FMT}") for d in dirs]
-        files_brokenaxis = [os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}") for d in dirs]
+        files = [os.path.join(d, f"RV_variation{PLOT_FMT}") for d in dirs if os.path.join(d, f"RV_variation{PLOT_FMT}")]
+        files_brokenaxis = [os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}") for d in dirs if os.path.isfile(os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}"))]
 
         restable = pd.read_csv("result_parameters.csv", delimiter=",", dtype={"source_id": np.int64,
                                                                               "logp": "float",
