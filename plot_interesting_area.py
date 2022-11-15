@@ -3,16 +3,15 @@ import os.path
 import matplotlib.colors as mcolor
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt, cm
 
-from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask
+from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask, splitname, MARGIN
 
-SPECFILE_NAME = "spec-2682-54401-0569"
+SPECFILE_NAME = ['spec-56572-GAC077N35B1_sp12-222', 'spec-57064-GAC082N38B2_sp10-181']
 GAIA_ID = "944390774983674496"
 TITLE = ""
 SUBSPEC = "all"
-MARGIN = 100
-LINE_LOC = 4861.35  # "all"
+LINE_LOC = "all"
 PLOT_OVERVIEW = True
 OVERVIEW_SEP = .25
 PLOT_INDIVIDUAL = False
@@ -25,8 +24,8 @@ LABEL_SIZE = 15
 TICK_SIZE = 15
 SUBSPECCOLORS = ["navy"]
 MARK_LINE_LOCATIONS = True
-XLIM = (4761.35, 4961.35)
-YLIM = (175, 1175)
+XLIM = None
+YLIM = None
 
 plt.rcParams["figure.figsize"] = (4.8 * 16 / 9, 4.8)
 plt.rcParams["figure.dpi"] = 300
@@ -38,7 +37,7 @@ def get_params_from_filename(filename, paramtable: pd.DataFrame, sfilename=None)
     paramdict = dict.fromkeys(lines_to_fit)
     if sfilename is None:
         sfilename = SPECFILE_NAME
-    specname, subspec = filename.split("/")[1].split(".")[0].split("_")
+    specname, subspec = splitname(filename.split("/")[1].split(".")[0])
     for name in lines_to_fit.keys():
         if type(sfilename) == list:
             subspec = str(int(subspec))
@@ -103,14 +102,14 @@ if __name__ == "__main__":
     RV_vals -= np.amin(RV_vals)
     RV_vals /= np.amax(RV_vals)
 
-    cmap = mcolor.LinearSegmentedColormap.from_list('blue_to_red', ['darkblue', 'gray', 'darkred'])
+    # cmap = mcolor.LinearSegmentedColormap.from_list('blue_to_red', ['darkblue', 'gray', 'darkred'])
 
-    color = cmap(RV_vals)
-    fit_colors = color[:, 0:3] * 0.6
-    # color = cm.rainbow(np.linspace(0, 1, len(filenames)))
+    # color = cmap(RV_vals)
+    # fit_colors = color[:, 0:3] * 0.6
+    color = cm.rainbow(np.linspace(0, 1, len(filenames)))
     if PLOT_OVERVIEW:
         for line in lines_to_fit.values():
-            if MARK_LINE_LOCATIONS and line == LINE_LOC:
+            if MARK_LINE_LOCATIONS:
                 plt.axvline(line, color="darkgrey", linestyle="--", linewidth=1)
         for ind, filename in enumerate(filenames):
             params = get_params_from_filename(filename, culumfit_table)
@@ -119,7 +118,7 @@ if __name__ == "__main__":
             for lname, lloc in lines_to_fit.items():
                 if params[lname] is not None and PLOT_FITTED_LINE:
                     wlforfit = np.linspace(params[lname][2] - MARGIN, params[lname][2] + MARGIN, 250)
-                    plt.plot(wlforfit, pseudo_voigt(wlforfit, *params[lname]) + OVERVIEW_SEP * ind * np.mean(flux), color=fit_colors[ind])
+                    plt.plot(wlforfit, pseudo_voigt(wlforfit, *params[lname]) + OVERVIEW_SEP * ind * np.mean(flux), color="black")
         if GAIA_ID is None:
             plt.title(f"Overview of {SPECFILE_NAME}")  # , fontsize=TITLE_SIZE)
         else:
