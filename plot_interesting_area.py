@@ -3,7 +3,7 @@ import os.path
 import matplotlib.colors as mcolor
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt, cm
 
 from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask, splitname, MARGIN
 
