@@ -1219,8 +1219,8 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
         p.set_transform(invis_ax.transAxes)
         p.set_clip_on(False)
         invis_ax.add_patch(p)
-        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
-        invis_ax.set_title(f"Radial Velocity over Time: Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=45)
+        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
         invis_ax.text(0.5 * (left + right), 0.5 * (bottom + top), 'NO GOOD SUBSPECTRA FOUND!',
                       horizontalalignment='center',
                       verticalalignment='center',
@@ -1242,12 +1242,12 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
     normwidths = widths / np.linalg.norm(widths)
 
     if np.any(normwidths < .5) or np.amax(times) > 100:
-        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
-        invis_ax.set_title(f"Radial Velocity over Time: Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+        invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=45)
+        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
         plt.subplots_adjust(top=0.85, bottom=.2, left=.1, right=.95)
     else:
         invis_ax.set_xlabel("Time from first datapoint onward [Days]", fontsize=PLOT_LABELS_FONT_SIZE, labelpad=20)
-        invis_ax.set_title(f"Radial Velocity over Time: Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
+        invis_ax.set_title(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE, pad=10)
         plt.subplots_adjust(top=0.85, left=.1, right=.95)
 
     times = np.array(times)

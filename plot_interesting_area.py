@@ -7,11 +7,11 @@ from matplotlib import pyplot as plt, cm
 
 from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask, splitname
 
-SPECFILE_NAME = ['spec-1985-53431-0048', 'spec-3972-55589-0812']
+SPECFILE_NAME = ['med-58120-hip4695201_sp14-204', 'med-58089-hip4695201_sp14-204', 'med-58149-hip4695201_sp14-204', 'med-58179-hip4695201_sp14-204', 'med-58568-NT092350N343253M01_sp11-112', 'med-58150-hip4695202_sp14-204']
 GAIA_ID = "944390774983674496"
 TITLE = ""
 SUBSPEC = "all"
-MARGIN = 100
+MARGIN = 50
 LINE_LOC = 4861.35  # "all"
 PLOT_OVERVIEW = True
 OVERVIEW_SEP = 1
@@ -101,14 +101,14 @@ if __name__ == "__main__":
         csvpath = f"output/{SPECFILE_NAME}/culum_spec_vals.csv"
     culumfit_table = pd.read_csv(csvpath)
     RV_table = pd.read_csv(csvpath.replace("culum_spec_vals", "RV_variation"))
-    RV_vals = RV_table["culum_fit_RV"].to_numpy()
-    RV_vals -= np.amin(RV_vals)
-    RV_vals /= np.amax(RV_vals)
+    # RV_vals = RV_table["culum_fit_RV"].to_numpy()
+    # RV_vals -= np.amin(RV_vals)
+    # RV_vals /= np.amax(RV_vals)
 
     cmap = mcolor.LinearSegmentedColormap.from_list('blue_to_red', ['darkblue', 'gray', 'darkred'])
 
-    color = cmap(RV_vals)
-    fit_colors = color[:, 0:3] * 0.6
+    # color = cmap(RV_vals)
+    # fit_colors = color[:, 0:3] * 0.6
     color = cm.rainbow(np.linspace(0, 1, len(filenames)))
     if PLOT_OVERVIEW:
         for line in lines_to_fit.values():
