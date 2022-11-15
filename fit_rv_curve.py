@@ -13,7 +13,7 @@ It is not recommended to use this script for RV-curves with large variations in 
 or RV-curves with little datapoints (<20 good datapoints), as results will be very inaccurate.
 """
 
-FILE_PREFIX = "spec-0443-51873-0030_merged"  # File prefix of the RV-Curve to be plotted
+FILE_PREFIX = "spec-0312-51689-0031"  # File prefix of the RV-Curve to be plotted
 PERIOD_UNIT = "auto"
 """
 PERIOD_UNIT: Unit the Period is outputted as, may be any of 
@@ -23,16 +23,16 @@ PERIOD_UNIT: Unit the Period is outputted as, may be any of
 "d"- days
 "y"- years
 """
-MANUAL_INITIAL_GUESS = [50, 1, 0, 0]
+MANUAL_INITIAL_GUESS = [280, 13.05, -200, 3968.0697424]
 """
 MANUAL_INITIAL_GUESS: Manually defined initial guess for the sinusoidal Fit.
 Available parameters are, in this order with required units:
 Amplitude [km/s]
-Frequency [1/day]
+Frequency [1/days]
 RV Offset [km/s]
-Period shift phi [1/day]
+Period shift phi [days]
 """
-GAIA_ID = ""
+GAIA_ID = "4415762082969078400"
 
 
 ############################## FUNCTIONS ##############################
@@ -76,7 +76,7 @@ def cosinusoid(x, A, b, h, shift):
     return h + A * np.cos(b * 2 * np.pi * (x - shift))
 
 
-def fit_rv_curve(fpre=FILE_PREFIX, showplot=True):
+def fit_rv_curve(fpre=FILE_PREFIX, showplot=True, manguess=MANUAL_INITIAL_GUESS, gaia_id=GAIA_ID):
     data = pd.read_csv(rf"output\{fpre}\RV_variation.csv")
 
     stime = np.array([atime.Time(t, format="mjd").to_value(format="mjd") for t in data["mjd"]])
@@ -84,21 +84,25 @@ def fit_rv_curve(fpre=FILE_PREFIX, showplot=True):
     RV = data["culum_fit_RV"]
     RV_err = data["u_culum_fit_RV"]
 
-    # Compute guess parameters via Lomb-Scrargle periodogram (https://doi.org/10.1007/BF00648343)
-    frequency, power = LombScargle(stime, RV, RV_err, nterms=100).autopower()
+    if manguess is None:
+        # Compute guess parameters via Lomb-Scrargle periodogram (https://doi.org/10.1007/BF00648343)
+        frequency, power = LombScargle(stime, RV, RV_err, nterms=100).autopower()
 
-    plt.plot(frequency, power)
-    plt.show()
+        plt.plot(frequency, power)
+        plt.show()
 
-    freq = abs(frequency[np.argmax(power)])
-    amp = np.ptp(RV) / 2
-    offset = np.mean(RV)
-    p0 = [amp, freq, offset, 0]
+        freq = abs(frequency[np.argmax(power)])
+        amp = np.ptp(RV) / 2
+        offset = np.mean(RV)
+        p0 = [amp, freq, offset, 0]
 
-    plt.scatter(stime, RV)
-    timespace = np.linspace(np.amin(stime), np.amax(stime), 1000)
-    plt.plot(timespace, sinusoid(timespace, *p0))
-    plt.show()
+    else:
+        p0 = manguess
+
+    # plt.scatter(stime, RV)
+    # timespace = np.linspace(np.amin(stime), np.amax(stime), 1000)
+    # plt.plot(timespace, sinusoid(timespace, *p0))
+    # plt.show()
 
     try:
         params, errs = curve_fit(sinusoid,
@@ -108,7 +112,7 @@ def fit_rv_curve(fpre=FILE_PREFIX, showplot=True):
                                  sigma=RV_err,
                                  bounds=[
                                      [0, 0, -np.inf, -np.inf],
-                                     [0.75 * (np.abs(np.amax(RV) - np.amin(RV))), np.inf, np.inf, np.inf]
+                                     [np.inf, np.inf, np.inf, np.inf]
                                  ],
                                  maxfev=100000)
     except RuntimeError:
@@ -120,7 +124,7 @@ def fit_rv_curve(fpre=FILE_PREFIX, showplot=True):
 
     from main import plot_rvcurve_brokenaxis
 
-    plot_rvcurve_brokenaxis(RV, RV_err, stime, fpre, GAIA_ID, fit=fit, custom_saveloc=f"images/{fpre}.pdf")
+    plot_rvcurve_brokenaxis(RV, RV_err, stime, fpre, gaia_id, fit=fit, custom_saveloc=f"images/{fpre}.pdf")
 
     if showplot:
         plt.show()

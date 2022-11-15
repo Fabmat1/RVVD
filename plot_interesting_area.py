@@ -3,7 +3,7 @@ import os.path
 import matplotlib.colors as mcolor
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt, cm
+from matplotlib import pyplot as plt
 
 from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask, splitname, MARGIN
 
@@ -98,9 +98,9 @@ if __name__ == "__main__":
         csvpath = f"output/{SPECFILE_NAME}/culum_spec_vals.csv"
     culumfit_table = pd.read_csv(csvpath)
     RV_table = pd.read_csv(csvpath.replace("culum_spec_vals", "RV_variation"))
-    RV_vals = RV_table["culum_fit_RV"].to_numpy()
-    RV_vals -= np.amin(RV_vals)
-    RV_vals /= np.amax(RV_vals)
+    # RV_vals = RV_table["culum_fit_RV"].to_numpy()
+    # RV_vals -= np.amin(RV_vals)
+    # RV_vals /= np.amax(RV_vals)
 
     # cmap = mcolor.LinearSegmentedColormap.from_list('blue_to_red', ['darkblue', 'gray', 'darkred'])
 

@@ -140,7 +140,7 @@ def result_statistics(analysis_params, catalogue):
     #     shutil.rmtree(os.path.join(os.path.dirname(__file__), f"output/{specname}/"))
 
 
-def compare_results():
+def compare_results(plot_comp=True):
     catalog = pd.read_csv("sd_catalogue_v56_pub.csv", delimiter=",")
     idents = dict(zip(catalog.NAME, [str(g).replace("Gaia EDR3 ", "") for g in catalog.GAIA_DESIG.to_list()]))
     comparetable = pd.read_csv("rvs_all_final.csv", delimiter=",", names=["Identifier", "mjd", "RV", "u_RV", "source"]).replace({"Identifier": idents})
@@ -157,7 +157,9 @@ def compare_results():
     overlap = np.array([])
     gmags = []
     nspecs = []
-
+    original_vals = np.array([])
+    other_vals = np.array([])
+    from main import plot_rvcurve_brokenaxis
     for ind, row in RVs.iterrows():
         try:
             gaia_id = np.int64(ind)
@@ -165,9 +167,9 @@ def compare_results():
             continue
         u_RVlist = np.array(u_RVs.loc[ind].iloc[0]).astype(float)
         RVlist = np.array(row.iloc[0]).astype(float)
-        timelist = np.array(times.loc[ind].iloc[0]).astype(float)
+        o_timelist = np.array(times.loc[ind].iloc[0]).astype(float)
 
-        timelist -= np.amin(timelist)
+        timelist = o_timelist - np.amin(o_timelist)
 
         corr = restable.loc[restable["source_id"] == gaia_id]
         m = False
@@ -181,12 +183,7 @@ def compare_results():
                     dirname = os.path.dirname(__file__)
                     if os.path.exists(os.path.join(dirname, f"output/{s}_merged")):
                         specfile = s
-            if "," in specfile:
-                continue
-            if not m:
-                otherRVvals = np.genfromtxt(os.path.join(os.path.dirname(__file__), f"output/{specfile}/RV_variation.csv"), delimiter=",")
-            else:
-                otherRVvals = np.genfromtxt(os.path.join(os.path.dirname(__file__), f"output/{specfile}_merged/RV_variation.csv"), delimiter=",")
+            otherRVvals = np.genfromtxt(os.path.join(os.path.dirname(__file__), f"output/{corr['source_folder'].iloc[0]}/RV_variation.csv"), delimiter=",")
 
             if otherRVvals.ndim == 1:
                 continue
@@ -194,33 +191,84 @@ def compare_results():
             otherRVvals = otherRVvals[1:, :]
             otherRVlist = otherRVvals[:, 0]
             otheruRVlist = otherRVvals[:, 1]
-            othertimelist = otherRVvals[:, 4]
-            othertimelist -= np.amin(othertimelist)
+            o_othertimelist = otherRVvals[:, 4]
+            othertimelist = o_othertimelist - np.amin(o_othertimelist)
 
-            from main import plot_rvcurve_brokenaxis
-            plot_rvcurve_brokenaxis(
-                otherRVlist,
-                otheruRVlist,
-                othertimelist,
-                specfile,
-                gaia_id,
-                merged=m,
-                extravels=RVlist,
-                extraverrs=u_RVlist,
-                extratimes=timelist
-            )
-            if len(otherRVlist) == len(RVlist):
-                differences = np.concatenate([differences, np.abs(otherRVlist - RVlist)])
-                error_differences = np.concatenate([error_differences, np.abs(otheruRVlist - u_RVlist)])
-                allerrratio = np.concatenate([allerrratio, np.abs(otheruRVlist / u_RVlist)])
-                overlap = np.concatenate([overlap, np.logical_or(np.logical_and(otherRVlist - otheruRVlist < RVlist + u_RVlist, otherRVlist > RVlist), np.logical_and(otherRVlist + otheruRVlist > RVlist - u_RVlist, otherRVlist < RVlist))])
-                if sum(np.abs(otheruRVlist / u_RVlist) > 3.5) > 0:
-                    print(gaia_id)
-                for i in range(len(otheruRVlist)):
-                    nspecs.append(corr["Nspec"].iloc[0])
-                gmag = input_catalogue.loc[input_catalogue["source_id"] == gaia_id]["gmag"].iloc[0]
-                for i in range(len(otheruRVlist)):
-                    gmags.append(gmag)
+            if plot_comp:
+                plot_rvcurve_brokenaxis(
+                    otherRVlist,
+                    otheruRVlist,
+                    othertimelist,
+                    specfile,
+                    gaia_id,
+                    merged=m,
+                    extravels=RVlist,
+                    extraverrs=u_RVlist,
+                    extratimes=timelist
+                )
+            if not len(otherRVlist) == len(RVlist):
+                otherlist = pd.DataFrame({
+                    "time": np.round(o_othertimelist, 3) + 2400000,
+                    "otherRV": otherRVlist,
+                    "u_otherRV": otheruRVlist,
+                })
+                thislist = pd.DataFrame({
+                    "time": np.round(o_timelist, 3),
+                    "thisRV": RVlist,
+                    "u_thisRV": u_RVlist,
+                })
+                comblist = otherlist.merge(thislist, on="time").dropna()
+                if not comblist.empty:
+                    otherRVlist = comblist["otherRV"].to_numpy()
+                    RVlist = comblist["thisRV"].to_numpy()
+                    otheruRVlist = comblist["u_otherRV"].to_numpy()
+                    u_RVlist = comblist["u_thisRV"].to_numpy()
+                else:
+                    otherRVlist = np.array([])
+                    RVlist = np.array([])
+                    otheruRVlist = np.array([])
+                    u_RVlist = np.array([])
+            else:
+                if not sum([round(a, 3) != round(b, 3) for a, b in zip(timelist, othertimelist)]) == 0:
+                    otherlist = pd.DataFrame({
+                        "time": np.round(o_othertimelist, 3) + 2400000,
+                        "otherRV": otherRVlist,
+                        "u_otherRV": otheruRVlist,
+                    })
+                    thislist = pd.DataFrame({
+                        "time": np.round(o_timelist, 3),
+                        "thisRV": RVlist,
+                        "u_thisRV": u_RVlist,
+                    })
+                    comblist = otherlist.merge(thislist, on="time").dropna()
+                    if not comblist.empty:
+                        otherRVlist = comblist["otherRV"].to_numpy()
+                        RVlist = comblist["thisRV"].to_numpy()
+                        otheruRVlist = comblist["u_otherRV"].to_numpy()
+                        u_RVlist = comblist["u_thisRV"].to_numpy()
+                    else:
+                        otherRVlist = np.array([])
+                        RVlist = np.array([])
+                        otheruRVlist = np.array([])
+                        u_RVlist = np.array([])
+
+            for k, val in enumerate(RVlist):
+                if val < -400:
+                    if otherRVlist[k] < -300:
+                        print(gaia_id, val, otherRVlist[k])
+            original_vals = np.concatenate([original_vals, RVlist])
+            other_vals = np.concatenate([other_vals, otherRVlist])
+            differences = np.concatenate([differences, np.abs(otherRVlist - RVlist)])
+            error_differences = np.concatenate([error_differences, np.abs(otheruRVlist - u_RVlist)])
+            allerrratio = np.concatenate([allerrratio, np.abs(otheruRVlist / u_RVlist)])
+            overlap = np.concatenate([overlap, np.logical_or(np.logical_and(otherRVlist - otheruRVlist < RVlist + u_RVlist, otherRVlist > RVlist), np.logical_and(otherRVlist + otheruRVlist > RVlist - u_RVlist, otherRVlist < RVlist))])
+            if sum(np.abs(otheruRVlist / u_RVlist) > 3.5) > 0:
+                print(gaia_id)
+            for i in range(len(otheruRVlist)):
+                nspecs.append(corr["Nspec"].iloc[0])
+            gmag = input_catalogue.loc[input_catalogue["source_id"] == gaia_id]["gmag"].iloc[0]
+            for i in range(len(otheruRVlist)):
+                gmags.append(gmag)
 
     from main import PLOT_FMT
     from PyPDF2 import PdfFileMerger
@@ -232,6 +280,17 @@ def compare_results():
     with open("all_RV_plots_comparison.pdf", "wb") as new_file:
         merger.write(new_file)
 
+    plt.scatter(original_vals, other_vals, color="darkgray", marker="x", zorder=2)
+    plt.plot([-1000, 1000], [-1000, 1000], linestyle="--", color="navy", zorder=3)
+    plt.grid(True, zorder=1)
+    plt.ylim(np.amin(other_vals) - np.ptp(other_vals) * 0.025, np.amax(other_vals) + np.ptp(other_vals) * 0.025)
+    plt.xlim(np.amin(original_vals) - np.ptp(original_vals) * 0.025, np.amax(original_vals) + np.ptp(original_vals) * 0.025)
+    plt.xlabel("RV Value (Geier et al., 2022) [kms$^{-1}$]", fontsize=15)
+    plt.ylabel("RV Value (this work) [kms$^{-1}$]", fontsize=15)
+    plt.gca().tick_params(axis='both', which='major', labelsize=13)
+    plt.tight_layout()
+    plt.savefig(f"images/RVdiffscatter{PLOT_FMT}")
+    plt.show()
     plt.hist(differences, np.linspace(0, 200, 25), color="crimson", edgecolor="black", zorder=10)
     plt.xlabel("RV difference [km/s]", fontsize=15)
     plt.ylabel("#", fontsize=15)
@@ -257,7 +316,7 @@ def compare_results():
     print(f"Overlap in {np.sum(overlap)} out of {len(overlap)} cases (Ratio of {np.sum(overlap) / len(overlap)})")
 
 
-def overview(restable):
+def overview(restable, catalogue):
     preamble = [
         r"\documentclass[a4paper]{article}",
         r"\usepackage{xltabular}",
@@ -266,8 +325,8 @@ def overview(restable):
         r"\begin{center}",
         r"{\Large \textbf{Result Parameters}}",
         r"\end{center}",
-        r"\begin{xltabular}{\textwidth}{l|l|l|l|l|l|l|X|X}",
-        r"\textbf{Index} &\textbf{GAIA Identifier} & \textbf{Right ascension} & \textbf{Declination} & \textbf{Classification} & \textbf{$N_{\mathrm{spec}}$} & $\mathrm{RV}_{\mathrm{avg}}$ [$\mathrm{kms}^{-1}$] & $\Delta\mathrm{RV}_{\max}$ [$\mathrm{kms}^{-1}$] & $\log p$ [no unit]\\",
+        r"\begin{xltabular}{\textwidth}{l|l|l|l|l|l|l|l|X|X}",
+        r"\textbf{\#} & \textbf{Name} &\textbf{GAIA Identifier} & \textbf{RA}[$^{\circ}$] & \textbf{Dec.}[$^{\circ}$] & \textbf{Class.} & \textbf{$N_{\mathrm{spec}}$} & $\mathrm{RV}_{\mathrm{avg}}$ [$\mathrm{kms}^{-1}$] & $\Delta\mathrm{RV}_{\max}$ [$\mathrm{kms}^{-1}$] & $\log p$ [no unit]\\",
         r"\hline"
     ]
     postamble = [
@@ -281,18 +340,21 @@ def overview(restable):
         # GAIA EDR3 XXXXXXXXXXXXXXXXXXX & \verb|spec-xxxx-xxxx-xxx.fits| & xxx & -xx.xxxx\\
         n = 0
         for index, row in restable.iterrows():
+            catrow = catalogue.loc[catalogue["source_id"] == int(row["source_id"])]
+            name = catrow["name"].iloc[0]
+            name = "" if name == "-" else name
             n += 1
             if row["logp"] == np.nan:
                 print(row)
             if row["logp"] == 0:
-                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
-                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & NaN\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round(row["ra"], 4)) + r"&" + str(round(row["dec"], 4)) + r"&" + row[
+                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg']) > 0 else ''} {round(row['RVavg'])}\pm{round(row['RVavg_err'])}$" + rf"& ${round(row['deltaRV'])}\pm{round(row['deltaRV_err'])}$" + rf" & NaN\\" + "\n")
             elif row["logp"] == -500:
-                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
-                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & $<-500$\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round(row["ra"], 4)) + r"&" + str(round(row["dec"], 4)) + r"&" + row[
+                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg']) > 0 else ''} {round(row['RVavg'])}\pm{round(row['RVavg_err'])}$" + rf"& ${round(row['deltaRV'])}\pm{round(row['deltaRV_err'])}$" + rf" & $<-500$\\" + "\n")
             else:
-                outtex.write(f"{n}&" + row["source_id"] + r"&" + str(row["ra"]) + r"&" + str(row["dec"]) + r"&" + row[
-                    "spec_class"] + f"&${row['Nspec']}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg'], 2) > 0 else ''} {round(row['RVavg'], 2)}\pm{round(row['RVavg_err'], 2)}$" + rf"& ${round(row['deltaRV'], 2)}\pm{round(row['deltaRV_err'], 2)}$" + rf" & ${round(row['logp'], 2)}$\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round(row["ra"], 4)) + r"&" + str(round(row["dec"], 4)) + r"&" + row[
+                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg']) > 0 else ''} {round(row['RVavg'])}\pm{round(row['RVavg_err'])}$" + rf"& ${round(row['deltaRV'])}\pm{round(row['deltaRV_err'])}$" + rf" & ${round(row['logp'], 2)}$\\" + "\n")
         for line in postamble:
             outtex.write(line + "\n")
     os.system("pdflatex --enable-write18 --extra-mem-bot=10000000 --synctex=1 result_parameters.tex")
@@ -486,7 +548,7 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
     analysis_params.to_csv("result_parameters.csv", index=False)
     print("Creating Statistics...")
-    overview(analysis_params)
+    overview(analysis_params, catalogue)
     result_statistics(analysis_params, catalogue)
 
 
@@ -538,4 +600,4 @@ if __name__ == "__main__":
     # from main import CATALOGUE, create_pdf
     # result_analysis(True, pd.read_csv(CATALOGUE))
     # create_pdf()
-    compare_results()
+    compare_results(False)
