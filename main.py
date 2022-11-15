@@ -1,6 +1,7 @@
 import glob
 import os
 import re
+import shutil
 import warnings
 from datetime import datetime
 from multiprocessing import Pool
@@ -1449,9 +1450,13 @@ def create_pdf():
                                                                               "associated_files": "string"})
 
         restable.reset_index(inplace=True, drop=True)
+        if os.name == 'nt':
+            files.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("\\")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
+            files_brokenaxis.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("\\")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
 
-        files.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("\\")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
-        files_brokenaxis.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("\\")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
+        else:
+            files.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("/")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
+            files_brokenaxis.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("/")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
 
         if PLOT_FMT.lower() != ".pdf":
             if not plotpdf_exists:
@@ -1468,10 +1473,32 @@ def create_pdf():
             #     with open("all_RV_plots.pdf", "wb") as new_file:
             #         merger.write(new_file)
             if not plotpdfbroken_exists:
-                merger = PdfFileMerger()
-                [merger.append(pdf) for pdf in files_brokenaxis]
+                try:
+                    merger = PdfFileMerger()
+                    [merger.append(pdf) for pdf in files_brokenaxis]
+                except OSError:
+
+                    os.mkdir("temp")
+                    subsets = np.array_split(files_brokenaxis, 5)
+                    tempfiles =[]
+
+                    for i, s in enumerate(subsets):
+                        merger = PdfFileMerger()
+                        [merger.append(pdf) for pdf in s]
+                        fstr = f"temp/{i}"
+                        tempfiles.append(fstr)
+                        with open(fstr, "wb") as t_file:
+                            merger.write(t_file)
+
+                    merger = PdfFileMerger()
+                    [merger.append(pdf) for pdf in tempfiles]
+
+
                 with open("all_RV_plots_broken_axis.pdf", "wb") as new_file:
                     merger.write(new_file)
+
+                if os.path.isdir("temp"):
+                    shutil.rmtree("temp")
 
 
 def initial_variables():

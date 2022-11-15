@@ -112,7 +112,7 @@ def result_statistics(analysis_params, catalogue):
     frate = []
     to_redo = []
     for dir in dirs:
-        specname = dir.split("\\")[-1]
+        specname = dir.split("\\")[-1] if "\\" in dir else dir.split("/")[-1]
         if "spec" not in specname.split("_")[0]:
             continue
         if "_merged" in specname:
@@ -121,7 +121,7 @@ def result_statistics(analysis_params, catalogue):
         n_ges = sum(os.path.isdir(os.path.join(dir, i)) for i in os.listdir(dir))
         if n_ges == 0:
             continue
-        data = np.genfromtxt(dir + "\\RV_variation.csv", delimiter=',')[1:]
+        data = np.genfromtxt(dir + "\\" if "\\" + "RV_variation.csv" in dir else dir + "/" + "RV_variation.csv", delimiter=',')[1:]
         n_success = data.shape[0] if data.ndim == 2 else 0
         frate.append(1 - n_success / n_ges)
         mags.append(gmag)
@@ -331,7 +331,7 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
 
     used_sids = []
     for file in files:
-        specname = file.split("\\")[-2]
+        specname = file.split("\\")[-2] if "\\" in file else file.split("/")[-2]
         if "_merged" in specname:
             star = catalogue.loc[catalogue["file"] == specname.replace("_merged", "")]
             sid = star["source_id"].iloc[0]
