@@ -1513,7 +1513,7 @@ def create_pdf():
                     merger.write(new_file)
 
                 if os.path.isdir("temp"):
-                    shutil.rmtree("temp")
+                    shutil.rmtree("temp", ignore_errors=True)
 
 
 def initial_variables():
