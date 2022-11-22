@@ -6,6 +6,7 @@ import warnings
 from datetime import datetime
 from multiprocessing import Pool
 
+import PyPDF2.errors
 import astropy.time as atime
 import img2pdf
 import matplotlib as mpl
@@ -134,6 +135,7 @@ c = c
 pi = pi
 avg_line_fwhm = dict.fromkeys(lines_to_fit)
 revlines = dict((v, k) for k, v in lines_to_fit.items())
+mpl.rcParams["axes.formatter.useoffset"] = False
 
 output_table_cols = pd.DataFrame({
     "subspectrum": [],
@@ -1435,6 +1437,13 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
         plt.close()
 
 
+def append_pdf(pdf, merger):
+    try:
+        merger.append(pdf)
+    except PyPDF2.errors.PdfReadError:
+        print(f"The file {pdf} is broken!")
+
+
 def create_pdf():
     plotpdf_exists = os.path.exists("all_RV_plots.pdf")
     plotpdfbroken_exists = os.path.exists("all_RV_plots_broken_axis.pdf")
@@ -1475,23 +1484,24 @@ def create_pdf():
             if not plotpdfbroken_exists:
                 try:
                     merger = PdfFileMerger()
-                    [merger.append(pdf) for pdf in files_brokenaxis]
+                    [append_pdf(pdf, merger) for pdf in files_brokenaxis]
                 except OSError:
+                    merger.close()
 
                     os.mkdir("temp")
-                    subsets = np.array_split(files_brokenaxis, 5)
+                    subsets = np.array_split(files_brokenaxis, int(len(files_brokenaxis)/10))
                     tempfiles =[]
 
                     for i, s in enumerate(subsets):
                         merger = PdfFileMerger()
-                        [merger.append(pdf) for pdf in s]
+                        [append_pdf(pdf, merger) for pdf in s]
                         fstr = f"temp/{i}"
                         tempfiles.append(fstr)
                         with open(fstr, "wb") as t_file:
                             merger.write(t_file)
 
                     merger = PdfFileMerger()
-                    [merger.append(pdf) for pdf in tempfiles]
+                    [append_pdf(pdf, merger) for pdf in tempfiles]
 
 
                 with open("all_RV_plots_broken_axis.pdf", "wb") as new_file:
