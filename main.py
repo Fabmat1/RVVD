@@ -1335,16 +1335,19 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
                 ax.yaxis.tick_right()
                 ax.spines['left'].set_visible(False)
             if normwidths[ind] < 0.20:
-                ax.set_xticks([(start + end) / 2], [round((start + end) / 2, 2)])
+                ax.set_xticks([(start + end) / 2])
+                ax.set_xticklabels([round((start + end) / 2, 2)])
                 plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
             if 0.2 < normwidths[ind] < 0.5:
                 N = 2
                 if np.amax(np.unique(np.round(np.linspace(start, end - span * 0.15, 2), N), return_counts=True)[1]) > 1:
                     N = 3
                 if ind == 0:
-                    ax.set_xticks(np.linspace(start, end - span * 0.3, 2).tolist(), np.round(np.linspace(start, end - span * 0.15, 2), N).tolist())
+                    ax.set_xticks(np.linspace(start, end - span * 0.3, 2).tolist())
+                    ax.set_xticklabels(np.round(np.linspace(start, end - span * 0.15, 2), N).tolist())
                 else:
-                    ax.set_xticks(np.linspace(start + span * 0.3, end - span * 0.3, 2).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 2), N).tolist())
+                    ax.set_xticks(np.linspace(start + span * 0.3, end - span * 0.3, 2).tolist())
+                    ax.set_xticklabels(np.round(np.linspace(start + span * 0.15, end - span * 0.15, 2), N).tolist())
                 plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
             if normwidths[ind] > 0.5:
                 N = 2
@@ -1353,9 +1356,11 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
                 if end > 100:
                     plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
                 if ind == 0:
-                    ax.set_xticks(np.linspace(start, end - span * 0.15, 4).tolist(), np.round(np.linspace(start, end - span * 0.15, 4), N).tolist())
+                    ax.set_xticks(np.linspace(start, end - span * 0.15, 4).tolist())
+                    ax.set_xticklabels(np.round(np.linspace(start, end - span * 0.15, 4), N).tolist())
                 else:
-                    ax.set_xticks(np.linspace(start + span * 0.15, end - span * 0.15, 4).tolist(), np.round(np.linspace(start + span * 0.15, end - span * 0.15, 4), N).tolist())
+                    ax.set_xticks(np.linspace(start + span * 0.15, end - span * 0.15, 4).tolist())
+                    ax.set_xticklabels(np.round(np.linspace(start + span * 0.15, end - span * 0.15, 4), N).tolist())
             # ax.ticklabel_format(useOffset=False)
     else:
         axs.scatter(times, vels, zorder=5, color=colors[0])
