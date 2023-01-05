@@ -1,4 +1,6 @@
 import os.path
+import sys
+
 import matplotlib.colors as mcolor
 import numpy as np
 import pandas as pd
@@ -190,7 +192,10 @@ def correct_indiced_sys(ind):
 
 if __name__ == "__main__":
     # plot_system_from_ind()
-    n = 23
+    if len(sys.argv) > 1:
+        n = int(sys.argv[1])
+    else:
+        n = 0
     while True:
         print("   ")
         print(f"Star #{n}")

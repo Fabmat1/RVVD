@@ -94,7 +94,7 @@ for_selection.loc[(["sdB" in c for c in for_selection["SPEC_CLASS"]]), "plot_col
 
 final_table = copy.deepcopy(for_selection)
 
-final_table.drop("plot_color", axis=1).to_csv("all_objects.csv", index=False)
+final_table.drop("plot_color", axis=1).to_csv("all_objects_withlamost.csv", index=False)
 
 print(for_selection)
 for_selection = for_selection.groupby(["source_id"], as_index=False).agg({

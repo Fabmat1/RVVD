@@ -1,9 +1,6 @@
-import glob
 import os
-import re
 import shutil
 import warnings
-from datetime import datetime
 from multiprocessing import Pool
 
 import PyPDF2.errors
@@ -12,11 +9,9 @@ import img2pdf
 import matplotlib as mpl
 import numpy as np
 import pandas as pd
-from astropy.io import fits
 from matplotlib import pyplot as plt
 from scipy.constants import c, pi
 from scipy.optimize import curve_fit
-from scipy.special import erf
 
 from analyse_results import result_analysis
 
@@ -164,8 +159,8 @@ output_table_cols = pd.DataFrame({
     "signal_strength": [],
     "noise_strength": [],
     "SNR": [],
-    "sanitized": [],
     "cr_ind": [],
+    "sanitized": [],
 }, dtype=object)
 
 wl_splitinds, flux_splitinds, flux_std_splitinds = [0, 0, 0]
@@ -217,10 +212,6 @@ def slicearr(arr, lower, upper):
     else:
         loind, upind = np.where(arr == newarr[0])[0][0], np.where(arr == newarr[-1])[0][0] + 1
     return newarr, loind, upind
-
-
-def faddeeva(z):
-    return np.exp(-z ** 2) * (1 - erf(-1.j * z))
 
 
 def lorentzian(x, gamma, x_0):
@@ -278,68 +269,35 @@ def height_err(eta, gamma, scaling, u_eta, u_gamma, u_scaling):
                    (u_eta * 2 * scaling / (np.pi * gamma) * (np.sqrt(log_two * np.pi) - 1)) ** 2)
 
 
-def voigt(x, scaling, gamma, shift, slope, height):
-    sigma = to_sigma(gamma)
-    z = (x + 1.j * gamma) / (sigma * np.sqrt(2))
-    return -scaling * (np.real(faddeeva(z)) / (sigma * np.sqrt(2 * np.pi))) + slope * (x - shift) + height
-
-
 def pseudo_voigt(x, scaling, gamma, shift, slope, height, eta):
     g = gaussian(x, gamma, shift)
     l = lorentzian(x, gamma, shift)
     return -scaling * (eta * g + (1 - eta) * l) + slope * x + height
 
 
-def load_spectrum(filename, filetype="noncoadded_txt", preserve_below_zero=False):
+def load_spectrum(filename, preserve_below_zero=False):
     """
     :param filename: Spectrum File location
-    :param filetype: Type of spectrum file
-                "simple_csv" : Simple .csv file with wavelength in the first, and flux in the second column, seperated by commas
-                "coadded_fits" : .fits spectrum file as one would get via Vizier query
-                "noncoadded_txt" : Simple .txt file with wavelength in the first, flux in the second and flux error in the third column, separated by spaces
-
     :return: Spectrum Wavelengths, Corresponding flux, time of observation, flux error (if available)
     """
     # Modify this to account for your specific needs!
-    if filetype == "noncoadded_txt":
-        data = np.loadtxt(filename, comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)
-        wavelength = data[:, 0]
-        flux = data[:, 1]
-        flux_std = data[:, 2]
-        filename_prefix, nspec = splitname(filename)
-        if NO_NEGATIVE_FLUX[0] and not preserve_below_zero:
-            mask = flux > 0
-            wavelength = wavelength[mask]
-            flux_std = flux_std[mask]
-            flux = flux[mask]
-        nspec = nspec.replace(".txt", "")
-        nspec = int(nspec)
-        try:
-            t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)[nspec - 1], format="mjd")
-        except IndexError:
-            t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR), format="mjd")
+    data = np.loadtxt(filename, comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)
+    wavelength = data[:, 0]
+    flux = data[:, 1]
+    flux_std = data[:, 2]
+    filename_prefix, nspec = splitname(filename)
+    if NO_NEGATIVE_FLUX[0] and not preserve_below_zero:
+        mask = flux > 0
+        wavelength = wavelength[mask]
+        flux_std = flux_std[mask]
+        flux = flux[mask]
+    nspec = nspec.replace(".txt", "")
+    nspec = int(nspec)
+    try:
+        t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR)[nspec - 1], format="mjd")
+    except IndexError:
+        t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#", delimiter=SPECTRUM_FILE_SEPARATOR), format="mjd")
 
-    elif filetype == "simple_csv":
-        data = pd.read_csv(filename)
-        data = data.to_numpy()
-
-        wavelength = data[:, 0]
-        flux = data[:, 1]
-    elif filetype == "coadded_fits":
-        hdul = fits.open(filename)
-        data = hdul[1].data
-        try:
-            tai = hdul[0].header["TAI"]
-            t = atime.Time(tai + atime.Time(datetime.strptime("17/11/1858", '%d/%m/%Y')).to_value(format="unix_tai"),
-                           format="unix_tai")
-        except KeyError:
-            warnings.warn("Could not get TAI timestamp, trying MJD...", NoiseWarning)
-            mjd = hdul[0].header["MJD"]
-            t = atime.Time(mjd, format="mjd")
-        flux = data["flux"]
-        wavelength = 10 ** data["loglam"]
-    else:
-        raise FileNotFoundError
     if PLOTOVERVIEW:
         plt.title("Full Spectrum Overview")
         plt.ylabel("Flux [ergs/s/cm^2/Å]")
@@ -392,11 +350,9 @@ def calc_SNR(params, flux, wavelength, margin):
     SNR = signalstrength / noisestrength
 
     if np.isnan(SNR):
-        signalstrength = 0
-        noisestrength = 1
         SNR = 0
 
-    return signalstrength, noisestrength, SNR
+    return SNR
 
 
 def expand_mask(mask):
@@ -499,8 +455,10 @@ def peak_amp_from_height(h, gamma, eta):
     return h / (np.pi * gamma / (2 * (1 + (np.sqrt(np.pi * log_two) - 1) * eta)))
 
 
-def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize=False,
-                     used_cr_inds=[], reset_initial_param=False):
+def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, gaia_id, subspec_ind, sanitize=False,
+                     used_cr_inds=None, reset_initial_param=False):
+    if used_cr_inds is None:
+        used_cr_inds = []
     wavelength = np.copy(wavelengthdata)
     flux = np.copy(fluxdata)
     flux_std = np.copy(flux_stddata)
@@ -510,7 +468,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
 
     if sum(coverage) != 0:
         return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
-               [False, False, False], False, False
+            False, False, False
 
     for i in disturbing_lines.values():
         if i != center:
@@ -520,8 +478,6 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     if used_cr_inds is None:
         used_cr_inds = []
 
-    f_pre, subspec_ind = splitname(file_prefix)
-
     if sanitize:
         flux, cut_flux, mask = sanitize_flux(flux, center, wavelength)
     slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
@@ -530,7 +486,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     except AssertionError:
         warnings.warn("Seems like the line(s) you want to look at are not in the spectrum " + file_prefix + " Line @ " + str(center) + " Check your files!", FitUnsuccessfulWarning)
         return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
-               [False, False, False], False, False
+            False, False, False
 
     for key, val in lines_to_fit.items():
         if round(val) == round(center):
@@ -561,13 +517,13 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         initial_h = np.mean(flux[loind:upind][:round(len(flux[loind:upind]) / 5)]) - np.mean(slicedwl[:round(len(flux[loind:upind]) / 5)]) * initial_slope
     except IndexError:
         return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
-               [False, False, False], False, False
+            False, False, False
 
     try:
         flx_for_initial = flux[loind:upind] - slicedwl * initial_slope + initial_h
     except ValueError:
         return False, [False, False, False, False, False, False], [False, False, False, False, False, False], \
-               [False, False, False], False, False
+            False, False, False
 
     if lstr != "unknown" and not reset_initial_param:
         if USE_LINE_AVERAGES:
@@ -619,9 +575,9 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                     for i in cr_ind:
                         plt.plot(wavelength[i - 1:i + 2], flux[i - 1:i + 2], color="lightgray", label='_nolegend_')
                 return plot_peak_region(np.delete(wavelength, cr_ind), np.delete(flux, cr_ind),
-                                        np.delete(flux_std, cr_ind), center, margin, file_prefix,
+                                        np.delete(flux_std, cr_ind), center, margin, file_prefix, gaia_id, subspec_ind,
                                         used_cr_inds=cr_true_inds)
-        sstr, nstr, SNR = calc_SNR(params, flux, wavelength, margin)
+        SNR = calc_SNR(params, flux, wavelength, margin)
         if SAVE_SINGLE_IMGS:
             plt.annotate(f"Signal to Noise Ratio: {round(SNR, 2)}", (10, 10), xycoords="figure pixels")
         if SNR < MIN_ALLOWED_SNR:
@@ -635,7 +591,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
                     if SAVE_SINGLE_IMGS:
                         warn_text.set_visible(False)
                         plt.close()
-                    return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix,
+                    return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, gaia_id, subspec_ind,
                                             sanitize=True)
             warnings.warn(f"WL {center}Å: Signal-to-Noise ratio out of bounds!",
                           NoiseWarning)
@@ -649,7 +605,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         if height < u_height and sucess:
             plt.close()
             sucess = False
-        #     return plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, sanitize, used_cr_inds)
+        #     return plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, file_prefix, gaia_id, subspec_ind, sanitize, used_cr_inds)
 
         if SAVE_SINGLE_IMGS:
             plt.plot(slicedwl, pseudo_voigt(slicedwl, *params), zorder=5)
@@ -669,7 +625,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
             if SAVE_SINGLE_IMGS:
                 warn_text.set_visible(False)
                 plt.close()
-            return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
+            return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, gaia_id, subspec_ind, sanitize=True)
     except ValueError as e:
         print(initial_params)
         print(bounds)
@@ -681,7 +637,7 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         if not sanitize:
             warn_text.set_visible(False)
             plt.close()
-            return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=True)
+            return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, gaia_id, subspec_ind, sanitize=True)
         sucess = False
         if SAVE_SINGLE_IMGS:
             plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
@@ -689,22 +645,21 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         plt.axvline(center, linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
         plt.legend(["Flux", "Best Fit"])
 
-    if not os.path.isdir(f'output/{f_pre}/'):
-        os.mkdir(f"output/{f_pre}/")
-    if not os.path.isdir(f'output/{f_pre}/{subspec_ind}'):
-        os.mkdir(f"output/{f_pre}/{subspec_ind}")
-    if SAVE_SINGLE_IMGS:
-        plt.savefig(f"output/{f_pre}/{subspec_ind}/{round(center)}Å{PLOT_FMT}")
+    if not os.path.isdir(f'output/{gaia_id}/'):
+        os.mkdir(f"output/{gaia_id}/")
+    if not os.path.isdir(f'output/{gaia_id}/{subspec_ind}') and SAVE_SINGLE_IMGS:
+        os.mkdir(f"output/{gaia_id}/{subspec_ind}")
+        plt.savefig(f"output/{gaia_id}/{subspec_ind}/{round(center)}Å{PLOT_FMT}")
         if SHOW_PLOTS:
             plt.show()
     plt.close()
     if sucess:
-        return sucess, errs, params, [sstr, nstr, SNR], sanitize, used_cr_inds
+        return sucess, errs, params, SNR, sanitize, used_cr_inds
     else:
         if not reset_initial_param:
-            return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, sanitize=sanitize, reset_initial_param=True)
+            return plot_peak_region(wavelength, flux, flux_std, center, margin, file_prefix, gaia_id, subspec_ind, sanitize=sanitize, reset_initial_param=True)
         return sucess, [False, False, False, False, False, False], [False, False, False, False, False, False], \
-               [False, False, False], False, False
+            False, False, False
 
 
 def pseudo_voigt_height(errs, scaling, eta, gamma):
@@ -744,14 +699,15 @@ def print_single_spec_results(complete_v_shift, v_std, filename):
 
 
 def check_for_outliers(array):
-    med = np.median(array)
-    standard_deviation = np.std(array)
-    distance_from_mean = abs(array - med)
-    outlierloc = distance_from_mean < OUTLIER_MAX_SIGMA * standard_deviation
-    return np.array(outlierloc)
+    return np.zeros(np.shape(array)).astype(bool)
+    # med = np.median(array)
+    # standard_deviation = np.std(array)
+    # distance_from_mean = abs(array - med)
+    # outlierloc = distance_from_mean < OUTLIER_MAX_SIGMA * standard_deviation
+    # return np.array(outlierloc)
 
 
-def single_spec_shift(filepath, wl, flx, flx_std):
+def single_spec_shift(filepath, wl, flx, flx_std, gaia_id, subspec_ind):
     fname = filepath.split("/")[-1].split(".")[0]
     velocities = []
     verrs = []
@@ -762,12 +718,13 @@ def single_spec_shift(filepath, wl, flx, flx_std):
     linewidths = {}
 
     for lstr, loc in lines_to_fit.items():
-        sucess, errs, [scaling, gamma, shift, slope, height, eta], [sstr, nstr,
-                                                                    SNR], sanitized, cr_ind = plot_peak_region(wl, flx,
-                                                                                                               flx_std,
-                                                                                                               loc,
-                                                                                                               MARGIN,
-                                                                                                               fname)
+        sucess, errs, [scaling, gamma, shift, slope, height, eta], SNR, sanitized, cr_ind = plot_peak_region(wl, flx,
+                                                                                                             flx_std,
+                                                                                                             loc,
+                                                                                                             MARGIN,
+                                                                                                             fname,
+                                                                                                             gaia_id,
+                                                                                                             subspec_ind)
 
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
@@ -804,11 +761,9 @@ def single_spec_shift(filepath, wl, flx, flx_std):
                 "u_slope": [u_slope],
                 "RV": [rv],
                 "u_RV": [u_rv],
-                "signal_strength": [sstr],
-                "noise_strength": [nstr],
                 "SNR": [SNR],
-                "sanitized": [sanitized],
                 "cr_ind": [cr_ind],
+                "sanitized": [sanitized],
             })
 
             output_table = pd.concat([output_table, output_table_row], axis=0)
@@ -836,17 +791,7 @@ def single_spec_shift(filepath, wl, flx, flx_std):
     complete_v_shift = np.mean(velocities)
     print_single_spec_results(complete_v_shift, v_std, filepath)
 
-    return complete_v_shift, v_std, file_prefix, output_table
-
-
-def outer_fit(params, wl_dataset, flux_dataset, lines, curvetypes):
-    ndata = len(wl_dataset)
-    resids = []
-
-    for i in range(ndata):
-        resids.append(flux_dataset[i] - make_dataset(params, i, wl_dataset[i], lines, curvetypes))
-
-    return np.concatenate(resids)
+    return complete_v_shift, v_std, output_table
 
 
 def make_dataset(wl, rfac, i, params):
@@ -872,7 +817,7 @@ def culum_fit_funciton(wl, r_factor, *args):
     return np.concatenate(resids)
 
 
-def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=None):
+def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
     if exclude_lines is None:
         exclude_lines = []
     global linelist
@@ -1004,7 +949,7 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=None):
         if len(linelist) > 1:
             u_heights = np.array([height_err(p[4], p[1], p[0], e[4], e[1], e[0]) for p, e in zip(params, errs)])
             exclude_lines.append(linelist[np.argmax(u_heights)])
-            return cumulative_shift(output_table_spec, file, file_prefix, exclude_lines)
+            return cumulative_shift(output_table_spec, file, gaia_id, exclude_lines)
         else:
             print("Cumulative fit spurious!")
             return None, None, None, False
@@ -1039,16 +984,16 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=None):
                             verticalalignment='bottom',
                             color="red")
                 subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
-                plt.savefig(f"output/{file_prefix}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
+                plt.savefig(f"output/{gaia_id}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if len(linelist) > 1:
                 exclude_lines.append(lines[i])
-                return cumulative_shift(output_table_spec, file, file_prefix, exclude_lines)
+                return cumulative_shift(output_table_spec, file, gaia_id, exclude_lines)
             else:
                 print("Cumulative shift rejected!")
                 return None, None, None, False
         if SAVE_SINGLE_IMGS:
             subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
-            plt.savefig(f"output/{file_prefix}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
+            plt.savefig(f"output/{gaia_id}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if SHOW_PLOTS:
                 plt.show()
         plt.close()
@@ -1086,7 +1031,6 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=None):
             "signal_strength": ["--"],
             "noise_strength": ["--"],
             "SNR": ["--"],
-            "sanitized": ["--"],
             "cr_ind": [cr_inds]
         })
 
@@ -1095,46 +1039,65 @@ def cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=None):
     return culumv, culumv_errs, output_table, True
 
 
-def open_spec_files(loc, fpre, end=".txt"):
+def int_to_twodigit_string(i):
+    if i < 10:
+        return "0" + str(i)
+    else:
+        return str(i)
+
+
+def open_spec_files(loc, fpres, end=".txt"):
     """
-    :param loc: list of files in output
-    :param fpre: file prefix
+    :param loc: path to spectra
+    :param fpres: file prefix(es)
     :param end: file extension
     :return: list of spectrumfiles
     """
     flist = []
     if "." not in end:
         end = "." + end
-    for fname in loc:
-        if fpre in fname:
-            if re.match(fpre + r"_[0-9]+" + end, fname):
-                flist.append(FILE_LOC + fname)
+
+    for fpre in fpres:
+        n = 1
+        fname = loc + "/" + fpre + "_" + int_to_twodigit_string(n) + end
+        while os.path.isfile(fname):
+            flist.append(fname)
+            n += 1
+            fname = loc + "/" + fpre + "_" + int_to_twodigit_string(n) + end
+
     return flist
 
 
 def files_from_catalogue(cat):
-    if USE_CATALOGUE:
-        catalogue = pd.read_csv(cat)
-        return [a.replace(".fits", "") for a in catalogue["file"]], catalogue
-    else:
-        filelist = glob.glob("spectra/*.txt")
-        filenamelist = [filepath.split("\\")[-1] for filepath in filelist]
-        fileprefixes = [splitname(filename)[0] for filename in filenamelist if "_mjd" in filename]
-        return fileprefixes, None
+    catalogue = pd.read_csv(cat, dtype={"source_id": "S20"})
+    catalogue["file"] = catalogue["file"].apply(lambda x: x.replace(".fits", ""))
+    # name,source_id,ra,dec,file,SPEC_CLASS,bp_rp,gmag,nspec
+    catalogue = catalogue.groupby("source_id", as_index=False).aggregate({
+        'name': 'first',
+        'source_id': 'first',
+        'ra': 'first',
+        'dec': 'first',
+        'file': lambda x: list(x),
+        'SPEC_CLASS': 'first',
+        'bp_rp': 'first',
+        'gmag': 'first',
+        'nspec': 'sum',
+
+    })
+    catalogue.source_id = catalogue.source_id.str.decode(encoding="ASCII")
+    return catalogue
 
 
-def print_status(file, fileset, catalogue, file_prefix):
-    if USE_CATALOGUE:
-        gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix)]
-        print(
-            f"Doing Fits for System GAIA EDR3 {gaia_id} ({file_prefix}) [{(fileset.index(file) + 1)}/{(len(fileset))}]")
+def print_status(file, fileset, gaia_id, file_prefix):
+    if len(file_prefix) == 1:
+        fstr = file_prefix[0]
     else:
-        print(f"Doing Fits for System {file_prefix} [{(fileset.index(file) + 1)}/{(len(fileset))}]")
+        fstr = file_prefix[0] + f" and {len(file_prefix) - 1} more"
+    print(f"Doing Fits for System GAIA EDR3 {gaia_id} ({fstr}) [{(fileset.index(file) + 1)}/{(len(fileset))}]")
 
 
 def gap_detection(arr):
     gaps = np.diff(arr)
-    gapsmean = np.mean(gaps)
     gapsmed = np.median(gaps)
 
     if len(gaps) > 4:
@@ -1174,7 +1137,7 @@ def gap_inds(array):
     return np.sort(gaps_inds)
 
 
-def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, extravels=None, extraverrs=None, extratimes=None, fit=None, custom_saveloc=None):
+def plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id, merged=False, extravels=None, extraverrs=None, extratimes=None, fit=None, custom_saveloc=None):
     plt.close()
 
     if len(times) > 2:
@@ -1231,9 +1194,9 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
                       color="red")
         if custom_saveloc is None:
             if not merged:
-                fig.savefig(f"output/{fprefix}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+                fig.savefig(f"output/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
             else:
-                fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+                fig.savefig(f"output/{gaia_id}_merged/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
             if SHOW_PLOTS:
                 plt.show()
             else:
@@ -1241,6 +1204,9 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
             return
         else:
             fig.savefig(custom_saveloc)
+
+    if np.all(widths) == 0:
+        widths += 1
 
     normwidths = widths / np.linalg.norm(widths)
 
@@ -1369,14 +1335,14 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
     if custom_saveloc is None:
         if not merged:
             if extravels is None:
-                fig.savefig(f"output/{fprefix}/RV_variation_broken_axis{PLOT_FMT}")
+                fig.savefig(f"output/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}")
             else:
-                fig.savefig(f"output/{fprefix}/RV_variation_broken_axis_comparison{PLOT_FMT}")
+                fig.savefig(f"output/{gaia_id}/RV_variation_broken_axis_comparison{PLOT_FMT}")
         else:
             if extravels is None:
-                fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis{PLOT_FMT}")
+                fig.savefig(f"output/{gaia_id}_merged/RV_variation_broken_axis{PLOT_FMT}")
             else:
-                fig.savefig(f"output/{fprefix}_merged/RV_variation_broken_axis_comparison{PLOT_FMT}")
+                fig.savefig(f"output/{gaia_id}_merged/RV_variation_broken_axis_comparison{PLOT_FMT}")
     else:
         fig.savefig(custom_saveloc)
 
@@ -1386,7 +1352,7 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, fprefix, gaia_id, merged=False, 
         plt.close()
 
 
-def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
+def plot_rvcurve(vels, verrs, times, gaia_id, merged=False):
     plt.close()
     fig, ax1 = plt.subplots(figsize=(4.8 * 16 / 9, 4.8))
     fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=PLOT_TITLE_FONT_SIZE)
@@ -1408,9 +1374,9 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
                  transform=ax1.transAxes,
                  color="red")
         if not merged:
-            fig.savefig(f"output/{fprefix}/RV_variation{PLOT_FMT}", dpi=300)
+            fig.savefig(f"output/{gaia_id}/RV_variation{PLOT_FMT}", dpi=300)
         else:
-            fig.savefig(f"output/{fprefix}_merged/RV_variation{PLOT_FMT}", dpi=300)
+            fig.savefig(f"output/{gaia_id}_merged/RV_variation{PLOT_FMT}", dpi=300)
 
         if SHOW_PLOTS:
             plt.show()
@@ -1432,9 +1398,9 @@ def plot_rvcurve(vels, verrs, times, fprefix, gaia_id, merged=False):
 
     plt.tight_layout()
     if not merged:
-        fig.savefig(f"output/{fprefix}/RV_variation{PLOT_FMT}", dpi=300)
+        fig.savefig(f"output/{gaia_id}/RV_variation{PLOT_FMT}", dpi=300)
     else:
-        fig.savefig(f"output/{fprefix}_merged/RV_variation{PLOT_FMT}", dpi=300)
+        fig.savefig(f"output/{gaia_id}_merged/RV_variation{PLOT_FMT}", dpi=300)
 
     if SHOW_PLOTS:
         plt.show()
@@ -1449,7 +1415,7 @@ def append_pdf(pdf, merger):
         print(f"The file {pdf} is broken!")
 
 
-def create_pdf():
+def create_pdf(catalogue):
     plotpdf_exists = os.path.exists("all_RV_plots.pdf")
     plotpdfbroken_exists = os.path.exists("all_RV_plots_broken_axis.pdf")
 
@@ -1459,18 +1425,8 @@ def create_pdf():
         files = [os.path.join(d, f"RV_variation{PLOT_FMT}") for d in dirs if os.path.join(d, f"RV_variation{PLOT_FMT}")]
         files_brokenaxis = [os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}") for d in dirs if os.path.isfile(os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}"))]
 
-        restable = pd.read_csv("result_parameters.csv", delimiter=",", dtype={"source_id": np.int64,
-                                                                              "logp": "float",
-                                                                              "associated_files": "string"})
-
-        restable.reset_index(inplace=True, drop=True)
-        if os.name == 'nt':
-            files.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("\\")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
-            files_brokenaxis.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("\\")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
-
-        else:
-            files.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("/")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
-            files_brokenaxis.sort(key=lambda f: restable.index[restable["source_id"] == restable[[f.split("/")[-2].replace("_merged", "") in c for c in list(restable['associated_files'])]]["source_id"].values[0]])
+        files.sort(key=lambda f: catalogue.index[catalogue["source_id"] == f.split("\\")[-2]])
+        files_brokenaxis.sort(key=lambda f: catalogue.index[catalogue["source_id"] == f.split("\\")[-2]])
 
         if PLOT_FMT.lower() != ".pdf":
             if not plotpdf_exists:
@@ -1481,11 +1437,6 @@ def create_pdf():
                     f.write(img2pdf.convert(files_brokenaxis))
         else:
             from PyPDF2 import PdfFileMerger
-            # if not plotpdf_exists:
-            #     merger = PdfFileMerger()
-            #     [merger.append(pdf) for pdf in files]
-            #     with open("all_RV_plots.pdf", "wb") as new_file:
-            #         merger.write(new_file)
             if not plotpdfbroken_exists:
                 try:
                     merger = PdfFileMerger()
@@ -1494,8 +1445,8 @@ def create_pdf():
                     merger.close()
 
                     os.mkdir("temp")
-                    subsets = np.array_split(files_brokenaxis, int(len(files_brokenaxis)/10))
-                    tempfiles =[]
+                    subsets = np.array_split(files_brokenaxis, int(len(files_brokenaxis) / 10))
+                    tempfiles = []
 
                     for i, s in enumerate(subsets):
                         merger = PdfFileMerger()
@@ -1508,7 +1459,6 @@ def create_pdf():
                     merger = PdfFileMerger()
                     [append_pdf(pdf, merger) for pdf in tempfiles]
 
-
                 with open("all_RV_plots_broken_axis.pdf", "wb") as new_file:
                     merger.write(new_file)
 
@@ -1517,101 +1467,84 @@ def create_pdf():
 
 
 def initial_variables():
-    global dirfiles
-    dirfiles = os.listdir(FILE_LOC)
-    global catalogue, file_prefixes
-    file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
+    global catalogue
+    catalogue = files_from_catalogue(CATALOGUE)
     if not VERBOSE:
         warnings.filterwarnings("ignore")
 
 
-def main_loop(file_prefix):
-    if os.path.isfile(f'output/.{file_prefix}') and not REDO_STARS:
+def main_loop(gaia_id):
+    if os.path.isfile(f'output/{gaia_id}') and not REDO_STARS:
         return
-    fileset = open_spec_files(dirfiles, file_prefix, end=EXTENSION)
-    if os.path.isdir(f'output/{file_prefix}') and not REDO_STARS:
-        # TODO: Fix this mess
-        if os.path.isfile(f'output/{file_prefix}/RV_variation_broken_axis{PLOT_FMT}'):
+
+    star = catalogue.loc[catalogue["source_id"] == gaia_id]
+    file_prefixes = star["file"].iloc[0]
+
+    fileset = open_spec_files("spectra", file_prefixes, end=EXTENSION)
+    if os.path.isdir(f'output/{gaia_id}') and not REDO_STARS:
+        if os.path.isfile(f'output/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}'):
             if not SAVE_SINGLE_IMGS:
                 return
             if not REDO_IMAGES:
                 return
             nspec = len(fileset)
-            if os.listdir(f'output/{file_prefix}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
+            if os.listdir(f'output/{gaia_id}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
                 return
     spectimes = []
     spectimes_mjd = []
-    specvels = []
-    specverrs = []
     culumvs = []
     culumvs_errs = []
-    single_output_table = output_table_cols.copy()
     cumulative_output_table = output_table_cols.copy()
-    spec_class = catalogue["SPEC_CLASS"][file_prefixes.index(file_prefix)]
+    spec_class = star["SPEC_CLASS"].iloc[0]
     for file in fileset:
-        print_status(file, fileset, catalogue, file_prefix)
+        print_status(file, fileset, gaia_id, star["file"].iloc[0])
         wl, flx, time, flx_std = load_spectrum(file)
         if np.sum(flx < 0) / len(flx) > NO_NEGATIVE_FLUX[1]:
             continue
-        complete_v_shift, v_std, file_prefix, output_table_spec = single_spec_shift(file, wl, flx, flx_std)
+        complete_v_shift, v_std, output_table_spec = single_spec_shift(file, wl, flx, flx_std, gaia_id, fileset.index(file) + 1)
         if len(output_table_spec.index) == 0 or pd.isnull(complete_v_shift):
             print("Not a single good line was found in this subspectrum!")
             continue
         elif VERBOSE:
             print(f"Fits for {len(output_table_spec.index)} Lines complete!")
-        single_output_table = pd.concat([single_output_table, output_table_spec], axis=0)
         if SUBDWARF_SPECIFIC_ADJUSTMENTS:
             if "He-" in spec_class:
                 preexcluded_lines = []
                 for key, value in lines_to_fit.items():
                     if "H_" in key:
                         preexcluded_lines.append(value)
-                culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix, exclude_lines=preexcluded_lines)
+                culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=preexcluded_lines)
             else:
-                culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix)
+                culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, gaia_id)
         else:
-            culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, file_prefix)
+            culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, gaia_id)
         if not success:
             continue
+        output_table_spec.drop("sanitized", axis=1, inplace=True)
+        output_table_spec.drop("cr_ind", axis=1, inplace=True)
         cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
         culumvs.append(culumv)
         culumvs_errs.append(culumv_errs)
         spectimes.append(time.to_datetime())
         spectimes_mjd.append(time.mjd)
-        specvels.append(complete_v_shift)
-        specverrs.append(v_std)
-
-    if USE_CATALOGUE:
-        gaia_id = catalogue["source_id"][file_prefixes.index(file_prefix)]
-    else:
-        gaia_id = file_prefix
 
     with np.printoptions(linewidth=10000):
-        single_output_table.drop("sanitized", axis=1)
-        if not os.path.isdir(f"output/{file_prefix}"):
-            os.mkdir(f"output/{file_prefix}")
-        single_output_table.to_csv(f"output/{file_prefix}/single_spec_vals.csv", index=False)
-        cumulative_output_table.drop("sanitized", axis=1)
-        cumulative_output_table.to_csv(f"output/{file_prefix}/culum_spec_vals.csv", index=False)
+        if not os.path.isdir(f"output/{gaia_id}"):
+            os.mkdir(f"output/{gaia_id}")
+        cumulative_output_table.to_csv(f"output/{gaia_id}/culum_spec_vals.csv", index=False)
 
-    specvels = np.array(specvels) / 1000
-    specverrs = np.array(specverrs) / 1000
     culumvs = np.array(culumvs) / 1000
     culumvs_errs = np.array(culumvs_errs) / 1000
 
     rvtable = pd.DataFrame({
         "culum_fit_RV": culumvs,
         "u_culum_fit_RV": culumvs_errs,
-        "single_fit_RV": specvels,
-        "u_single_fit_RV": specverrs,
-        "mjd": spectimes_mjd,
-        "readable_time": [ts.strftime("%m/%d/%Y %H:%M:%S:%f") for ts in spectimes]
+        "mjd": spectimes_mjd
     })
     with np.printoptions(linewidth=10000):
-        rvtable.to_csv(f"output/{file_prefix}/RV_variation.csv", index=False)
+        rvtable.to_csv(f"output/{gaia_id}/RV_variation.csv", index=False)
     if SAVE_COMPOSITE_IMG:
-        # plot_rvcurve(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
-        plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, file_prefix, gaia_id)
+        plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, gaia_id)
 
 
 ############################## EXECUTION ##############################
@@ -1622,13 +1555,15 @@ if __name__ == "__main__":
         os.mkdir("output")
     if not VERBOSE:
         warnings.filterwarnings("ignore")
-    print("Loading spectrum files...")
-    file_prefixes, catalogue = files_from_catalogue(CATALOGUE)
+    print("Loading catalogue...")
+    catalogue = files_from_catalogue(CATALOGUE)
 
+    print("Starting the fitting process...")
     pool = Pool(initializer=initial_variables)
-    pool.map(main_loop, file_prefixes)
+    pool.map(main_loop, catalogue["source_id"].to_numpy())
+
     print("Fits are completed, analysing results...")
-    result_analysis(True, catalogue)
+    result_analysis(catalogue)
     if CREATE_PDF:
-        create_pdf()
+        create_pdf(catalogue)
     print("All done!")

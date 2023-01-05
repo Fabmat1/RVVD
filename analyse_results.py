@@ -1,3 +1,4 @@
+import math
 import os
 import shutil
 
@@ -90,27 +91,10 @@ def mergedir(dirs_to_combine, gaia_id, add_dirs=[]):
 def result_statistics(analysis_params, catalogue):
     dirname = os.path.dirname(__file__)
     dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
-    files = [os.path.join(d, "RV_variation.csv") for d in dirs]
-    # catalogue = catalogue.groupby('source_id').agg({'source_id': 'first',
-    #                                                 'file': ', '.join,
-    #                                                 'SPEC_CLASS': 'first',
-    #                                                 'bp_rp': 'first',
-    #                                                 'gmag': 'first',
-    #                                                 'nspec': 'sum'}).reset_index()
-    # catalogue['logp'] = catalogue['source_id'].map(analysis_params.set_index('source_id').region)
-    # print(catalogue)
-    #
-    # mag = catalogue[["gmag"]].to_numpy()
-    # bp_rp = catalogue[["bp_rp"]].to_numpy()
-    # logp = catalogue[["logp"]].to_numpy()
-    #
-    # plt.scatter(bp_rp, mag, logp**2, alpha=0.7)
-    # plt.gca().invert_yaxis()
-    # plt.show()
 
     mags = []
     frate = []
-    to_redo = []
+
     for dir in dirs:
         specname = dir.split("\\")[-1] if "\\" in dir else dir.split("/")[-1]
         if "spec" not in specname.split("_")[0]:
@@ -136,8 +120,6 @@ def result_statistics(analysis_params, catalogue):
         plt.savefig("images/errorstatistic.pdf")
     except ValueError:
         pass
-    # for specname in to_redo:
-    #     shutil.rmtree(os.path.join(os.path.dirname(__file__), f"output/{specname}/"))
 
 
 def compare_results(plot_comp=True):
@@ -149,7 +131,7 @@ def compare_results(plot_comp=True):
     times = comparetable.loc[comparetable["source"] == "SDSS"].groupby(["Identifier"])["mjd"].apply(list).to_frame()
 
     restable = pd.read_csv("result_parameters.csv", delimiter=",")
-    input_catalogue = pd.read_csv("all_objects.csv")
+    input_catalogue = pd.read_csv("all_objects_withlamost.csv")
 
     differences = np.array([])
     error_differences = np.array([])
@@ -316,11 +298,18 @@ def compare_results(plot_comp=True):
     print(f"Overlap in {np.sum(overlap)} out of {len(overlap)} cases (Ratio of {np.sum(overlap) / len(overlap)})")
 
 
+def round_or_string(num_or_str, to_digit=0):
+    if isinstance(num_or_str, str):
+        return num_or_str
+    else:
+        return round(num_or_str, to_digit)
+
 def overview(restable, catalogue):
     preamble = [
         r"\documentclass[a4paper]{article}",
         r"\usepackage{xltabular}",
         r"\usepackage[landscape=true, margin=1.0in]{geometry}",
+        r"\usepackage{xcolor}",
         r"\begin{document}",
         r"\begin{center}",
         r"{\Large \textbf{Result Parameters}}",
@@ -337,36 +326,33 @@ def overview(restable, catalogue):
     with open("result_parameters.tex", "w") as outtex:
         for line in preamble:
             outtex.write(line + "\n")
-        # GAIA EDR3 XXXXXXXXXXXXXXXXXXX & \verb|spec-xxxx-xxxx-xxx.fits| & xxx & -xx.xxxx\\
         n = 0
         for index, row in restable.iterrows():
-            catrow = catalogue.loc[catalogue["source_id"] == int(row["source_id"])]
+            catrow = catalogue.loc[catalogue["source_id"] == row["source_id"]]
             name = catrow["name"].iloc[0]
             name = "" if name == "-" else name
             n += 1
-            if row["logp"] == np.nan:
-                print(row)
+
+            minusstring = ""
+            rvavg = round_or_string(row['RVavg'])
+            if not isinstance(rvavg, str):
+                minusstring = r"{\color{white} -}"
+
             if row["logp"] == 0:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round(row["ra"], 4)) + r"&" + str(round(row["dec"], 4)) + r"&" + row[
-                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg']) > 0 else ''} {round(row['RVavg'])}\pm{round(row['RVavg_err'])}$" + rf"& ${round(row['deltaRV'])}\pm{round(row['deltaRV_err'])}$" + rf" & NaN\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + row[
+                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & NaN\\" + "\n")
             elif row["logp"] == -500:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round(row["ra"], 4)) + r"&" + str(round(row["dec"], 4)) + r"&" + row[
-                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg']) > 0 else ''} {round(row['RVavg'])}\pm{round(row['RVavg_err'])}$" + rf"& ${round(row['deltaRV'])}\pm{round(row['deltaRV_err'])}$" + rf" & $<-500$\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + row[
+                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & $<-500$\\" + "\n")
             else:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round(row["ra"], 4)) + r"&" + str(round(row["dec"], 4)) + r"&" + row[
-                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&$\\" + rf"{'phantom{-}' if round(row['RVavg']) > 0 else ''} {round(row['RVavg'])}\pm{round(row['RVavg_err'])}$" + rf"& ${round(row['deltaRV'])}\pm{round(row['deltaRV_err'])}$" + rf" & ${round(row['logp'], 2)}$\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + row[
+                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & ${round_or_string(row['logp'], 2)}$\\" + "\n")
         for line in postamble:
             outtex.write(line + "\n")
-    os.system("pdflatex --enable-write18 --extra-mem-bot=10000000 --synctex=1 result_parameters.tex")
+    os.system("lualatex result_parameters.tex")
 
 
-def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
-    dirname = os.path.dirname(__file__)
-    dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
-    files = [os.path.join(d, "RV_variation.csv") for d in dirs]
-
-    if catalogue is not None:
-        catalogue['file'] = catalogue['file'].str.replace('.fits', '')
+def result_analysis(catalogue: pd.DataFrame = None):
 
     analysis_params = pd.DataFrame(
         {
@@ -379,174 +365,77 @@ def result_analysis(check_doubles=False, catalogue: pd.DataFrame = None):
             "deltaRV_err": [],
             "RVavg": [],
             "RVavg_err": [],
-            "source_folder": [],
             "Nspec": [],
             "associated_files": []
         }
     )
+    for i, star in catalogue.iterrows():
+        sid = star["source_id"]
+        ra = star["ra"]
+        dec = star["dec"]
+        specclass = star["SPEC_CLASS"]
 
-    if check_doubles and catalogue is not None:
-        duplicated_stars = catalogue.loc[catalogue.duplicated(["source_id"])]
-        sourceids = np.array([s for s in duplicated_stars["source_id"]])
-    else:
-        sourceids = []
+        filedata = np.genfromtxt("output/"+sid+"/RV_variation.csv", delimiter=",", skip_header=True)
+        files = ";".join(star["file"])
 
-    used_sids = []
-    for file in files:
-        specname = file.split("\\")[-2] if "\\" in file else file.split("/")[-2]
-        if "_merged" in specname:
-            star = catalogue.loc[catalogue["file"] == specname.replace("_merged", "")]
-            sid = star["source_id"].iloc[0]
-            filedata = np.genfromtxt(file, delimiter=',')[1:]
-            files_combined = catalogue.loc[catalogue["source_id"] == sid]["file"].tolist()
-
-            ra = star["ra"].iloc[0]
-            dec = star["dec"].iloc[0]
-            specclass = star["SPEC_CLASS"].iloc[0]
-
-            if filedata.ndim == 1:
-                analysis_params = pd.concat([analysis_params, pd.DataFrame({
-                    "source_id": [str(sid)],
-                    "source_folder": [specname],
-                    "ra": [ra],
-                    "dec": [dec],
-                    "spec_class": [specclass],
-                    "logp": [0],
-                    "deltaRV": [0],
-                    "deltaRV_err": [0],
-                    "RVavg": [0],
-                    "RVavg_err": [0],
-                    "Nspec": [0],
-                    "associated_files": [files_combined]
-                })])
-                continue
-
-            culumvs = filedata[:, 0]
-            culumv_errs = filedata[:, 1]
-            logp = vrad_pvalue(culumvs, culumv_errs)
-            if len(culumvs) == 1:
-                analysis_params = pd.concat([analysis_params, pd.DataFrame({
-                    "source_id": [str(sid)],
-                    "source_folder": [specname],
-                    "ra": [ra],
-                    "dec": [dec],
-                    "spec_class": [specclass],
-                    "logp": [0],
-                    "deltaRV": [0],
-                    "deltaRV_err": [0],
-                    "RVavg": [np.mean(culumvs)],
-                    "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))],
-                    "Nspec": [1],
-                    "associated_files": [files_combined]
-                })])
-            else:
-                analysis_params = pd.concat([analysis_params, pd.DataFrame({
-                    "source_id": [str(sid)],
-                    "source_folder": [specname],
-                    "ra": [ra],
-                    "dec": [dec],
-                    "spec_class": [specclass],
-                    "logp": [logp],
-                    "deltaRV": [np.ptp(culumvs)],
-                    "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
-                    "RVavg": [np.mean(culumvs)],
-                    "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))],
-                    "Nspec": [len(culumvs)],
-                    "associated_files": [files_combined]
-                })])
-            continue
-
-        star = catalogue.loc[catalogue["file"] == specname]
-        sid = star["source_id"].iloc[0]
-
-        ra = star["ra"].iloc[0]
-        dec = star["dec"].iloc[0]
-        specclass = star["SPEC_CLASS"].iloc[0]
-
-        if sid in used_sids:
-            continue
-        if sid in sourceids.tolist():
-            files_to_combine = catalogue.loc[catalogue["source_id"] == sid]["file"].tolist()
-            data_to_combine = [np.genfromtxt(os.path.join(dirname, f"output/{f}/RV_variation.csv"), delimiter=',')[1:] for f in files_to_combine]
-            gooddata = [d for d in data_to_combine if d.ndim == 2]
-            if len(files_to_combine) == 0 or len(gooddata) == 0:
-                analysis_params = pd.concat([analysis_params, pd.DataFrame({
-                    "source_id": [str(sid)],
-                    "source_folder": [specname],
-                    "ra": [ra],
-                    "dec": [dec],
-                    "spec_class": [specclass],
-                    "logp": [0],
-                    "deltaRV": [0],
-                    "deltaRV_err": [0],
-                    "RVavg": [0],
-                    "RVavg_err": [0],
-                    "Nspec": [0],
-                    "associated_files": [files_to_combine]
-                })])
-                used_sids.append(sid)
-                continue
-            filedata = np.concatenate(gooddata)
-            mask = [True if d.ndim == 2 else False for d in data_to_combine]
-            nfiles_to_combine = [i for (i, v) in zip(files_to_combine, mask) if v]
-            additional_files = [i for (i, v) in zip(files_to_combine, mask) if not v]
-            mergedir(nfiles_to_combine, sid, additional_files)
-            used_sids.append(sid)
-        else:
-            filedata = np.genfromtxt(file, delimiter=',')[1:]
-            if filedata.ndim <= 1:
-                analysis_params = pd.concat([analysis_params, pd.DataFrame({
-                    "source_id": [str(sid)],
-                    "source_folder": [specname],
-                    "ra": [ra],
-                    "dec": [dec],
-                    "spec_class": [specclass],
-                    "logp": [0],
-                    "deltaRV": [0],
-                    "deltaRV_err": [0],
-                    "RVavg": [0],
-                    "RVavg_err": [0],
-                    "Nspec": [0],
-                    "associated_files": [specname]
-                })])
-                continue
-            files_to_combine = specname
-        culumvs = filedata[:, 0]
-        culumv_errs = filedata[:, 1]
-        logp = vrad_pvalue(culumvs, culumv_errs)
-        if len(culumvs) == 1:
+        if filedata.ndim == 1 and len(filedata) == 0:
             analysis_params = pd.concat([analysis_params, pd.DataFrame({
-                "source_id": [str(sid)],
-                "source_folder": [specname],
+                "source_id": [sid],
                 "ra": [ra],
                 "dec": [dec],
                 "spec_class": [specclass],
                 "logp": [0],
-                "deltaRV": [0],
-                "deltaRV_err": [0],
-                "RVavg": [np.mean(culumvs)],
-                "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))],
-                "Nspec": [1],
-                "associated_files": [files_to_combine]
+                "deltaRV": [""],
+                "deltaRV_err": [""],
+                "RVavg": [""],
+                "RVavg_err": [""],
+                "Nspec": [0],
+                "timespan": [""],
+                "associated_files": [files]
             })])
-        else:
+            continue
+        elif filedata.ndim == 1 and len(filedata) != 0:
+            culumvs = np.array([filedata[0]])
+            culumv_errs = np.array([filedata[1]])
             analysis_params = pd.concat([analysis_params, pd.DataFrame({
-                "source_id": [str(sid)],
-                "source_folder": [specname],
+                "source_id": [sid],
                 "ra": [ra],
                 "dec": [dec],
                 "spec_class": [specclass],
-                "logp": [logp],
-                "deltaRV": [np.ptp(culumvs)],
-                "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
+                "logp": [0],
+                "deltaRV": [""],
+                "deltaRV_err": [""],
                 "RVavg": [np.mean(culumvs)],
                 "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))],
-                "Nspec": [len(culumvs)],
-                "associated_files": [files_to_combine]
+                "Nspec": [1],
+                "timespan": [""],
+                "associated_files": [files]
             })])
+            continue
+
+        culumvs = filedata[:, 0]
+        culumv_errs = filedata[:, 1]
+        timespan = np.ptp(filedata[:, 2])
+        logp = vrad_pvalue(culumvs, culumv_errs)
+
+        analysis_params = pd.concat([analysis_params, pd.DataFrame({
+            "source_id": [sid],
+            "ra": [ra],
+            "dec": [dec],
+            "spec_class": [specclass],
+            "logp": [logp],
+            "deltaRV": [np.ptp(culumvs)],
+            "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
+            "RVavg": [np.mean(culumvs)],
+            "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))],
+            "Nspec": [len(culumvs)],
+            "timespan": [timespan],
+            "associated_files": [files]
+        })])
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
-    analysis_params.to_csv("result_parameters.csv", index=False)
+    output_params = analysis_params.copy()
+    output_params.to_csv("result_parameters.csv", index=False)
     print("Creating Statistics...")
     overview(analysis_params, catalogue)
     result_statistics(analysis_params, catalogue)
