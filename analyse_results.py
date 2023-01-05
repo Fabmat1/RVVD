@@ -1,4 +1,3 @@
-import math
 import os
 import shutil
 
@@ -9,6 +8,7 @@ from scipy import stats
 
 from fit_rv_curve import fit_rv_curve
 
+OUTPUT_DIR = "output"
 
 def vrad_pvalue(vrad, vrad_err):
     """
@@ -48,19 +48,19 @@ def replace_first_col(array, file_pre):
 
 def mergedir(dirs_to_combine, gaia_id, add_dirs=[]):
     dirname = os.path.dirname(__file__)
-    rvdata = np.concatenate([np.genfromtxt(os.path.join(dirname, f"output/{f}/RV_variation.csv"), delimiter=',', dtype=object)[1:] for f in dirs_to_combine])
-    single_fit_data = np.concatenate([replace_first_col(np.genfromtxt(os.path.join(dirname, f"output/{f}/single_spec_vals.csv"), delimiter=',', dtype=object)[1:], f) for f in dirs_to_combine])
-    culum_fit_data = np.concatenate([replace_first_col(np.genfromtxt(os.path.join(dirname, f"output/{f}/culum_spec_vals.csv"), delimiter=',', dtype=object)[1:], f) for f in dirs_to_combine])
+    rvdata = np.concatenate([np.genfromtxt(os.path.join(dirname, f"{OUTPUT_DIR}/{f}/RV_variation.csv"), delimiter=',', dtype=object)[1:] for f in dirs_to_combine])
+    single_fit_data = np.concatenate([replace_first_col(np.genfromtxt(os.path.join(dirname, f"{OUTPUT_DIR}/{f}/single_spec_vals.csv"), delimiter=',', dtype=object)[1:], f) for f in dirs_to_combine])
+    culum_fit_data = np.concatenate([replace_first_col(np.genfromtxt(os.path.join(dirname, f"{OUTPUT_DIR}/{f}/culum_spec_vals.csv"), delimiter=',', dtype=object)[1:], f) for f in dirs_to_combine])
 
     rvdata = rvdata[rvdata[:, 4].argsort()]
     firstdir = dirs_to_combine[0]
 
-    rvheader = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/RV_variation.csv"), delimiter=',', dtype=str)[:1]
-    single_fit_header = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/single_spec_vals.csv"), delimiter=',', dtype=str)[:1]
-    culum_fit_header = np.genfromtxt(os.path.join(dirname, f"output/{dirs_to_combine[0]}/culum_spec_vals.csv"), delimiter=',', dtype=str)[:1]
+    rvheader = np.genfromtxt(os.path.join(dirname, f"{OUTPUT_DIR}/{dirs_to_combine[0]}/RV_variation.csv"), delimiter=',', dtype=str)[:1]
+    single_fit_header = np.genfromtxt(os.path.join(dirname, f"{OUTPUT_DIR}/{dirs_to_combine[0]}/single_spec_vals.csv"), delimiter=',', dtype=str)[:1]
+    culum_fit_header = np.genfromtxt(os.path.join(dirname, f"{OUTPUT_DIR}/{dirs_to_combine[0]}/culum_spec_vals.csv"), delimiter=',', dtype=str)[:1]
 
     try:
-        os.mkdir(os.path.join(dirname, f"output/{firstdir}_merged/"))
+        os.mkdir(os.path.join(dirname, f"{OUTPUT_DIR}/{firstdir}_merged/"))
     except FileExistsError:
         pass
 
@@ -68,9 +68,9 @@ def mergedir(dirs_to_combine, gaia_id, add_dirs=[]):
     single_fit_array = np.concatenate([single_fit_header, single_fit_data], axis=0)
     culum_fit_array = np.concatenate([culum_fit_header, culum_fit_data], axis=0)
 
-    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/RV_variation.csv"), rv_array.astype(np.str_), delimiter=",", fmt="%s")
-    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/single_spec_vals.csv"), single_fit_array.astype(np.str_), delimiter=",", fmt="%s")
-    np.savetxt(os.path.join(dirname, f"output/{firstdir}_merged/culum_spec_vals.csv"), culum_fit_array.astype(np.str_), delimiter=",", fmt="%s")
+    np.savetxt(os.path.join(dirname, f"{OUTPUT_DIR}/{firstdir}_merged/RV_variation.csv"), rv_array.astype(np.str_), delimiter=",", fmt="%s")
+    np.savetxt(os.path.join(dirname, f"{OUTPUT_DIR}/{firstdir}_merged/single_spec_vals.csv"), single_fit_array.astype(np.str_), delimiter=",", fmt="%s")
+    np.savetxt(os.path.join(dirname, f"{OUTPUT_DIR}/{firstdir}_merged/culum_spec_vals.csv"), culum_fit_array.astype(np.str_), delimiter=",", fmt="%s")
 
     from main import plot_rvcurve, plot_rvcurve_brokenaxis
     rvdata = rvdata[:, :-1].astype(float)
@@ -79,18 +79,18 @@ def mergedir(dirs_to_combine, gaia_id, add_dirs=[]):
     plot_rvcurve_brokenaxis(rvdata[:, 0], rvdata[:, 1], rvdata[:, 4], firstdir, gaia_id, True)
 
     for d in dirs_to_combine + add_dirs:
-        open(os.path.join(dirname, f"output/.{d}"), 'a').close()
-        dpath = os.path.join(dirname, f"output/{d}/")
+        open(os.path.join(dirname, f"{OUTPUT_DIR}/.{d}"), 'a').close()
+        dpath = os.path.join(dirname, f"{OUTPUT_DIR}/{d}/")
         subdirs = [f.path for f in os.scandir(dpath) if f.is_dir()]
         for sdir in subdirs:
             os.rename(sdir, sdir + "_" + d)
-            shutil.move(sdir + "_" + d, os.path.join(dirname, f"output/{firstdir}_merged/"))
+            shutil.move(sdir + "_" + d, os.path.join(dirname, f"{OUTPUT_DIR}/{firstdir}_merged/"))
         shutil.rmtree(dpath)
 
 
 def result_statistics(analysis_params, catalogue):
     dirname = os.path.dirname(__file__)
-    dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
+    dirs = [f.path for f in os.scandir(os.path.join(dirname, f"{OUTPUT_DIR}")) if f.is_dir()]
 
     mags = []
     frate = []
@@ -163,9 +163,9 @@ def compare_results(plot_comp=True):
                 specfiles = [s for s in specfile.split("'") if "spec" in s]
                 for s in specfiles:
                     dirname = os.path.dirname(__file__)
-                    if os.path.exists(os.path.join(dirname, f"output/{s}_merged")):
+                    if os.path.exists(os.path.join(dirname, f"{OUTPUT_DIR}/{s}_merged")):
                         specfile = s
-            otherRVvals = np.genfromtxt(os.path.join(os.path.dirname(__file__), f"output/{corr['source_folder'].iloc[0]}/RV_variation.csv"), delimiter=",")
+            otherRVvals = np.genfromtxt(os.path.join(os.path.dirname(__file__), f"{OUTPUT_DIR}/{corr['source_folder'].iloc[0]}/RV_variation.csv"), delimiter=",")
 
             if otherRVvals.ndim == 1:
                 continue
@@ -255,7 +255,7 @@ def compare_results(plot_comp=True):
     from main import PLOT_FMT
     from PyPDF2 import PdfFileMerger
     dirname = os.path.dirname(__file__)
-    dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
+    dirs = [f.path for f in os.scandir(os.path.join(dirname, f"{OUTPUT_DIR}")) if f.is_dir()]
     files = [os.path.join(d, f"RV_variation_broken_axis_comparison{PLOT_FMT}") for d in dirs if os.path.isfile(os.path.join(d, f"RV_variation_broken_axis_comparison{PLOT_FMT}"))]
     merger = PdfFileMerger()
     [merger.append(pdf) for pdf in files]
@@ -352,7 +352,10 @@ def overview(restable, catalogue):
     os.system("lualatex result_parameters.tex")
 
 
-def result_analysis(catalogue: pd.DataFrame = None):
+def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
+
+    global OUTPUT_DIR
+    OUTPUT_DIR = outdir
 
     analysis_params = pd.DataFrame(
         {
@@ -375,7 +378,7 @@ def result_analysis(catalogue: pd.DataFrame = None):
         dec = star["dec"]
         specclass = star["SPEC_CLASS"]
 
-        filedata = np.genfromtxt("output/"+sid+"/RV_variation.csv", delimiter=",", skip_header=True)
+        filedata = np.genfromtxt(f"{OUTPUT_DIR}/"+sid+"/RV_variation.csv", delimiter=",", skip_header=True)
         files = ";".join(star["file"])
 
         if filedata.ndim == 1 and len(filedata) == 0:
@@ -443,7 +446,7 @@ def result_analysis(catalogue: pd.DataFrame = None):
 
 def result_analysis_with_rvfit():
     dirname = os.path.dirname(__file__)
-    dirs = os.walk(os.path.join(dirname, "output"))
+    dirs = os.walk(os.path.join(dirname, OUTPUT_DIR))
     dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
     files = [os.path.join(d, "RV_variation.csv") for d in dirs]
 

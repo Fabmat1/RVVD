@@ -32,6 +32,7 @@ NO_NEGATIVE_FLUX = (True, 0.1)
 NO_NEGATIVE_FLUX: check for negative flux values (bool value at index 0) and filter spectra files with significant portions (Max allowed negative percentage at index 1)
 """
 SUBDWARF_SPECIFIC_ADJUSTMENTS = True  # Apply some tweaks for the script to be optimized to hot subdwarfs
+OUTPUT_DIR = "output"
 
 ### FIT SETTINGS
 
@@ -645,11 +646,11 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
         plt.axvline(center, linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
         plt.legend(["Flux", "Best Fit"])
 
-    if not os.path.isdir(f'output/{gaia_id}/'):
-        os.mkdir(f"output/{gaia_id}/")
-    if not os.path.isdir(f'output/{gaia_id}/{subspec_ind}') and SAVE_SINGLE_IMGS:
-        os.mkdir(f"output/{gaia_id}/{subspec_ind}")
-        plt.savefig(f"output/{gaia_id}/{subspec_ind}/{round(center)}Å{PLOT_FMT}")
+    if not os.path.isdir(f'{OUTPUT_DIR}/{gaia_id}/'):
+        os.mkdir(f"{OUTPUT_DIR}/{gaia_id}/")
+    if not os.path.isdir(f'{OUTPUT_DIR}/{gaia_id}/{subspec_ind}') and SAVE_SINGLE_IMGS:
+        os.mkdir(f"{OUTPUT_DIR}/{gaia_id}/{subspec_ind}")
+        plt.savefig(f"{OUTPUT_DIR}/{gaia_id}/{subspec_ind}/{round(center)}Å{PLOT_FMT}")
         if SHOW_PLOTS:
             plt.show()
     plt.close()
@@ -984,7 +985,7 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
                             verticalalignment='bottom',
                             color="red")
                 subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
-                plt.savefig(f"output/{gaia_id}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
+                plt.savefig(f"{OUTPUT_DIR}/{gaia_id}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if len(linelist) > 1:
                 exclude_lines.append(lines[i])
                 return cumulative_shift(output_table_spec, file, gaia_id, exclude_lines)
@@ -993,7 +994,7 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
                 return None, None, None, False
         if SAVE_SINGLE_IMGS:
             subspec_ind = str(subspec_ind) if len(str(subspec_ind)) != 1 else "0" + str(subspec_ind)
-            plt.savefig(f"output/{gaia_id}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
+            plt.savefig(f"{OUTPUT_DIR}/{gaia_id}/{subspec_ind}/culum_{round(lines[i])}Å{PLOT_FMT}")
             if SHOW_PLOTS:
                 plt.show()
         plt.close()
@@ -1194,9 +1195,9 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id, merged=False, extravels
                       color="red")
         if custom_saveloc is None:
             if not merged:
-                fig.savefig(f"output/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+                fig.savefig(f"{OUTPUT_DIR}/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
             else:
-                fig.savefig(f"output/{gaia_id}_merged/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
+                fig.savefig(f"{OUTPUT_DIR}/{gaia_id}_merged/RV_variation_broken_axis{PLOT_FMT}", dpi=300)
             if SHOW_PLOTS:
                 plt.show()
             else:
@@ -1335,14 +1336,14 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id, merged=False, extravels
     if custom_saveloc is None:
         if not merged:
             if extravels is None:
-                fig.savefig(f"output/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}")
+                fig.savefig(f"{OUTPUT_DIR}/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}")
             else:
-                fig.savefig(f"output/{gaia_id}/RV_variation_broken_axis_comparison{PLOT_FMT}")
+                fig.savefig(f"{OUTPUT_DIR}/{gaia_id}/RV_variation_broken_axis_comparison{PLOT_FMT}")
         else:
             if extravels is None:
-                fig.savefig(f"output/{gaia_id}_merged/RV_variation_broken_axis{PLOT_FMT}")
+                fig.savefig(f"{OUTPUT_DIR}/{gaia_id}_merged/RV_variation_broken_axis{PLOT_FMT}")
             else:
-                fig.savefig(f"output/{gaia_id}_merged/RV_variation_broken_axis_comparison{PLOT_FMT}")
+                fig.savefig(f"{OUTPUT_DIR}/{gaia_id}_merged/RV_variation_broken_axis_comparison{PLOT_FMT}")
     else:
         fig.savefig(custom_saveloc)
 
@@ -1374,9 +1375,9 @@ def plot_rvcurve(vels, verrs, times, gaia_id, merged=False):
                  transform=ax1.transAxes,
                  color="red")
         if not merged:
-            fig.savefig(f"output/{gaia_id}/RV_variation{PLOT_FMT}", dpi=300)
+            fig.savefig(f"{OUTPUT_DIR}/{gaia_id}/RV_variation{PLOT_FMT}", dpi=300)
         else:
-            fig.savefig(f"output/{gaia_id}_merged/RV_variation{PLOT_FMT}", dpi=300)
+            fig.savefig(f"{OUTPUT_DIR}/{gaia_id}_merged/RV_variation{PLOT_FMT}", dpi=300)
 
         if SHOW_PLOTS:
             plt.show()
@@ -1398,9 +1399,9 @@ def plot_rvcurve(vels, verrs, times, gaia_id, merged=False):
 
     plt.tight_layout()
     if not merged:
-        fig.savefig(f"output/{gaia_id}/RV_variation{PLOT_FMT}", dpi=300)
+        fig.savefig(f"{OUTPUT_DIR}/{gaia_id}/RV_variation{PLOT_FMT}", dpi=300)
     else:
-        fig.savefig(f"output/{gaia_id}_merged/RV_variation{PLOT_FMT}", dpi=300)
+        fig.savefig(f"{OUTPUT_DIR}/{gaia_id}_merged/RV_variation{PLOT_FMT}", dpi=300)
 
     if SHOW_PLOTS:
         plt.show()
@@ -1421,7 +1422,7 @@ def create_pdf(catalogue):
 
     if not plotpdf_exists or not plotpdfbroken_exists:
         dirname = os.path.dirname(__file__)
-        dirs = [f.path for f in os.scandir(os.path.join(dirname, "output")) if f.is_dir()]
+        dirs = [f.path for f in os.scandir(os.path.join(dirname, f"{OUTPUT_DIR}")) if f.is_dir()]
         files = [os.path.join(d, f"RV_variation{PLOT_FMT}") for d in dirs if os.path.join(d, f"RV_variation{PLOT_FMT}")]
         files_brokenaxis = [os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}") for d in dirs if os.path.isfile(os.path.join(d, f"RV_variation_broken_axis{PLOT_FMT}"))]
 
@@ -1474,21 +1475,21 @@ def initial_variables():
 
 
 def main_loop(gaia_id):
-    if os.path.isfile(f'output/{gaia_id}') and not REDO_STARS:
+    if os.path.isfile(f'{OUTPUT_DIR}/{gaia_id}') and not REDO_STARS:
         return
 
     star = catalogue.loc[catalogue["source_id"] == gaia_id]
     file_prefixes = star["file"].iloc[0]
 
     fileset = open_spec_files("spectra", file_prefixes, end=EXTENSION)
-    if os.path.isdir(f'output/{gaia_id}') and not REDO_STARS:
-        if os.path.isfile(f'output/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}'):
+    if os.path.isdir(f'{OUTPUT_DIR}/{gaia_id}') and not REDO_STARS:
+        if os.path.isfile(f'{OUTPUT_DIR}/{gaia_id}/RV_variation_broken_axis{PLOT_FMT}'):
             if not SAVE_SINGLE_IMGS:
                 return
             if not REDO_IMAGES:
                 return
             nspec = len(fileset)
-            if os.listdir(f'output/{gaia_id}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
+            if os.listdir(f'{OUTPUT_DIR}/{gaia_id}/{str(nspec) if len(str(nspec)) != 1 else "0" + str(nspec)}/'):
                 return
     spectimes = []
     spectimes_mjd = []
@@ -1529,9 +1530,9 @@ def main_loop(gaia_id):
         spectimes_mjd.append(time.mjd)
 
     with np.printoptions(linewidth=10000):
-        if not os.path.isdir(f"output/{gaia_id}"):
-            os.mkdir(f"output/{gaia_id}")
-        cumulative_output_table.to_csv(f"output/{gaia_id}/culum_spec_vals.csv", index=False)
+        if not os.path.isdir(f"{OUTPUT_DIR}/{gaia_id}"):
+            os.mkdir(f"{OUTPUT_DIR}/{gaia_id}")
+        cumulative_output_table.to_csv(f"{OUTPUT_DIR}/{gaia_id}/culum_spec_vals.csv", index=False)
 
     culumvs = np.array(culumvs) / 1000
     culumvs_errs = np.array(culumvs_errs) / 1000
@@ -1542,7 +1543,7 @@ def main_loop(gaia_id):
         "mjd": spectimes_mjd
     })
     with np.printoptions(linewidth=10000):
-        rvtable.to_csv(f"output/{gaia_id}/RV_variation.csv", index=False)
+        rvtable.to_csv(f"{OUTPUT_DIR}/{gaia_id}/RV_variation.csv", index=False)
     if SAVE_COMPOSITE_IMG:
         plot_rvcurve_brokenaxis(culumvs, culumvs_errs, spectimes_mjd, gaia_id)
 
@@ -1551,8 +1552,8 @@ def main_loop(gaia_id):
 
 
 if __name__ == "__main__":
-    if not os.path.isdir(f'output'):
-        os.mkdir("output")
+    if not os.path.isdir(f'{OUTPUT_DIR}'):
+        os.mkdir(f"{OUTPUT_DIR}")
     if not VERBOSE:
         warnings.filterwarnings("ignore")
     print("Loading catalogue...")

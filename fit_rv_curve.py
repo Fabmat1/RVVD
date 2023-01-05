@@ -76,8 +76,8 @@ def cosinusoid(x, A, b, h, shift):
     return h + A * np.cos(b * 2 * np.pi * (x - shift))
 
 
-def fit_rv_curve(fpre=FILE_PREFIX, showplot=True, manguess=MANUAL_INITIAL_GUESS, gaia_id=GAIA_ID):
-    data = pd.read_csv(rf"output\{fpre}\RV_variation.csv")
+def fit_rv_curve(showplot=True, manguess=MANUAL_INITIAL_GUESS, gaia_id=GAIA_ID, outdir="output"):
+    data = pd.read_csv(rf"{outdir}\{gaia_id}\RV_variation.csv")
 
     stime = np.array([atime.Time(t, format="mjd").to_value(format="mjd") for t in data["mjd"]])
     stime -= np.amin(stime)
@@ -124,7 +124,7 @@ def fit_rv_curve(fpre=FILE_PREFIX, showplot=True, manguess=MANUAL_INITIAL_GUESS,
 
     from main import plot_rvcurve_brokenaxis
 
-    plot_rvcurve_brokenaxis(RV, RV_err, stime, fpre, gaia_id, fit=fit, custom_saveloc=f"images/{fpre}.pdf")
+    plot_rvcurve_brokenaxis(RV, RV_err, stime, gaia_id, fit=fit, custom_saveloc=f"images/{gaia_id}.pdf")
 
     if showplot:
         plt.show()

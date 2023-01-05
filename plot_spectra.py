@@ -106,9 +106,9 @@ def comprehend_lstr(lstr):
     return l
 
 
-def plot_system_from_ind(ind=INDEX_TO_PLOT, res_params=RES_PARAMETER_LIST):
+def plot_system_from_ind(ind=INDEX_TO_PLOT, res_params=RES_PARAMETER_LIST, outdir="output"):
     trow = RES_PARAMETER_LIST.iloc[ind]
-    paramtable = pd.read_csv("output/" + trow["source_folder"] + "/culum_spec_vals.csv")
+    paramtable = pd.read_csv(f"{outdir}/" + trow["gaia_id"] + "/culum_spec_vals.csv")
 
     a_temp = trow["associated_files"]
     a_files = [a_temp] if "," not in a_temp else comprehend_lstr(a_temp)
@@ -156,7 +156,7 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, res_params=RES_PARAMETER_LIST):
     return None
 
 
-def correct_indiced_sys(ind):
+def correct_indiced_sys(ind, outdir="output"):
     corr = True if input("Do you want to correct this spectrum? [y/n]").lower() == "y" else False
     if corr:
         abort = False
@@ -167,14 +167,14 @@ def correct_indiced_sys(ind):
                     abort = True
                 else:
                     trow = RES_PARAMETER_LIST.iloc[ind]
-                    csvtable = pd.read_csv("output/" + trow["source_folder"] + "/culum_spec_vals.csv")
+                    csvtable = pd.read_csv(f"{outdir}/" + trow["source_folder"] + "/culum_spec_vals.csv")
                     rv = csvtable.loc[csvtable.subspectrum != subspec].iloc[0]["RV"] / 1000
                     csvtable = csvtable[csvtable.subspectrum != subspec]
-                    csvtable.to_csv("output/" + trow["source_folder"] + "/culum_spec_vals.csv", index=False)
+                    csvtable.to_csv(f"{outdir}/" + trow["source_folder"] + "/culum_spec_vals.csv", index=False)
 
-                    rvtable = pd.read_csv("output/" + trow["source_folder"] + "/RV_variation.csv")
+                    rvtable = pd.read_csv(f"{outdir}/" + trow["source_folder"] + "/RV_variation.csv")
                     rvtable = rvtable[rvtable["culum_fit_RV"].round(3) != round(rv, 3)]
-                    rvtable.to_csv("output/" + trow["source_folder"] + "/RV_variation.csv", index=False)
+                    rvtable.to_csv(f"{outdir}/" + trow["source_folder"] + "/RV_variation.csv", index=False)
 
                     vels = rvtable["culum_fit_RV"].to_numpy()
                     verrs = rvtable["u_culum_fit_RV"].to_numpy()
@@ -194,11 +194,16 @@ if __name__ == "__main__":
     # plot_system_from_ind()
     if len(sys.argv) > 1:
         n = int(sys.argv[1])
+        if len(sys.argv) > 2:
+            d = sys.argv[2]
+        else:
+            d = "output"
     else:
         n = 0
+        d = "output"
     while True:
         print("   ")
         print(f"Star #{n}")
-        plot_system_from_ind(n)
-        correct_indiced_sys(n)
+        plot_system_from_ind(n, outdir=d)
+        correct_indiced_sys(n, outdir=d)
         n += 1
