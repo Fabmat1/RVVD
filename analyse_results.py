@@ -336,17 +336,18 @@ def overview(restable, catalogue):
             minusstring = ""
             rvavg = round_or_string(row['RVavg'])
             if not isinstance(rvavg, str):
-                minusstring = r"{\color{white} -}"
+                minusstring = r""
+
+            cl = row["spec_class"]
+            if len(cl) > 9:
+                cl = cl[:8]
 
             if row["logp"] == 0:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + row[
-                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & NaN\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & NaN\\" + "\n")
             elif row["logp"] == -500:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + row[
-                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & $<-500$\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & $<-500$\\" + "\n")
             else:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + row[
-                    "spec_class"] + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & ${round_or_string(row['logp'], 2)}$\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & ${round_or_string(row['logp'], 2)}$\\" + "\n")
         for line in postamble:
             outtex.write(line + "\n")
     os.system("lualatex result_parameters.tex")
