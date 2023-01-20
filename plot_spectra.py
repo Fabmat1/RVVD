@@ -1,13 +1,12 @@
 import os.path
 import sys
 
-import matplotlib.colors as mcolor
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt, cm
 from scipy.interpolate import interp1d
 
-from main import pseudo_voigt, slicearr, load_spectrum, lines_to_fit, expand_mask, splitname, MARGIN, plot_rvcurve_brokenaxis
+from main import pseudo_voigt, slicearr, lines_to_fit, splitname, fit_config, plot_rvcurve_brokenaxis
 
 ############################## OPTIONS ##############################
 
@@ -24,34 +23,24 @@ COLORMAP = cm.rainbow  # Optional matplotlib colormap
 ############################## FUNCTIONS ##############################
 
 RES_PARAMETER_LIST = pd.read_csv(RES_PARAMETER_LIST)
+RES_PARAMETER_LIST["source_id"] = RES_PARAMETER_LIST["source_id"].astype("U20")
 
 
 def ind_to_strind(ind):
     return "0" + str(ind) if ind < 10 else str(ind)
 
 
-def get_params_from_filename(filename, paramtable: pd.DataFrame, simple=True):
+def get_params_from_filename(paramtable: pd.DataFrame, gaia_id, subspec_ind):
     paramdict = dict.fromkeys(lines_to_fit)
-
-    specname, subspec = splitname(filename.split("/")[1].split(".")[0])
+    subspec = str(subspec_ind)
     for name in lines_to_fit.keys():
-        if simple:
-            subspec = int(subspec)
-            prow = paramtable.loc[paramtable["subspectrum"] == subspec]
-            prow = prow.loc[prow["line_name"] == name]
-            if len(prow) != 0:
-                paramdict[name] = [prow["scaling"].iloc[0], prow["gamma"].iloc[0], prow["lambda_0"].iloc[0], prow["slope"].iloc[0], prow["flux_0"].iloc[0], prow["eta"].iloc[0]]
-        else:
-            subspec = str(int(subspec))
-            prow = paramtable.loc[paramtable["subspectrum"] == subspec + "_" + specname]
-            prow = prow.loc[prow["line_name"] == name]
-            if len(prow) != 0:
-                paramdict[name] = [prow["scaling"].iloc[0], prow["gamma"].iloc[0], prow["lambda_0"].iloc[0], prow["slope"].iloc[0], prow["flux_0"].iloc[0], prow["eta"].iloc[0]]
+        prow = paramtable.loc[paramtable["subspectrum"] == gaia_id + "_" + subspec]
+        prow = prow.loc[prow["line_name"] == name]
+        if len(prow) != 0:
+            paramdict[name] = [prow["scaling"].iloc[0], prow["gamma"].iloc[0], prow["lambda_0"].iloc[0], prow["slope"].iloc[0], prow["flux_0"].iloc[0], prow["eta"].iloc[0]]
+
     # scaling, gamma, shift, slope, height, eta
-    if simple:
-        return paramdict, subspec
-    else:
-        return paramdict, subspec + "_" + specname
+    return paramdict, gaia_id + "_" + subspec
 
 
 def normalize_spectrum(wl, flx, window_size=NORM_WINDOW):
@@ -102,50 +91,53 @@ def normalize_spectrum(wl, flx, window_size=NORM_WINDOW):
 
 
 def comprehend_lstr(lstr):
-    l = [j.strip() for j in lstr.replace("[", "").replace("]", "").replace("'", "").split(",")]
+    l = [j.strip() for j in lstr.split(";")]
     return l
 
 
-def plot_system_from_ind(ind=INDEX_TO_PLOT, res_params=RES_PARAMETER_LIST, outdir="output"):
+def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output"):
     trow = RES_PARAMETER_LIST.iloc[ind]
-    paramtable = pd.read_csv(f"{outdir}/" + trow["gaia_id"] + "/culum_spec_vals.csv")
+    paramtable = pd.read_csv(f"{outdir}/" + trow["source_id"] + "/culum_spec_vals.csv")
 
     a_temp = trow["associated_files"]
-    a_files = [a_temp] if "," not in a_temp else comprehend_lstr(a_temp)
+    a_files = [a_temp] if ";" not in a_temp else comprehend_lstr(a_temp)
+    gaia_id = trow["source_id"]
 
+    filelist = []
     k = 1
     for fname in a_files:
         i = 1
         file = fname + "_" + ind_to_strind(i) + ".txt"
-        filelist = []
 
         while os.path.isfile("spectra/" + file):
             filelist.append(file)
             i += 1
             file = fname + "_" + ind_to_strind(i) + ".txt"
 
-        color = COLORMAP(np.linspace(0, 1, len(filelist)))
-        for i, file in enumerate(filelist):
-            data = np.genfromtxt("spectra/" + file)
+    color = COLORMAP(np.linspace(0, 1, len(filelist)))
 
-            wl = data[:, 0]
-            flx = data[:, 1]
+    for i, file in enumerate(filelist):
+        i += 1
+        data = np.genfromtxt("spectra/" + file)
 
-            params, name = get_params_from_filename("spectra/" + file, paramtable, True if len(a_files) == 1 else False)
+        wl = data[:, 0]
+        flx = data[:, 1]
 
-            if NORMALIZE:
-                wl, flx, norm = normalize_spectrum(wl, flx)
-                plt.plot(wl, flx + k, color=color[i - 1], label=name, zorder=5)
-                print(name)
-                for lname, lloc in lines_to_fit.items():
-                    if params[lname] is not None:
-                        wlforfit = np.linspace(params[lname][2] - MARGIN, params[lname][2] + MARGIN, 250)
-                        fit = pseudo_voigt(wlforfit, *params[lname])
-                        fit /= norm(wlforfit)
-                        plt.plot(wlforfit, fit + k, color="black", zorder=6)
-                for line in lines_to_fit.values():
-                    plt.axvline(line, color="darkgrey", linestyle="--", linewidth=1, zorder=4)
-            k += 1
+        params, name = get_params_from_filename(paramtable, gaia_id, i)
+
+        if NORMALIZE:
+            wl, flx, norm = normalize_spectrum(wl, flx)
+            plt.plot(wl, flx + k, color=color[i - 1], label=name, zorder=5)
+            print(name)
+            for lname, lloc in lines_to_fit.items():
+                if params[lname] is not None:
+                    wlforfit = np.linspace(params[lname][2] - fit_config["MARGIN"], params[lname][2] + fit_config["MARGIN"], 250)
+                    fit = pseudo_voigt(wlforfit, *params[lname])
+                    fit /= norm(wlforfit)
+                    plt.plot(wlforfit, fit + k, color="black", zorder=6)
+            for line in lines_to_fit.values():
+                plt.axvline(line, color="darkgrey", linestyle="--", linewidth=1, zorder=4)
+        k += 1
 
     plt.ylim(0, k+0.2)
     plt.legend(fontsize=3)
@@ -156,7 +148,8 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, res_params=RES_PARAMETER_LIST, outdi
     return None
 
 
-def correct_indiced_sys(ind, outdir="output"):
+def correct_indiced_sys(ind, gaia_id, outdir="output"):
+    gaia_id = str(gaia_id)
     corr = True if input("Do you want to correct this spectrum? [y/n]").lower() == "y" else False
     if corr:
         abort = False
@@ -166,23 +159,20 @@ def correct_indiced_sys(ind, outdir="output"):
                 if subspec == "-1":
                     abort = True
                 else:
-                    trow = RES_PARAMETER_LIST.iloc[ind]
-                    csvtable = pd.read_csv(f"{outdir}/" + trow["source_folder"] + "/culum_spec_vals.csv")
+                    csvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv")
                     rv = csvtable.loc[csvtable.subspectrum != subspec].iloc[0]["RV"] / 1000
                     csvtable = csvtable[csvtable.subspectrum != subspec]
-                    csvtable.to_csv(f"{outdir}/" + trow["source_folder"] + "/culum_spec_vals.csv", index=False)
+                    csvtable.to_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv", index=False)
 
-                    rvtable = pd.read_csv(f"{outdir}/" + trow["source_folder"] + "/RV_variation.csv")
+                    rvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv")
                     rvtable = rvtable[rvtable["culum_fit_RV"].round(3) != round(rv, 3)]
-                    rvtable.to_csv(f"{outdir}/" + trow["source_folder"] + "/RV_variation.csv", index=False)
+                    rvtable.to_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv", index=False)
 
                     vels = rvtable["culum_fit_RV"].to_numpy()
                     verrs = rvtable["u_culum_fit_RV"].to_numpy()
                     times = rvtable["mjd"].to_numpy()
-                    fpre = trow["source_folder"]
-                    gaia_id = trow["source_id"]
 
-                    plot_rvcurve_brokenaxis(vels, verrs, times, fpre, gaia_id)
+                    plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id)
 
             except ValueError:
                 print("Invalid input!")
@@ -199,11 +189,20 @@ if __name__ == "__main__":
         else:
             d = "output"
     else:
-        n = 0
-        d = "output"
+        res_params = pd.read_csv("result_parameters.csv")
+        res_params = res_params.sort_values("deltaRV", ascending=False)
+        for ind, row in res_params.iterrows():
+            d = "output"
+            print("   ")
+            print(f"Star #{ind}; delta RV: {round(row['deltaRV'])}; GAIA DR3 {row['source_id']}")
+            plot_system_from_ind(ind, outdir=d)
+            correct_indiced_sys(ind, row['source_id'], outdir=d)
+        exit()
     while True:
         print("   ")
         print(f"Star #{n}")
+        res_params = pd.read_csv("result_parameters.csv")
+        row = res_params.iloc[n]
         plot_system_from_ind(n, outdir=d)
-        correct_indiced_sys(n, outdir=d)
+        correct_indiced_sys(n, row['source_id'].iloc[0], outdir=d)
         n += 1

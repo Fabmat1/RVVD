@@ -252,7 +252,8 @@ def compare_results(plot_comp=True):
             for i in range(len(otheruRVlist)):
                 gmags.append(gmag)
 
-    from main import PLOT_FMT
+    from main import plot_config
+    PLOT_FMT = plot_config["PLOT_FMT"]
     from PyPDF2 import PdfFileMerger
     dirname = os.path.dirname(__file__)
     dirs = [f.path for f in os.scandir(os.path.join(dirname, f"{OUTPUT_DIR}")) if f.is_dir()]

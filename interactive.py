@@ -147,7 +147,7 @@ def gui_window(queue, p_queue):
     window = tk.Tk()
     window.title("RVVD")
     window.iconbitmap("favicon.ico")
-    window.geometry("800x300+0+0")
+    window.geometry("800x600+0+0")
 
     # Create the menu bar
     menu_bar = tk.Menu(window)
