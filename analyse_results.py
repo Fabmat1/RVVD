@@ -422,6 +422,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
         culumv_errs = filedata[:, 1]
         timespan = np.ptp(filedata[:, 2])
         logp = vrad_pvalue(culumvs, culumv_errs)
+        deltarv = np.ptp(culumvs)
 
         analysis_params = pd.concat([analysis_params, pd.DataFrame({
             "source_id": [sid],
@@ -429,7 +430,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
             "dec": [dec],
             "spec_class": [specclass],
             "logp": [logp],
-            "deltaRV": [np.ptp(culumvs)],
+            "deltaRV": [deltarv],
             "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
             "RVavg": [np.mean(culumvs)],
             "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))],

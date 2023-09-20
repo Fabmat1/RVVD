@@ -95,7 +95,7 @@ def comprehend_lstr(lstr):
     return l
 
 
-def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output"):
+def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True):
     trow = RES_PARAMETER_LIST.iloc[ind]
     paramtable = pd.read_csv(f"{outdir}/" + trow["source_id"] + "/culum_spec_vals.csv")
 
@@ -128,7 +128,8 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output"):
         if NORMALIZE:
             wl, flx, norm = normalize_spectrum(wl, flx)
             plt.plot(wl, flx + k, color=color[i - 1], label=name, zorder=5)
-            print(name)
+            if verbose:
+                print(name)
             for lname, lloc in lines_to_fit.items():
                 if params[lname] is not None:
                     wlforfit = np.linspace(params[lname][2] - fit_config["MARGIN"], params[lname][2] + fit_config["MARGIN"], 250)
@@ -148,7 +149,7 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output"):
     return None
 
 
-def correct_indiced_sys(ind, gaia_id, outdir="output"):
+def correct_indiced_sys(gaia_id, outdir="output"):
     gaia_id = str(gaia_id)
     corr = True if input("Do you want to correct this spectrum? [y/n]").lower() == "y" else False
     if corr:
@@ -165,7 +166,7 @@ def correct_indiced_sys(ind, gaia_id, outdir="output"):
                     csvtable.to_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv", index=False)
 
                     rvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv")
-                    rvtable = rvtable[rvtable["culum_fit_RV"].round(3) != round(rv, 3)]
+                    rvtable = rvtable[rvtable["culum_fit_RV"].round(2) != round(rv, 2)]
                     rvtable.to_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv", index=False)
 
                     vels = rvtable["culum_fit_RV"].to_numpy()
@@ -196,7 +197,7 @@ if __name__ == "__main__":
             print("   ")
             print(f"Star #{ind}; delta RV: {round(row['deltaRV'])}; GAIA DR3 {row['source_id']}")
             plot_system_from_ind(ind, outdir=d)
-            correct_indiced_sys(ind, row['source_id'], outdir=d)
+            correct_indiced_sys(row['source_id'], outdir=d)
         exit()
     while True:
         print("   ")
@@ -204,5 +205,8 @@ if __name__ == "__main__":
         res_params = pd.read_csv("result_parameters.csv")
         row = res_params.iloc[n]
         plot_system_from_ind(n, outdir=d)
-        correct_indiced_sys(n, row['source_id'].iloc[0], outdir=d)
+        if not isinstance(row['source_id'], np.int64):
+            correct_indiced_sys(row['source_id'].iloc[0], outdir=d)
+        else:
+            correct_indiced_sys(row['source_id'], outdir=d)
         n += 1
