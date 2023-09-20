@@ -4,7 +4,8 @@ import sys
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt, cm
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, InterpolatedUnivariateSpline
+from scipy.ndimage import maximum_filter, median_filter
 
 from main import pseudo_voigt, slicearr, lines_to_fit, splitname, fit_config, plot_rvcurve_brokenaxis
 
@@ -12,10 +13,17 @@ from main import pseudo_voigt, slicearr, lines_to_fit, splitname, fit_config, pl
 
 RES_PARAMETER_LIST = "result_parameters.csv"  # Location of the generated result parameter table
 
-NORMALIZE = True  # Whether to normalize spectra before plotting
-NORM_WINDOW = 30  # Normalization window size
+NORMALIZE = False# Whether to normalize spectra before plotting
+MED_WINDOW = 4  # Normalization window size
+MAX_WINDOW = 15  # Normalization window size
 TRUNC_WL = 25  # Wavelength margin by which to truncate the data before normalization
 VET_RESULTS = True  # Wheter to enable result verification features
+CUTLIM = 15
+CUTLINES = [6562.79, 4861.35, 4340.472, 4101.734, 3970.075, 3889.064, 3835.397, 4026.19, 4471.4802, 4921.9313, 5015.678, 5875.6, 6678.15, 4541.59, 4685.70, 5411.52]
+if NORMALIZE:
+    SEP = 1
+else:
+    SEP = 10
 
 INDEX_TO_PLOT = 2  # Index of the system to be plotted in result_parameters.csv if not verifying results
 COLORMAP = cm.rainbow  # Optional matplotlib colormap
@@ -43,51 +51,26 @@ def get_params_from_filename(paramtable: pd.DataFrame, gaia_id, subspec_ind):
     return paramdict, gaia_id + "_" + subspec
 
 
-def normalize_spectrum(wl, flx, window_size=NORM_WINDOW):
-    wl, loind, upind = slicearr(wl, np.amin(wl) + TRUNC_WL, np.amax(wl) - TRUNC_WL)
-    flx = flx[loind:upind]
+def normalize_spectrum(wl, flx):
+    wl_step = np.median(np.diff(wl))
+    true_med_size = int(np.floor(MED_WINDOW / wl_step))
+    true_max_size = int(np.floor(MAX_WINDOW / wl_step))
+    if true_max_size == 0 or true_med_size == 0:
+        raise ValueError("Medium/Maximum window sizes need to be bigger than a wavelength step!")
+    flx_for_interpol = median_filter(flx, size=true_med_size)
+    flx_for_interpol = maximum_filter(flx_for_interpol, size=true_max_size)
 
-    if len(wl) != len(flx):
-        wl = wl[0:len(flx)]
+    cutmask = np.full(np.shape(wl), 1).astype(bool)
+    for l in CUTLINES:
+        cutmask = np.logical_and(cutmask, np.logical_or(wl > l + CUTLIM, wl < l - CUTLIM))
+    flx_for_interpol = flx_for_interpol[cutmask]
+    wl_for_interpol = wl[cutmask]
 
-    wl_for_interpol = np.copy(wl)
-    flx_for_interpol = np.copy(flx)
+    norm_fit = InterpolatedUnivariateSpline(wl_for_interpol, flx_for_interpol, k=2)
 
-    while len(flx_for_interpol) % window_size != 0:
-        wl_for_interpol = wl_for_interpol[:-1]
-        flx_for_interpol = flx_for_interpol[:-1]
+    n_flx = flx / norm_fit(wl)
 
-    window = len(flx_for_interpol) / window_size
-
-    flxs = np.split(flx_for_interpol, window)
-    maxima = []
-
-    for i, sub in enumerate(flxs):
-        flxdiff = np.diff(sub, prepend=flx[0])
-        threesig = np.std(flxdiff)
-
-        mask = flxdiff < threesig
-        mask = np.logical_and(np.logical_and(mask, np.roll(mask, 1)), np.roll(mask, -1))
-
-        sub = sub[mask]
-
-        maxima.append((i * window_size) + np.argmax(sub))
-
-    flx_for_interpol = np.take(flx_for_interpol, maxima)
-    wl_for_interpol = np.take(wl_for_interpol, maxima)
-
-    wl_for_interpol = wl_for_interpol.squeeze()
-    flx_for_interpol = flx_for_interpol.squeeze()
-
-    for line in lines_to_fit.values():
-        mask = np.logical_and(wl_for_interpol < line + 20, wl_for_interpol > line - 20)
-        wl_for_interpol = wl_for_interpol[~mask]
-        flx_for_interpol = flx_for_interpol[~mask]
-
-    f = interp1d(wl_for_interpol, flx_for_interpol, "linear", fill_value="extrapolate")
-    flx /= f(wl)
-
-    return wl, flx, f
+    return wl, n_flx, norm_fit
 
 
 def comprehend_lstr(lstr):
@@ -127,7 +110,7 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True):
 
         if NORMALIZE:
             wl, flx, norm = normalize_spectrum(wl, flx)
-            plt.plot(wl, flx + k, color=color[i - 1], label=name, zorder=5)
+            plt.plot(wl, flx + k, color=color[i - 1], label=name, zorder=5, linewidth=.5)
             if verbose:
                 print(name)
             for lname, lloc in lines_to_fit.items():
@@ -135,12 +118,22 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True):
                     wlforfit = np.linspace(params[lname][2] - fit_config["MARGIN"], params[lname][2] + fit_config["MARGIN"], 250)
                     fit = pseudo_voigt(wlforfit, *params[lname])
                     fit /= norm(wlforfit)
-                    plt.plot(wlforfit, fit + k, color="black", zorder=6)
+                    plt.plot(wlforfit, fit + k, color="black", zorder=6, linewidth=.5)
             for line in lines_to_fit.values():
-                plt.axvline(line, color="darkgrey", linestyle="--", linewidth=1, zorder=4)
-        k += 1
+                plt.axvline(line, color="darkgrey", linestyle="--", linewidth=.5, zorder=4)
+            plt.ylim(0, k + 0.2)
+        else:
+            plt.plot(wl, flx + k, color=color[i - 1], label=name, zorder=5, linewidth=.5)
+            for lname, lloc in lines_to_fit.items():
+                if params[lname] is not None:
+                    wlforfit = np.linspace(params[lname][2] - fit_config["MARGIN"], params[lname][2] + fit_config["MARGIN"], 250)
+                    fit = pseudo_voigt(wlforfit, *params[lname])
+                    plt.plot(wlforfit, fit + k, color="black", zorder=6, linewidth=.5)
+            for line in lines_to_fit.values():
+                plt.axvline(line, color="darkgrey", linestyle="--", linewidth=.5, zorder=4)
 
-    plt.ylim(0, k+0.2)
+        k += 1*SEP
+
     plt.legend(fontsize=3)
     plt.ylabel("Normalized Flux + Offset")
     plt.xlabel("Wavelength [Å]")
@@ -186,7 +179,12 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         n = int(sys.argv[1])
         if len(sys.argv) > 2:
-            d = sys.argv[2]
+            MED_WINDOW = float(sys.argv[2])
+            MAX_WINDOW = float(sys.argv[3])
+            if len(sys.argv) == 5:
+                d = sys.argv[4]
+            else:
+                d = "output"
         else:
             d = "output"
     else:

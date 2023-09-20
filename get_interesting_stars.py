@@ -67,11 +67,11 @@ def plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj
 def texfigure(figpath):
     return [r"\begin{figure}[H]",
             r"\centering",
-            rf"\includegraphics[width =\textwidth]{{{figpath}}}",
+            rf"\includegraphics[width=0.9\textwidth]{{{figpath}}}",
             r"\end{figure}", ]
 
 
-def textable(nspec, deltarv, u_deltarv, rvavg, u_rvavg, ra , dec , gmag, sp_class,  alias, sid, logp):
+def textable(nspec, deltarv, u_deltarv, rvavg, u_rvavg, ra , dec , gmag, sp_class,  alias, interestingness, logp):
     table = [
         fr"Alias & {alias} \\",
         fr"Spectral Class & {sp_class} \\",
@@ -81,12 +81,13 @@ def textable(nspec, deltarv, u_deltarv, rvavg, u_rvavg, ra , dec , gmag, sp_clas
         fr"$\Delta$RV & {round(deltarv, 2)} \pm {round(u_deltarv, 2)} \\",
         fr"RV$_{{\mathrm{{avg}}}}$ & {round(rvavg, 2)} \pm {round(u_rvavg, 2)} \\",
         fr"$\log p$ & {round(logp, 3)} \\"
+        fr"Interestingness & {round(interestingness, 3)} \\"
     ]
 
     return table
 
 
-def gen_interesting_table(result_params, catalogue):
+def gen_interesting_table(result_params, catalogue, date='2023-10-3 00:00:00', utc_offset=-4):
     interesting_params = pd.DataFrame(
         {
             "source_id": [],
@@ -105,7 +106,7 @@ def gen_interesting_table(result_params, catalogue):
         }
     )
 
-    delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight = get_frame()
+    delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight = get_frame(date, utc_offset)
 
     for i, star in result_params.iterrows():
         print(f"Calculating for star {i + 1}/{len(result_params)}...")
@@ -127,7 +128,10 @@ def gen_interesting_table(result_params, catalogue):
             continue
         if nspec == 1 and -400 < rvavg < 400:
             continue
-        if gmag > 18.5:
+        if gmag > 19:
+            continue
+
+        if "+" in sp_class:
             continue
 
         obj_altazs_obsnight = get_visibility(frame_obsnight, ra, dec)
@@ -143,9 +147,6 @@ def gen_interesting_table(result_params, catalogue):
 
         interestingness = 0
 
-        if "+" in sp_class:
-            interestingness -= 10
-
         if logp < -4:
             interestingness += 5
         elif logp < -1.3:
@@ -155,12 +156,15 @@ def gen_interesting_table(result_params, catalogue):
 
         if deltarv > 100:
             interestingness += (deltarv - 100) / 10
-        elif deltarv < 50:
+        else:
             continue
 
         interestingness += (15 - gmag)
 
         interestingness += 5 - nspec
+
+        if interestingness < 5:
+            continue
 
         interesting_params = pd.concat([interesting_params, pd.DataFrame({
             "source_id": [str(sid)],
@@ -219,9 +223,10 @@ def gen_interesting_table(result_params, catalogue):
         r"\usepackage{fancyhdr}",
         r"",
         r"",
-        r"\fancyhead[L]{Overview over Interesting subdwarf targets}",
+        r"\fancyhead[L]{Overview over interesting subdwarf targets}",
         r"",
         r"\fancyhead[R]{For 10/03/2023}",
+        r"\fancyfoot{}",
         r"\fancyfoot[R]{\textcolor{gray}{\thepage}}",
         r"\renewcommand{\headrulewidth}{0pt}",
         r"",
@@ -259,13 +264,14 @@ def gen_interesting_table(result_params, catalogue):
             alias = star["alias"]
             sid = star["source_id"]
             logp = star["logp"]
+            interestingness = star["interestingness"]
 
             for line in texfigure(f"output/{star['source_id']}/RV_variation_broken_axis.pdf"):
                 outtex.write(line + "\n")
             for line in tablestart:
                 outtex.write(line + "\n")
 
-            for line in textable(nspec, deltarv, u_deltarv, rvavg, u_rvavg, ra, dec, gmag, sp_class, alias, sid, logp):
+            for line in textable(nspec, deltarv, u_deltarv, rvavg, u_rvavg, ra, dec, gmag, sp_class, alias, interestingness, logp):
                 outtex.write(line + "\n")
 
             for line in tableend:
