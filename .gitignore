@@ -23,3 +23,13 @@ all_*
 output_all
 result_*
 *.tex
+*.vot
+lightcurves/*
+*.log
+*.tmp
+*.gz
+*.aux
+*.h5
+*.ico
+/.ipynb_checkpoints/test-checkpoint.ipynb
+*.out
