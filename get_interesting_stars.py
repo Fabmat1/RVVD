@@ -128,8 +128,8 @@ def gen_interesting_table(result_params, catalogue, date='2023-10-3 00:00:00', u
             continue
         if nspec == 1 and -400 < rvavg < 400:
             continue
-        # if gmag > 19:
-        #     continue
+        if gmag > 19:
+            continue
 
         if "+" in sp_class:
             continue
