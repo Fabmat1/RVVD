@@ -1411,7 +1411,7 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id, merged=False, extravels
         plt.close()
 
 
-def plot_rvcurve(vels, verrs, times, gaia_id, merged=False):
+def plot_rvcurve(vels, verrs, times, gaia_id, merged=False, custom_saveloc=None):
     plt.close()
     fig, ax1 = plt.subplots(figsize=(4.8 * 16 / 9, 4.8))
     fig.suptitle(f"Radial Velocity over Time\n Gaia EDR3 {gaia_id}", fontsize=plot_config['PLOT_TITLE_FONT_SIZE'])
@@ -1432,10 +1432,15 @@ def plot_rvcurve(vels, verrs, times, gaia_id, merged=False):
                  verticalalignment='center',
                  transform=ax1.transAxes,
                  color="red")
-        if not merged:
-            fig.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}/RV_variation{plot_config['PLOT_FMT']}", dpi=300)
+
+        if not custom_saveloc:
+            if not merged:
+                fig.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}/RV_variation{plot_config['PLOT_FMT']}", dpi=300)
+            else:
+                fig.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}_merged/RV_variation{plot_config['PLOT_FMT']}",
+                            dpi=300)
         else:
-            fig.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}_merged/RV_variation{plot_config['PLOT_FMT']}",
+            fig.savefig(f"custom_saveloc",
                         dpi=300)
 
         if plot_config['SHOW_PLOTS']:
@@ -1457,10 +1462,15 @@ def plot_rvcurve(vels, verrs, times, gaia_id, merged=False):
         ax1.set_ylim((vels.min() - 2 * culumvs_range, vels.max() + 2 * culumvs_range))
 
     plt.tight_layout()
-    if not merged:
-        fig.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}/RV_variation{plot_config['PLOT_FMT']}", dpi=300)
+    if not custom_saveloc:
+        if not merged:
+            fig.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}/RV_variation{plot_config['PLOT_FMT']}", dpi=300)
+        else:
+            fig.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}_merged/RV_variation{plot_config['PLOT_FMT']}",
+                        dpi=300)
     else:
-        fig.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}_merged/RV_variation{plot_config['PLOT_FMT']}", dpi=300)
+        fig.savefig(f"custom_saveloc",
+                    dpi=300)
 
     if plot_config['SHOW_PLOTS']:
         plt.show()
