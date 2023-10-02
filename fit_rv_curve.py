@@ -23,7 +23,7 @@ PERIOD_UNIT: Unit the Period is outputted as, may be any of
 "d"- days
 "y"- years
 """
-MANUAL_INITIAL_GUESS = [280, 13.05, -200, 3968.0697424]
+MANUAL_INITIAL_GUESS = [150, 24 / 5.56, 0, 0]
 """
 MANUAL_INITIAL_GUESS: Manually defined initial guess for the sinusoidal Fit.
 Available parameters are, in this order with required units:
@@ -32,7 +32,7 @@ Frequency [1/days]
 RV Offset [km/s]
 Period shift phi [days]
 """
-GAIA_ID = "4415762082969078400"
+GAIA_ID = "3376639486380091008"
 
 
 ############################## FUNCTIONS ##############################
@@ -133,6 +133,74 @@ def fit_rv_curve(showplot=True, manguess=MANUAL_INITIAL_GUESS, gaia_id=GAIA_ID, 
         plt.clf()
         plt.cla()
     return fit
+
+
+def phasefold(vels, verrs, times, period, gaia_id, params=None):
+    """
+    :param vels: Radial velocities [km/s]
+    :param verrs: Radial velocity errors [km/s]
+    :param times: Epochs of the observations
+    :param period: period to fold with
+    :param gaia_id: GAIA ID of the star
+    :param params: optional fit parameters
+    :return: phase-folded times
+    """
+
+    times = np.array(times)
+    times_normalized = (times - np.min(times)) % period / period
+
+    plt.close()
+    fig, ax1 = plt.subplots(figsize=(4.8 * 16 / 9, 4.8))
+    fig.suptitle(f"Phase-folded RV over Time\n Gaia EDR3 {gaia_id}", fontsize=17)
+    ax1.set_ylabel("Radial Velocity [km/s]", fontsize=14)
+    ax1.set_xlabel("Phase", fontsize=14)
+
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    ax1.scatter(times, vels, zorder=5, color=colors[0], label="Radial Velocities")
+    ax1.errorbar(times, vels, yerr=verrs, capsize=3, linestyle='', zorder=1, color=colors[1])
+
+    if not params:
+        params, errs = curve_fit(sinusoid,
+                                 times_normalized,
+                                 vels,
+                                 p0=[np.ptp(vels) / 2, 1, np.mean(vels), 0],
+                                 sigma=verrs,
+                                 bounds=[
+                                     [0, 1, -np.inf, 0],
+                                     [np.inf, 1, np.inf, 1]
+                                 ],
+                                 maxfev=100000)
+
+    times_normalized -= params[-1]
+    times_normalized[times_normalized < 0] += 1
+
+    times_normalized = np.concatenate([-times_normalized, times_normalized])
+    vels = np.concatenate([vels, vels])
+    verrs = np.concatenate([verrs, verrs])
+
+    timespace = np.linspace(times_normalized.min(), times_normalized.max(), 1000)
+    ax1.plot(timespace,
+             fit.evaluate(timespace),
+             color="darkred",
+             zorder=0,
+             label="fit")
+
+    culumvs_range = verrs.min()
+
+    if not pd.isnull(culumvs_range):
+        ax1.set_ylim((vels.min() - 2 * culumvs_range, vels.max() + 2 * culumvs_range))
+
+    ax1.set_xlim((-1, 1))
+
+    annotation_text = f"A = {params[0]:.2f}\nP = {period:.2f}\nφ = {params[3]:.2f}\nOffset = {params[2]:.2f}"
+    plt.annotate(annotation_text, xy=(0.7, 0.1), xycoords='axes fraction', fontsize=12,
+                 bbox=dict(boxstyle='round,pad=0.4', facecolor='lightyellow', edgecolor='orange'))
+
+    plt.tight_layout()
+
+    plt.savefig(f"images/{gaia_id}_phfold.pdf")
+
+    plt.show()
 
 
 ############################## EXECUTION ##############################
