@@ -138,7 +138,7 @@ def sinusoid_fold_wrapper(x, amp, offset, shift):
     return sinusoid(x, amp, 1, offset, shift)
 
 
-def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, custom_saveloc=None):
+def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, custom_saveloc=None, plot_fit=True):
     """
     :param vels: Radial velocities [km/s]
     :param verrs: Radial velocity errors [km/s]
@@ -187,45 +187,47 @@ def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, 
                                      maxfev=100000)
 
     if params[-1] < 0:
-        params[-1] = 1+params[-1]
+        params[-1] = 1 + params[-1]
 
     times_normalized -= params[-1]
     times_normalized[times_normalized < 0] += 1
 
-    times_normalized = np.concatenate([times_normalized-1, times_normalized])
+    times_normalized = np.concatenate([times_normalized - 1, times_normalized])
     vels = np.concatenate([vels, vels])
     verrs = np.concatenate([verrs, verrs])
 
     ax1.scatter(times_normalized, vels, zorder=5, color=colors[0], label="Radial Velocities")
     ax1.errorbar(times_normalized, vels, yerr=verrs, capsize=3, linestyle='', zorder=4, color=colors[1])
 
-    fit = Sinusfit(params[0], 1, params[1], 0, verrs)
+    if plot_fit:
+        fit = Sinusfit(params[0], 1, params[1], 0, verrs)
 
-    timespace = np.linspace(-1, 1, 1000)
-    ax1.plot(timespace,
-             fit.evaluate(timespace),
-             color="darkred",
-             zorder=3,
-             label="fit")
+        timespace = np.linspace(-1, 1, 1000)
+        ax1.plot(timespace,
+                 fit.evaluate(timespace),
+                 color="darkred",
+                 zorder=3,
+                 label="fit")
 
     culumvs_range = verrs.min()
 
-    if not pd.isnull(culumvs_range):
-        ax1.set_ylim((vels.min() - 2 * culumvs_range, vels.max() + 2 * culumvs_range))
+    # if not pd.isnull(culumvs_range):
+    #     ax1.set_ylim((vels.min() - 2 * culumvs_range, vels.max() + 2 * culumvs_range))
 
     ax1.set_xlim((-1, 1))
 
     if period < 1:
-        annotation_text = f"K = {params[0]:.2f} km/s\nP = {period*24:.2f}h\nφ = {params[2]:.2f}\nOffset = {params[1]:.2f} km/s"
+        annotation_text = f"K = {params[0]:.2f} km/s\nP = {period * 24:.2f}h\nφ = {params[2]:.2f}\nOffset = {params[1]:.2f} km/s"
     else:
         annotation_text = f"K = {params[0]:.2f} km/s\nP = {period:.2f}d\nφ = {params[2]:.2f}\nOffset = {params[1]:.2f} km/s"
-
 
     plt.annotate(annotation_text, xy=(0.05, 0.1), xycoords='axes fraction', fontsize=10,
                  bbox=dict(boxstyle='round,pad=0.4', facecolor='lightyellow', edgecolor='orange'))
 
+    ax1.tick_params(labelsize=10)
+
     plt.grid(True, color="gray", linestyle="--", linewidth=1, zorder=1)
-    plt.legend(loc='upper right')
+    plt.legend(loc='upper right', fontsize=10)
 
     plt.tight_layout()
 
@@ -234,7 +236,96 @@ def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, 
     else:
         plt.savefig(custom_saveloc, dpi=300)
 
-    plt.show()
+
+def phasefold_tiny(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, custom_saveloc=None, plot_fit=True, custom_title=None):
+    """
+    :param vels: Radial velocities [km/s]
+    :param verrs: Radial velocity errors [km/s]
+    :param times: Epochs of the observations
+    :param period: period to fold with
+    :param gaia_id: GAIA ID of the star
+    :param params: optional fit parameters
+    :return: phase-folded times
+    """
+
+    times = np.array(times)
+    times_normalized = (times - np.min(times)) % period / period
+
+    plt.close()
+    fig, ax1 = plt.subplots(figsize=(8, 4))
+    ax1.set_ylabel("")
+    ax1.set_xlabel("")
+    if custom_title:
+        fig.suptitle(custom_title)
+
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    if not p0:
+        params, errs = curve_fit(sinusoid_fold_wrapper,
+                                 times_normalized,
+                                 vels,
+                                 p0=[np.ptp(vels) / 2, np.mean(vels), 0],
+                                 sigma=verrs,
+                                 bounds=[
+                                     [0, np.mean(vels) - 300, -1],
+                                     [3 * np.ptp(vels), np.mean(vels) + 300, 1]
+                                 ],
+                                 maxfev=100000)
+    else:
+        if predetermined:
+            params = p0
+        else:
+            params, errs = curve_fit(sinusoid_fold_wrapper,
+                                     times_normalized,
+                                     vels,
+                                     p0=p0,
+                                     sigma=verrs,
+                                     bounds=[
+                                         [0, np.mean(vels) - 300, -1],
+                                         [3 * np.ptp(vels), np.mean(vels) + 300, 1]
+                                     ],
+                                     maxfev=100000)
+
+    if params[-1] < 0:
+        params[-1] = 1 + params[-1]
+
+    times_normalized -= params[-1]
+    times_normalized[times_normalized < 0] += 1
+
+    times_normalized = np.concatenate([times_normalized - 1, times_normalized])
+    vels = np.concatenate([vels, vels])
+    verrs = np.concatenate([verrs, verrs])
+
+    ax1.scatter(times_normalized, vels, zorder=5, color=colors[0], label="Radial Velocities")
+    ax1.errorbar(times_normalized, vels, yerr=verrs, capsize=3, linestyle='', zorder=4, color=colors[1])
+
+    if plot_fit:
+        fit = Sinusfit(params[0], 1, params[1], 0, verrs)
+
+        timespace = np.linspace(-1, 1, 1000)
+        ax1.plot(timespace,
+                 fit.evaluate(timespace),
+                 color="darkred",
+                 zorder=3,
+                 label="fit")
+    ax1.set_xlim((-1, 1))
+    ax1.tick_params(labelsize=10)
+
+    if period < 1:
+        annotation_text = f"K = {params[0]:.2f} km/s\nP = {period * 24:.2f}h\nφ = {params[2]:.2f}\nOffset = {params[1]:.2f} km/s"
+    else:
+        annotation_text = f"K = {params[0]:.2f} km/s\nP = {period:.2f}d\nφ = {params[2]:.2f}\nOffset = {params[1]:.2f} km/s"
+
+    plt.annotate(annotation_text, xy=(0.05, 0.1), xycoords='axes fraction', fontsize=10,
+                 bbox=dict(boxstyle='round,pad=0.4', facecolor='lightyellow', edgecolor='orange'))
+
+    plt.grid(True, color="gray", linestyle="--", linewidth=1, zorder=1)
+    plt.tight_layout()
+
+    if not custom_saveloc:
+        plt.savefig(f"images/{gaia_id}_phfold_tiny.pdf")
+    else:
+        plt.savefig(custom_saveloc, dpi=300)
 
 
 ############################## EXECUTION ##############################

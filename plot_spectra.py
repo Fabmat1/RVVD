@@ -78,16 +78,21 @@ def comprehend_lstr(lstr):
     return l
 
 
-def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True):
-    trow = RES_PARAMETER_LIST.iloc[ind]
+def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savepath=None, custom_xlim=None, use_ind_as_sid=False):
+    if use_ind_as_sid:
+        trow = RES_PARAMETER_LIST[RES_PARAMETER_LIST["source_id"] == ind].iloc[0]
+    else:
+        trow = RES_PARAMETER_LIST.iloc[ind]
+
     paramtable = pd.read_csv(f"{outdir}/" + trow["source_id"] + "/culum_spec_vals.csv")
 
+    plt.figure(figsize=(4.8 * 16 / 9, 4.8))
     a_temp = trow["associated_files"]
     a_files = [a_temp] if ";" not in a_temp else comprehend_lstr(a_temp)
     gaia_id = trow["source_id"]
 
     filelist = []
-    k = 1
+    k = 0
     for fname in a_files:
         i = 1
         file = fname + "_" + ind_to_strind(i) + ".txt"
@@ -121,7 +126,7 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True):
                     plt.plot(wlforfit, fit + k, color="black", zorder=6, linewidth=.5)
             for line in lines_to_fit.values():
                 plt.axvline(line, color="darkgrey", linestyle="--", linewidth=.5, zorder=4)
-            plt.ylim(0, k + 0.2)
+            plt.ylim(0, k + 2)
         else:
             plt.plot(wl, flx + k, color=color[i - 1], label=name, zorder=5, linewidth=.5)
             for lname, lloc in lines_to_fit.items():
@@ -134,11 +139,17 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True):
 
         k += 1*SEP
 
+    if custom_xlim:
+        plt.xlim(custom_xlim)
     plt.legend(fontsize=3)
     plt.ylabel("Normalized Flux + Offset")
     plt.xlabel("Wavelength [Å]")
     plt.tight_layout()
-    plt.show()
+    if savepath:
+        plt.savefig(savepath, dpi=300)
+        plt.close()
+    else:
+        plt.show()
     return None
 
 
@@ -153,20 +164,29 @@ def correct_indiced_sys(gaia_id, outdir="output"):
                 if subspec == "-1":
                     abort = True
                 else:
-                    csvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv")
-                    rv = csvtable.loc[csvtable.subspectrum != subspec].iloc[0]["RV"] / 1000
-                    csvtable = csvtable[csvtable.subspectrum != subspec]
-                    csvtable.to_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv", index=False)
+                    try:
+                        csvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv")
+                        rv = csvtable.loc[csvtable.subspectrum != subspec].iloc[0]["RV"] / 1000
+                        csvtable = csvtable[csvtable.subspectrum != subspec]
+                        csvtable.to_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv", index=False)
 
-                    rvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv")
-                    rvtable = rvtable[rvtable["culum_fit_RV"].round(2) != round(rv, 2)]
-                    rvtable.to_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv", index=False)
+                        rvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv")
+                        rvtable = rvtable[rvtable["culum_fit_RV"].round(2) != round(rv, 2)]
+                        rvtable.to_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv", index=False)
 
-                    vels = rvtable["culum_fit_RV"].to_numpy()
-                    verrs = rvtable["u_culum_fit_RV"].to_numpy()
-                    times = rvtable["mjd"].to_numpy()
+                        vels = rvtable["culum_fit_RV"].to_numpy()
+                        verrs = rvtable["u_culum_fit_RV"].to_numpy()
+                        times = rvtable["mjd"].to_numpy()
 
-                    plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id)
+                        plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id)
+                    except:
+                        csvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv")
+                        csvtable = pd.DataFrame(columns=csvtable.columns)
+                        csvtable.to_csv(f"{outdir}/" + gaia_id + "/culum_spec_vals.csv", index=False)
+                        rvtable = pd.read_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv")
+                        rvtable = pd.DataFrame(columns=csvtable.columns)
+                        rvtable.to_csv(f"{outdir}/" + gaia_id + "/RV_variation.csv", index=False)
+                        plot_rvcurve_brokenaxis(np.array([]), np.array([]), np.array([]), gaia_id)
 
             except ValueError:
                 print("Invalid input!")

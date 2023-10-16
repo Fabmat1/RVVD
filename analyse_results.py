@@ -254,11 +254,11 @@ def compare_results(plot_comp=True):
 
     from main import plot_config
     PLOT_FMT = plot_config["PLOT_FMT"]
-    from PyPDF2 import PdfFileMerger
+    from PyPDF2 import PdfMerger
     dirname = os.path.dirname(__file__)
     dirs = [f.path for f in os.scandir(os.path.join(dirname, f"{OUTPUT_DIR}")) if f.is_dir()]
     files = [os.path.join(d, f"RV_variation_broken_axis_comparison{PLOT_FMT}") for d in dirs if os.path.isfile(os.path.join(d, f"RV_variation_broken_axis_comparison{PLOT_FMT}"))]
-    merger = PdfFileMerger()
+    merger = PdfMerger()
     [merger.append(pdf) for pdf in files]
     with open("all_RV_plots_comparison.pdf", "wb") as new_file:
         merger.write(new_file)

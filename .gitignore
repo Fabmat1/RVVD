@@ -33,3 +33,4 @@ lightcurves/*
 *.ico
 /.ipynb_checkpoints/test-checkpoint.ipynb
 *.out
+*.s

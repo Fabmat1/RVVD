@@ -161,11 +161,6 @@ output_table_cols = pd.DataFrame({
     "u_slope": [],
     "RV": [],
     "u_RV": [],
-    "signal_strength": [],
-    "noise_strength": [],
-    "SNR": [],
-    "cr_ind": [],
-    "sanitized": [],
 }, dtype=object)
 
 wl_splitinds, flux_splitinds, flux_std_splitinds = [0, 0, 0]
@@ -328,7 +323,7 @@ def load_spectrum(filename, preserve_below_zero=False):
     return wavelength, flux, t, flux_std
 
 
-def calc_SNR(params, flux, wavelength, margin):
+def calc_SNR(params, flux, wavelength, margin, cr_inds=None):
     """
     :param params: parameters of Fit
     :param flux: Flux array
@@ -338,6 +333,12 @@ def calc_SNR(params, flux, wavelength, margin):
                 MSD of noise background,
                 Signal-to-Noise ratio
     """
+    if len(cr_inds) > 0:
+        mask = np.ones_like(wavelength, dtype=bool)
+        mask[cr_inds] = False
+        wavelength = wavelength[mask]
+        flux = flux[mask]
+
     scaling, gamma, shift, slope, height, eta = params
     flux = flux - slope * wavelength - height
 
@@ -347,7 +348,7 @@ def calc_SNR(params, flux, wavelength, margin):
 
     if upind == loind + 1 and not fit_config['ALLOW_SINGLE_DATAPOINT_PEAKS']:
         warnings.warn("Peak is only a single datapoint, Fit rejected.", FitUnsuccessfulWarning)
-        return 0, 1, 0
+        return 0
     elif upind == loind + 1 and fit_config['ALLOW_SINGLE_DATAPOINT_PEAKS']:
         # Maybe resample here
         pass
@@ -395,8 +396,8 @@ def sanitize_flux(flux, wavelength_pov, wls):
     for line in disturbing_lines.values():
         roundedline = round(line)
         try:
-            if f"{roundedline}" in linewidths.keys():
-                margin = linewidths[f"{roundedline}"]
+            if line in linewidths.keys():
+                margin = linewidths[line]
             else:
                 margin = fit_config['CUT_MARGIN']
         except NameError:
@@ -758,7 +759,7 @@ def single_spec_shift(filepath, wl, flx, flx_std, gaia_id, subspec_ind):
 
         print_results(sucess, errs, scaling, gamma, shift, eta, lstr, loc)
         if sucess:
-            linewidths[str(round(loc))] = 1.5 * gamma
+            linewidths[loc] = 1.5 * gamma
             rv = v_from_doppler(shift, loc)
             u_rv = v_from_doppler_err(shift, loc, errs[2])
             velocities.append(rv)
@@ -825,39 +826,216 @@ def single_spec_shift(filepath, wl, flx, flx_std, gaia_id, subspec_ind):
     return complete_v_shift, v_std, output_table
 
 
-def make_dataset(wl, rfac, i, params):
-    shift = rfac * linelist[i]
-    scaling, gamma, slope, height, eta = params
-    return pseudo_voigt(wl, scaling, gamma, shift, slope, height, eta)
+def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[]):
+    wavelengthdata, fluxdata, time, flux_stddata = load_spectrum(file)
+    linelist = []
+    paramlist = []
+    cr_inds = []
+    r_facs = []
+    sanlist = []
+    velocities = []
+    verrs = []
+
+    margin = fit_config['MARGIN']
+
+    for lstr, center in lines_to_fit.items():
+        if center in exclude_lines:
+            continue
+        wavelength = np.copy(wavelengthdata)
+        flux = np.copy(fluxdata)
+        flux_std = np.copy(flux_stddata)
+
+        coverage = [len(np.where(np.logical_and(wavelength > center - 2, wavelength < center + 2))[0]) == 0,
+                    len(np.where(np.logical_and(wavelength > center - margin - 2, wavelength < center - margin + 2))[0]) == 0,
+                    len(np.where(np.logical_and(wavelength > center + margin - 2, wavelength < center + margin + 2))[0]) == 0]
+
+        if sum(coverage) != 0:
+            # print(f"[{gaia_id}] Line {lstr} not covered by spectrum, skipping!")
+            continue
 
 
-def culum_fit_funciton(wl, r_factor, *args):
-    wl_dataset = np.split(wl, wl_splitinds)
-    resids = []
+        sanitize = False
+        for i in disturbing_lines.values():
+            if (i != center) and (i - fit_config['CUT_MARGIN'] < center + fit_config['MARGIN'] or i + fit_config['CUT_MARGIN'] > center - fit_config['MARGIN']):
+                sanitize = True
 
-    params = []
-    for a in args:
-        params.append(a)
+        if sanitize:
+            flux, cut_flux, mask = sanitize_flux(flux, center, wavelength)
+        slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
 
-    params = np.array(params)
-    params = np.split(params, len(params) / 5)
+        try:
+            assert len(slicedwl) > 0
+        except AssertionError:
+            warnings.warn(
+                "Seems like the line(s) you want to look at are not in the spectrum " + gaia_id + " Line @ " + str(
+                    center) + " Check your files!", FitUnsuccessfulWarning)
+            sucess = False
+            continue
 
-    for i, paramset in enumerate(params):
-        resids.append(make_dataset(wl_dataset[i], r_factor, i, paramset))
+        if plot_config['SAVE_SINGLE_IMGS']:
+            plt.title(f"Fit for Line {lstr} @ {round(center)}Å")
+            plt.ylabel("Flux [ergs/s/cm^2/Å]")
+            plt.xlabel("Wavelength [Å]")
+            plt.plot(slicedwl, flux[loind:upind], zorder=5)
 
-    return np.concatenate(resids)
+        sucess = True
+
+        if sanitize:
+            if plot_config['SAVE_SINGLE_IMGS']:
+                plt.plot(slicedwl, cut_flux[loind:upind], color="lightgrey", label='_nolegend_', zorder=1)
+            wavelength = wavelength[mask]
+            flux = flux.compressed()
+            flux_std = flux_std[mask]
+            slicedwl, loind, upind = slicearr(wavelength, center - margin, center + margin)
+
+        flux_std[flux_std == 0] = np.mean(flux_std)
+
+        initial_slope = (np.mean(flux[loind:upind][-round((upind - loind) / 5):]) - np.mean(
+            flux[loind:upind][:round((upind - loind) / 5)])) / (slicedwl[-1] - slicedwl[0])
+        initial_h = np.mean(flux[loind:upind][:round((upind - loind) / 5)]) - np.mean(
+            slicedwl[:round((upind - loind) / 5)]) * initial_slope
+
+        try:
+            flx_for_initial = flux[loind:upind] - slicedwl * initial_slope + initial_h
+        except ValueError:
+            sucess = False
+            continue
 
 
-def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
-    if exclude_lines is None:
-        exclude_lines = []
-    global linelist
-    wl, flx, time, flx_std = load_spectrum(file)
-    linelist = output_table_spec["line_loc"]
-    linelist = list(linelist)
-    flux_sanitized = output_table_spec["sanitized"]
-    cr_ind = output_table_spec["cr_ind"]
-    subspec_str = output_table_spec["subspectrum"].iloc[0]
+        if lstr != "unknown":
+            if fit_config['USE_LINE_AVERAGES']:
+                fwhmavg = avg_line_fwhm[lstr]
+            else:
+                fwhmavg = (line_FWHM_guesses[lstr], 100)
+            if fwhmavg is not None:
+                if fwhmavg[1] >= 10:
+                    initial_g = fwhmavg[0]
+                else:
+                    initial_g = 5
+            else:
+                initial_g = 5
+        else:
+            initial_g = 5
+
+        initial_s = np.ptp(flx_for_initial) * np.pi * initial_g / ((np.sqrt(np.log(2 * np.pi)) - 1) + 2)
+
+        if initial_s == np.nan:
+            initial_s = 1
+
+        # scaling, gamma, shift, slope, height, eta
+        initial_params = [initial_s, initial_g, center, initial_slope, initial_h, 0.5]
+
+        bounds = (
+            [0, 0, center - fit_config['MARGIN'] * 0.25, -np.inf, -np.inf, 0],
+            [np.inf, margin / 2, center + fit_config['MARGIN'] * 0.25, np.inf, np.inf, 1]
+        )
+        try:
+            params, errs = curve_fit(pseudo_voigt,
+                                     slicedwl,
+                                     flux[loind:upind],
+                                     initial_params,
+                                     # scaling, gamma, shift, slope, height, eta
+                                     bounds=bounds,
+                                     sigma=flux_std[loind:upind]
+                                     )
+
+            errs = np.sqrt(np.diag(errs))
+
+            cr, cr_ind = cosmic_ray(slicedwl, flux[loind:upind], params, center)
+            if len(cr_ind) > 0:
+                mask = np.ones_like(slicedwl, dtype=bool)
+                mask[cr_ind] = False
+                slicedwl = slicedwl[mask]
+                slicedflux = flux[loind:upind][mask]
+                slicedflux_std = flux_std[loind:upind][mask]
+
+                cr_ind += loind
+                cr_true_inds = wavelengthdata.searchsorted(wavelength[cr_ind])
+                cr_inds = [*cr_inds, *cr_true_inds]
+
+                params, errs = curve_fit(pseudo_voigt,
+                                         slicedwl,
+                                         slicedflux,
+                                         initial_params,
+                                         # scaling, gamma, shift, slope, height, eta
+                                         bounds=bounds,
+                                         sigma=slicedflux_std
+                                         )
+
+                errs = np.sqrt(np.diag(errs))
+
+            SNR = calc_SNR(params, flux, wavelength, margin, cr_inds=cr_ind)
+
+            if SNR < fit_config['MIN_ALLOWED_SNR']:
+                sucess = False
+
+            height, u_height = pseudo_voigt_height(errs, params[0], params[5], params[1])
+            if height > 1.5 * np.ptp(flux[loind:upind]) and sucess:
+                sucess = False
+            if height < u_height and sucess:
+                sucess = False
+
+        except RuntimeError:
+            sucess = False
+            warnings.warn("Could not find a good Fit!", FitUnsuccessfulWarning)
+
+            if plot_config['SAVE_SINGLE_IMGS']:
+                warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
+                                        horizontalalignment='right',
+                                        verticalalignment='bottom',
+                                        color="red")
+                plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
+
+        except ValueError as e:
+            print("No peak found:", e)
+            warn_text = plt.figtext(0.3, 0.95, f"FIT FAILED!",
+                                    horizontalalignment='right',
+                                    verticalalignment='bottom',
+                                    color="red")
+            sucess = False
+            if plot_config['SAVE_SINGLE_IMGS']:
+                plt.plot(slicedwl, pseudo_voigt(slicedwl, *initial_params), zorder=5)
+        if plot_config['SAVE_SINGLE_IMGS']:
+            plt.axvline(center, linewidth=0.5, color='grey', linestyle='dashed', zorder=1)
+            plt.legend(["Flux", "Best Fit"])
+
+        if not os.path.isdir(f'{general_config["OUTPUT_DIR"]}/{gaia_id}/'):
+            os.mkdir(f"{general_config['OUTPUT_DIR']}/{gaia_id}/")
+        if not os.path.isdir(f'{general_config["OUTPUT_DIR"]}/{gaia_id}/{subspec_ind}') and plot_config['SAVE_SINGLE_IMGS']:
+            os.mkdir(f"{general_config['OUTPUT_DIR']}/{gaia_id}/{subspec_ind}")
+            plt.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}/{subspec_ind}/{round(center)}Å{plot_config['PLOT_FMT']}")
+            if plot_config['SHOW_PLOTS']:
+                plt.show()
+        plt.close()
+
+        if sucess:
+            rv = v_from_doppler(params[2], center)
+            u_rv = v_from_doppler_err(params[2], center, errs[2])
+            velocities.append(rv)
+            verrs.append(u_rv)
+            sanlist.append(sanitize)
+            linelist.append(center)
+            paramlist.append(params)
+            r_facs.append(params[2] / center)
+
+
+        # print(f"[{gaia_id}] First pass found {len(linelist)} good lines.")
+    if len(linelist) == 0:
+        print(f"[{gaia_id}] First pass found no good lines, continuing to next spectrum...")
+        return None, None, None, False
+    mask = np.ones_like(wavelengthdata, dtype=bool)
+    mask[cr_inds] = False
+    wavelengthdata = wavelengthdata[mask]
+    fluxdata = fluxdata[mask]
+    flux_stddata = flux_stddata[mask]
+
+    filedata = wavelengthdata, fluxdata, time, flux_stddata
+
+    return cumulative_shift(filedata, linelist, paramlist, r_facs, exclude_lines, sanlist, gaia_id, subspec_ind)
+
+
+def cumulative_shift(filedata, linelist, paramlist, r_facs, exclude_lines, sanlist, gaia_id, subspec_ind):
+    wl, flx, time, flx_std = filedata
 
     linelist = [l for l in linelist if l not in exclude_lines]
 
@@ -866,20 +1044,8 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
     flux_std_dataset = []
     output_table = output_table_cols.copy()
 
-    cr_inds = cr_ind.to_numpy()
-    new_cr_inds = []
-    for i in cr_inds:
-        if type(i) != list:
-            new_cr_inds.append(i)
-    cr_inds = new_cr_inds
-    if len(cr_inds) > 0:
-        cr_inds = np.concatenate(cr_inds)
-        wl = np.delete(wl, cr_inds)
-        flx = np.delete(flx, cr_inds)
-        flx_std = np.delete(flx_std, cr_inds)
-
     for i, line in enumerate(linelist):
-        if not list(flux_sanitized)[i]:
+        if not sanlist[i]:
             wldata, loind, upind = slicearr(wl, line - fit_config['MARGIN'], line + fit_config['MARGIN'])
             if len(wldata) > 1 and len(flx[loind:upind]) > 1:
                 wl_dataset.append(wldata)
@@ -901,10 +1067,10 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
                 linelist.remove(line)
 
     if len(wl_dataset) == 0:
-        print("Sanitization failed!")
+        print("No good data after sanitization!")
+        # print(f"[{gaia_id}] Sanitization failed, aborting...")
         return None, None, None, False
 
-    global wl_splitinds, flux_splitinds, flux_std_splitinds
     wl_splitinds = [len(wldata) for wldata in wl_dataset]
     flux_splitinds = [len(flxdata) for flxdata in flux_dataset]
     flux_std_splitinds = [len(flxstddata) for flxstddata in flux_std_dataset]
@@ -912,7 +1078,7 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
     flux_splitinds = [sum(flux_splitinds[:ind + 1]) for ind, flx in enumerate(flux_splitinds)]
     flux_std_splitinds = [sum(flux_std_splitinds[:ind + 1]) for ind, flxstd in enumerate(flux_std_splitinds)]
 
-    rmean = output_table_spec["reduction_factor"].mean()
+    rmean = np.array(r_facs).mean()
 
     p0 = [rmean]
     bounds = [
@@ -921,34 +1087,43 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
     ]
     # scaling, gamma, slope, height, eta
     for i in range(len(wl_dataset)):
-        specparamrow = output_table_spec.loc[output_table_spec["line_loc"] == list(linelist)[i]]
-        try:
-            p0 += [
-                specparamrow["scaling"][0],
-                specparamrow["gamma"][0],
-                specparamrow["slope"][0],
-                specparamrow["flux_0"][0],
-                specparamrow["eta"][0],
-            ]
-            bounds[0] += [specparamrow["scaling"][0] / 2, specparamrow["gamma"][0] / 2, -np.inf, -np.inf, 0]
-            bounds[1] += [specparamrow["scaling"][0] * 1.5, specparamrow["gamma"][0] * 1.5, np.inf, np.inf, 1]
-        except KeyError:
-            p0 += [
-                specparamrow["scaling"],
-                specparamrow["gamma"],
-                specparamrow["slope"],
-                specparamrow["flux_0"],
-                specparamrow["eta"],
-            ]
-            bounds[0] += [specparamrow["scaling"] / 2, specparamrow["gamma"] / 2, -np.inf, -np.inf, 0]
-            bounds[1] += [specparamrow["scaling"] * 1.5, specparamrow["gamma"] * 1.5, np.inf, np.inf, 1]
+        theseparams = paramlist[i]
+        p0 += [
+            theseparams[0],
+            theseparams[1],
+            theseparams[3],
+            theseparams[4],
+            theseparams[5],
+        ]
+        bounds[0] += [theseparams[0] / 2, theseparams[1] / 2, -np.inf, -np.inf, 0]
+        bounds[1] += [theseparams[0] * 1.5, theseparams[1] * 1.5, np.inf, np.inf, 1]
 
     wl_dataset = np.concatenate(wl_dataset, axis=0)
     flux_dataset = np.concatenate(flux_dataset, axis=0)
     flux_std_dataset = np.concatenate(flux_std_dataset, axis=0)
 
-    flux_std_dataset[flux_std_dataset == 0] = np.mean(
-        flux_std_dataset)  # Zeros in the std-dataset will raise exceptions (And are scientifically nonsensical)
+    flux_std_dataset[flux_std_dataset == 0] = np.mean(flux_std_dataset)
+
+    def make_dataset(wl, rfac, i, params):
+        shift = rfac * linelist[i]
+        scaling, gamma, slope, height, eta = params
+        return pseudo_voigt(wl, scaling, gamma, shift, slope, height, eta)
+
+    def culum_fit_funciton(wl, r_factor, *args):
+        wl_dataset = np.split(wl, wl_splitinds)
+        resids = []
+
+        params = []
+        for a in args:
+            params.append(a)
+
+        params = np.array(params)
+        params = np.split(params, len(params) / 5)
+
+        for i, paramset in enumerate(params):
+            resids.append(make_dataset(wl_dataset[i], r_factor, i, paramset))
+
+        return np.concatenate(resids)
 
     try:
         params, errs = curve_fit(
@@ -961,10 +1136,12 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
             max_nfev=100000
         )
     except RuntimeError:
-        print("Cumulative fit failed!")
+        print("Runtime Error! Cumulative fit failed!")
+        # print(f"[{gaia_id}] Runtime error, cumulative fit failed...")
         return None, None, None, False
     except ValueError:
-        print("Cumulative fit failed!")
+        print("Value Error! Cumulative fit failed!")
+        # print(f"[{gaia_id}] Value error, cumulative fit failed...")
         return None, None, None, False
 
     errs = np.sqrt(np.diag(errs))
@@ -982,17 +1159,19 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
         if len(linelist) > 1:
             u_heights = np.array([height_err(p[4], p[1], p[0], e[4], e[1], e[0]) for p, e in zip(params, errs)])
             exclude_lines.append(linelist[np.argmax(u_heights)])
-            return cumulative_shift(output_table_spec, file, gaia_id, exclude_lines)
+            # print(f"[{gaia_id}] Cumulative fit failed for line {linelist[np.argmax(u_heights)]}, excluding this line and retrying.")
+            return cumulative_shift(filedata, linelist, paramlist, r_facs, exclude_lines, sanlist, gaia_id, subspec_ind)
         else:
             print("Cumulative fit spurious!")
+            # print(f"[{gaia_id}] Cumulative fit exceeded allowed error levels...")
             return None, None, None, False
 
     wl_dataset = np.split(wl_dataset, wl_splitinds)
     flux_dataset = np.split(flux_dataset, flux_splitinds)
 
     for i, paramset in enumerate(params):
-        lname = list(output_table_spec['line_name'])[i]
         lines = list(linelist)
+        lname = list(lines_to_fit.keys())[list(lines_to_fit.values()).index(lines[i])]
 
         scaling, gamma, slope, height, eta = paramset
         shift = r_factor * lines[i]
@@ -1017,16 +1196,18 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
                             verticalalignment='bottom',
                             color="red")
                 plt.savefig(
-                    f"{general_config['OUTPUT_DIR']}/{gaia_id}/{subspec_str}/culum_{round(lines[i])}Å{plot_config['PLOT_FMT']}")
+                    f"{general_config['OUTPUT_DIR']}/{gaia_id}/{subspec_ind}/culum_{round(lines[i])}Å{plot_config['PLOT_FMT']}")
             if len(linelist) > 1:
                 exclude_lines.append(lines[i])
-                return cumulative_shift(output_table_spec, file, gaia_id, exclude_lines)
+                # print(f"[{gaia_id}] Cumulative height of line {lines[i]} is weird, retrying...")
+                return cumulative_shift(filedata, linelist, paramlist, r_facs, exclude_lines, sanlist, gaia_id, subspec_ind)
             else:
                 print("Cumulative shift rejected!")
+                # print(f"[{gaia_id}] Cumulative shift rejected based on line height!")
                 return None, None, None, False
         if plot_config['SAVE_SINGLE_IMGS']:
             plt.savefig(
-                f"{general_config['OUTPUT_DIR']}/{gaia_id}/{subspec_str}/culum_{round(lines[i])}Å{plot_config['PLOT_FMT']}")
+                f"{general_config['OUTPUT_DIR']}/{gaia_id}/{subspec_ind}/culum_{round(lines[i])}Å{plot_config['PLOT_FMT']}")
             if plot_config['SHOW_PLOTS']:
                 plt.show()
         plt.close()
@@ -1034,13 +1215,13 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
         if fit_config['USE_LINE_AVERAGES']:
             if avg_line_fwhm[lname] is not None:
                 avg_line_fwhm[lname] = (
-                (avg_line_fwhm[lname][0] * avg_line_fwhm[lname][1] + gamma) / (avg_line_fwhm[lname][1] + 1),
-                avg_line_fwhm[lname][1] + 1)
+                    (avg_line_fwhm[lname][0] * avg_line_fwhm[lname][1] + gamma) / (avg_line_fwhm[lname][1] + 1),
+                    avg_line_fwhm[lname][1] + 1)
             else:
                 avg_line_fwhm[lname] = (gamma, 1)
 
         output_table_row = pd.DataFrame({
-            "subspectrum": [subspec_str],
+            "subspectrum": [f"{gaia_id}_{subspec_ind}"],
             "line_name": [lname],
             "line_loc": [lines[i]],
             "height": [p_height],
@@ -1063,13 +1244,11 @@ def cumulative_shift(output_table_spec, file, gaia_id, exclude_lines=None):
             "u_slope": [slopeerr],
             "RV": [culumv],
             "u_RV": [culumv_errs],
-            "signal_strength": ["--"],
-            "noise_strength": ["--"],
-            "SNR": ["--"],
-            "cr_ind": [cr_inds]
         })
 
         output_table = pd.concat([output_table, output_table_row], axis=0)
+
+    # print(f"[{gaia_id}] Cumulative fit gave RV of {culumv/1000} ± {culumv_errs/1000} km/s.")
 
     return culumv, culumv_errs, output_table, True
 
@@ -1511,10 +1690,10 @@ def create_pdf():
                 with open("all_RV_plots_broken_axis.pdf", "wb") as f:
                     f.write(img2pdf.convert(files_brokenaxis))
         else:
-            from PyPDF2 import PdfFileMerger
+            from PyPDF2 import PdfMerger
             if not plotpdfbroken_exists:
                 try:
-                    merger = PdfFileMerger()
+                    merger = PdfMerger()
                     [append_pdf(pdf, merger) for pdf in files_brokenaxis]
                 except OSError:
                     merger.close()
@@ -1524,14 +1703,14 @@ def create_pdf():
                     tempfiles = []
 
                     for i, s in enumerate(subsets):
-                        merger = PdfFileMerger()
+                        merger = PdfMerger()
                         [append_pdf(pdf, merger) for pdf in s]
                         fstr = f"temp/{i}"
                         tempfiles.append(fstr)
                         with open(fstr, "wb") as t_file:
                             merger.write(t_file)
 
-                    merger = PdfFileMerger()
+                    merger = PdfMerger()
                     [append_pdf(pdf, merger) for pdf in tempfiles]
 
                 with open("all_RV_plots_broken_axis.pdf", "wb") as new_file:
@@ -1549,6 +1728,8 @@ def initial_variables():
 
 
 def main_loop(gaia_id, configs=None):
+    print(f'Beginning work on star GAIA DR3 {gaia_id}.')
+
     if configs is not None:
         global general_config
         global fit_config
@@ -1600,29 +1781,22 @@ def main_loop(gaia_id, configs=None):
         wl, flx, time, flx_std = load_spectrum(file)
         if np.sum(flx < 0) / len(flx) > general_config["SORT_OUT_NEG_FLX"]:
             continue
-        complete_v_shift, v_std, output_table_spec = single_spec_shift(file, wl, flx, flx_std, gaia_id,
-                                                                       fileset.index(file) + 1)
-        if len(output_table_spec.index) == 0 or pd.isnull(complete_v_shift):
-            print("Not a single good line was found in this subspectrum!")
-            continue
-        elif general_config["VERBOSE"]:
-            print(f"Fits for {len(output_table_spec.index)} Lines complete!")
+        # TODO: remove this, keep only cumulative and streamline that, put func def within
+        # TODO: LOGGING!!
         if general_config["SUBDWARF_SPECIFIC_ADJUSTMENTS"]:
             if "He-" in spec_class:
+                # print(f'[{gaia_id}] He-dwarf detected, adjusting accordingly.')
                 preexcluded_lines = []
                 for key, value in lines_to_fit.items():
                     if "H_" in key:
                         preexcluded_lines.append(value)
-                culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, gaia_id,
-                                                                                   exclude_lines=preexcluded_lines)
+                culumv, culumv_errs, output_table_spec, success = process_spectrum(file, gaia_id, fileset.index(file) + 1, exclude_lines=preexcluded_lines)
             else:
-                culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, gaia_id)
+                culumv, culumv_errs, output_table_spec, success = process_spectrum(file, gaia_id, fileset.index(file) + 1)
         else:
-            culumv, culumv_errs, output_table_spec, success = cumulative_shift(output_table_spec, file, gaia_id)
+            culumv, culumv_errs, output_table_spec, success = process_spectrum(file, gaia_id, fileset.index(file) + 1)
         if not success:
             continue
-        output_table_spec.drop("sanitized", axis=1, inplace=True)
-        output_table_spec.drop("cr_ind", axis=1, inplace=True)
         cumulative_output_table = pd.concat([cumulative_output_table, output_table_spec], axis=0)
         culumvs.append(culumv)
         culumvs_errs.append(culumv_errs)
@@ -1654,6 +1828,7 @@ def main_loop(gaia_id, configs=None):
 
 
 def interactive_main(configs, queue):
+    print("Starting interactive process.")
     configs[0]["queue"] = queue
     configs[0]["post_progress"] = True
     if not os.path.isdir(f'{configs[0]["OUTPUT_DIR"]}'):
@@ -1678,6 +1853,7 @@ def interactive_main(configs, queue):
 
 
 if __name__ == "__main__":
+    print("Starting process.")
     if not os.path.isdir(f'{general_config["OUTPUT_DIR"]}'):
         os.mkdir(f"{general_config['OUTPUT_DIR']}")
     if not general_config["VERBOSE"]:
