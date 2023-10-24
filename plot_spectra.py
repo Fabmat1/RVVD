@@ -13,7 +13,7 @@ from main import pseudo_voigt, slicearr, lines_to_fit, splitname, fit_config, pl
 
 RES_PARAMETER_LIST = "result_parameters.csv"  # Location of the generated result parameter table
 
-NORMALIZE = True # Whether to normalize spectra before plotting
+NORMALIZE = True  # Whether to normalize spectra before plotting
 MED_WINDOW = 20  # Normalization window size
 MAX_WINDOW = 50  # Normalization window size
 TRUNC_WL = 25  # Wavelength margin by which to truncate the data before normalization

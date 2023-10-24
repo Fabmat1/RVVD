@@ -5,6 +5,8 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
+from analyse_results import vrad_pvalue
+from data_reduction import *
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -19,7 +21,7 @@ def callback(url):
 from PIL import Image, ImageTk
 
 from get_interesting_stars import quick_visibility
-from main import general_config, fit_config, plot_config, interactive_main
+from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis
 import threading
 from queue import Empty
 from tksheet import Sheet
@@ -158,7 +160,7 @@ def cell_colors(sheet, row_indices_full, row_indices_part, col_ind, colors):
         sheet.highlight_cells(cells=candidatecell_positions, bg=colors[1])
 
 
-def load_or_create_image(window, file_name, size, creation_func=None, *args, **kwargs):
+def load_or_create_image(window, file_name, size, creation_func=None, remake=False, *args, **kwargs):
     if not os.path.isfile(file_name):
         creation_func(*args, **kwargs)
     # transformation matrix we can apply on pages
@@ -395,6 +397,39 @@ def analysis_tab(analysis):
 
         return flagframe
 
+    def reload_system():
+        nonlocal interesting_dataframe
+        gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
+
+        rvtable = pd.read_csv(f"output/{gaia_id}/RV_variation.csv")
+        vels = rvtable["culum_fit_RV"].to_numpy()
+        verrs = rvtable["u_culum_fit_RV"].to_numpy()
+        times = rvtable["mjd"].to_numpy()
+
+        logp = vrad_pvalue(vels, verrs)
+        deltarv = np.ptp(vels)
+        
+        updatedict = {
+            "logp": logp,
+            "deltaRV": deltarv,
+            "deltaRV_err": np.sqrt(verrs[np.argmax(vels)] ** 2 + verrs[np.argmin(vels)] ** 2) / 2,
+            "RVavg": np.mean(vels),
+            "RVavg_err": np.sqrt(np.sum(np.square(verrs))),
+        }
+        print(list(updatedict.keys()), list(updatedict.values()))
+        interesting_dataframe.loc[interesting_dataframe["source_id"] == gaia_id, list(updatedict.keys())] = list(updatedict.values())
+        interesting_dataframe = interesting_dataframe.sort_values(by="interestingness", ascending=False)
+        interesting_dataframe.to_csv("interesting_params.csv", index=False)
+
+        plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id, custom_saveloc=f"output/{gaia_id}/RV_variation_broken_axis.pdf")
+
+        plot_system_from_ind(ind=str(gaia_id),
+                             savepath=f"output/{gaia_id}/spoverview.pdf",
+                             use_ind_as_sid=True,
+                             custom_xlim=(4000, 4500))
+
+        update_sheet()
+
     def view_detail_window():
         gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
         star = interesting_dataframe[interesting_dataframe["source_id"] == gaia_id].to_dict('records')[0]
@@ -509,6 +544,7 @@ def analysis_tab(analysis):
     sheet.popup_menu_add_command("Add to observation list", add_to_observation_list)
     sheet.popup_menu_add_command("Remove from observation list", remove_from_observation_list)
     sheet.popup_menu_add_command("View detail window", view_detail_window)
+    sheet.popup_menu_add_command("Reload System", reload_system)
 
     k = tk.Checkbutton(tablesettings_frame, text="Show known", variable=show_known, command=update_sheet)
     k.grid(row=1, column=1)
@@ -534,6 +570,13 @@ def analysis_tab(analysis):
     tablesettings_frame.pack()
     frame.pack(fill="both", expand=1)
     sheet.pack(fill="both", expand=1)
+
+
+def datareduction(window):
+    def reduce():
+        pass
+
+    pass
 
 
 def gui_window(queue, p_queue):
@@ -579,7 +622,8 @@ def gui_window(queue, p_queue):
     # Create the notebook
     main_tabs = ttk.Notebook(window)
 
-    # Create the first tab
+    data_reduction = tk.Frame(main_tabs)
+    main_tabs.add(data_reduction, text="Data Reduction")
     processing = tk.Frame(main_tabs)
     main_tabs.add(processing, text="Processing")
     analysis = tk.Frame(main_tabs)
@@ -601,6 +645,8 @@ def gui_window(queue, p_queue):
     frame.pack()
 
     analysis_tab(analysis)
+
+    datareduction(data_reduction)
 
     # Calculate the number of rows needed to display the progress bars in a grid with two columns
     num_cores = multiprocessing.cpu_count()

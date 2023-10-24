@@ -582,14 +582,23 @@ def plot_peak_region(wavelengthdata, fluxdata, flux_stddata, center, margin, fil
     )
 
     try:
-        params, errs = curve_fit(pseudo_voigt,
-                                 slicedwl,
-                                 flux[loind:upind],
-                                 initial_params,
-                                 # scaling, gamma, shift, slope, height, eta
-                                 bounds=bounds,
-                                 sigma=flux_std[loind:upind]
-                                 )
+        if np.sum(flux_std) != 0:
+            params, errs = curve_fit(pseudo_voigt,
+                                     slicedwl,
+                                     flux[loind:upind],
+                                     initial_params,
+                                     # scaling, gamma, shift, slope, height, eta
+                                     bounds=bounds,
+                                     sigma=flux_std[loind:upind]
+                                     )
+        else:
+            params, errs = curve_fit(pseudo_voigt,
+                                     slicedwl,
+                                     flux[loind:upind],
+                                     initial_params,
+                                     # scaling, gamma, shift, slope, height, eta
+                                     bounds=bounds
+                                     )
 
         errs = np.sqrt(np.diag(errs))
 
@@ -930,14 +939,23 @@ def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[]):
             [np.inf, margin / 2, center + fit_config['MARGIN'] * 0.25, np.inf, np.inf, 1]
         )
         try:
-            params, errs = curve_fit(pseudo_voigt,
-                                     slicedwl,
-                                     flux[loind:upind],
-                                     initial_params,
-                                     # scaling, gamma, shift, slope, height, eta
-                                     bounds=bounds,
-                                     sigma=flux_std[loind:upind]
-                                     )
+            if np.sum(flux_std) != 0:
+                params, errs = curve_fit(pseudo_voigt,
+                                         slicedwl,
+                                         flux[loind:upind],
+                                         initial_params,
+                                         # scaling, gamma, shift, slope, height, eta
+                                         bounds=bounds,
+                                         sigma=flux_std[loind:upind]
+                                         )
+            else:
+                params, errs = curve_fit(pseudo_voigt,
+                                         slicedwl,
+                                         flux[loind:upind],
+                                         initial_params,
+                                         # scaling, gamma, shift, slope, height, eta
+                                         bounds=bounds
+                                         )
 
             errs = np.sqrt(np.diag(errs))
 
@@ -953,14 +971,23 @@ def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[]):
                 cr_true_inds = wavelengthdata.searchsorted(wavelength[cr_ind])
                 cr_inds = [*cr_inds, *cr_true_inds]
 
-                params, errs = curve_fit(pseudo_voigt,
-                                         slicedwl,
-                                         slicedflux,
-                                         initial_params,
-                                         # scaling, gamma, shift, slope, height, eta
-                                         bounds=bounds,
-                                         sigma=slicedflux_std
-                                         )
+                if np.sum(slicedflux_std) != 0:
+                    params, errs = curve_fit(pseudo_voigt,
+                                             slicedwl,
+                                             slicedflux,
+                                             initial_params,
+                                             # scaling, gamma, shift, slope, height, eta
+                                             bounds=bounds,
+                                             sigma=slicedflux_std
+                                             )
+                else:
+                    params, errs = curve_fit(pseudo_voigt,
+                                             slicedwl,
+                                             slicedflux,
+                                             initial_params,
+                                             # scaling, gamma, shift, slope, height, eta
+                                             bounds=bounds
+                                             )
 
                 errs = np.sqrt(np.diag(errs))
 
@@ -1126,15 +1153,25 @@ def cumulative_shift(filedata, linelist, paramlist, r_facs, exclude_lines, sanli
         return np.concatenate(resids)
 
     try:
-        params, errs = curve_fit(
-            culum_fit_funciton,
-            wl_dataset,
-            flux_dataset,
-            p0=p0,
-            bounds=bounds,
-            sigma=flux_std_dataset,
-            max_nfev=100000
-        )
+        if np.sum(flux_std_dataset) != 0:
+            params, errs = curve_fit(
+                culum_fit_funciton,
+                wl_dataset,
+                flux_dataset,
+                p0=p0,
+                bounds=bounds,
+                sigma=flux_std_dataset,
+                max_nfev=100000
+            )
+        else:
+            params, errs = curve_fit(
+                culum_fit_funciton,
+                wl_dataset,
+                flux_dataset,
+                p0=p0,
+                bounds=bounds,
+                max_nfev=100000
+            )
     except RuntimeError:
         print("Runtime Error! Cumulative fit failed!")
         # print(f"[{gaia_id}] Runtime error, cumulative fit failed...")

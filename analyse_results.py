@@ -3,10 +3,12 @@ import shutil
 
 import numpy as np
 import pandas as pd
+from astroquery.mast import Catalogs
 from matplotlib import pyplot as plt
 from scipy import stats
 
 from fit_rv_curve import fit_rv_curve
+import astroquery.exceptions
 
 OUTPUT_DIR = "output"
 
@@ -354,6 +356,85 @@ def overview(restable, catalogue):
     os.system("lualatex result_parameters.tex")
 
 
+def add_bibcodes_and_tics(res_params):
+
+
+    if os.path.isfile("gaia_tic_reftable.csv"):
+        source_tic_table = pd.read_csv("gaia_tic_reftable.csv")
+    else:
+        source_tic_table = pd.DataFrame(columns=["source_id", "tic"])
+
+    for ind, row in res_params.iterrows():
+        if ind < len(source_tic_table):
+            continue
+        print(f"Getting TIC for object nr. {ind + 1}/{len(res_params)}")
+        gaia_id = row["source_id"]
+        try:
+            star_info = Catalogs.query_object("Gaia DR3 " + str(gaia_id), catalog="TIC")
+        except astroquery.exceptions.ResolverError:
+            # star_info = Catalogs.query_region(SkyCoord(row["ra"], row["dec"], frame="icrs", unit="deg"))
+            star_info = [{"ID": "-"}]
+
+        tic_id = star_info[0]['ID']
+        source_tic_table = pd.concat([source_tic_table, pd.DataFrame({"source_id": [gaia_id], "tic": [tic_id]})])
+        source_tic_table.to_csv("gaia_tic_reftable.csv", index=False)
+
+    source_tic_table.to_csv("gaia_tic_reftable.csv", index=False)
+
+    stephancat = pd.read_csv("logp_values_rvvpaper.csv")
+    stephancat["GaiaDR2"].str.strip()
+
+    list_items_dict = {}
+
+    with open("simbad.txt", "r") as f:
+        source_id = None
+        bibcodes = []
+        for line in f:
+            if line.startswith("start GAIA DR3"):
+                if source_id is not None:
+                    list_items_dict[source_id] = bibcodes
+                source_id = int(line.split()[3].strip(":"))
+                bibcodes = []
+                try:
+                    logp = stephancat.loc[stephancat["GaiaDR2"] == str(source_id)].iloc[0]["logP"]
+                    if logp < -1.3:
+                        bibcodes.append("2022A&A...661A.113G")
+                except IndexError:
+                    pass
+
+            else:
+                bibcodes.append(line.strip())
+
+    if source_id is not None and bibcodes:
+        list_items_dict[source_id] = bibcodes  # add last block
+
+    def joiner(x):
+        try:
+            return ';'.join(x)
+        except:
+            if pd.isnull(x):
+                return "-"
+            print(x)
+            exit(-1)
+
+    source_tic_table["bibcodes"] = source_tic_table["source_id"].map(list_items_dict)
+    source_tic_table["bibcodes"] = source_tic_table["bibcodes"].apply(joiner)
+    source_tic_table.to_csv("gaia_tic_bib_table.csv", index=False)
+
+    try:
+        res_params = res_params.drop("tic", axis=1)
+        res_params = res_params.drop("bibcodes", axis=1)
+    except KeyError:
+        pass
+
+    source_tic_table["source_id"] = source_tic_table["source_id"].astype(str)
+
+    # Merge the two DataFrames based on the 'source_id' column
+    merged_df = res_params.merge(source_tic_table[['source_id', 'tic', 'bibcodes']], on='source_id', how='inner')
+
+    return merged_df
+
+
 def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
 
     global OUTPUT_DIR
@@ -440,6 +521,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
         })])
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
+    analysis_params = add_bibcodes_and_tics(analysis_params)
     output_params = analysis_params.copy()
     output_params.to_csv("result_parameters.csv", index=False)
     print("Creating Statistics...")
@@ -488,6 +570,7 @@ def result_analysis_with_rvfit():
         })])
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
+    analysis_params = add_bibcodes_and_tics(analysis_params)
     analysis_params.to_csv("result_parameters.csv", index=False)
 
 

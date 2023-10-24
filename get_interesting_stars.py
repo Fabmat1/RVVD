@@ -455,7 +455,7 @@ def do_tess_stuff_smartly(tic, source_id, folder="lightcurves", plotit=False):
                 if "Period" in line:
                     try:
                         period = float(line.split("hours")[0].split("=")[1].strip())
-                        return period/2
+                        return period / 2
                     except:
                         pass
     else:
@@ -500,15 +500,27 @@ def placeholders(text, location):
     ax1.add_patch(p)
 
     ax1.text(0.5 * (left + right), 0.5 * (bottom + top), text,
-                 horizontalalignment='center',
-                 verticalalignment='center',
-                 transform=ax1.transAxes,
-                 color="red")
-
+             horizontalalignment='center',
+             verticalalignment='center',
+             transform=ax1.transAxes,
+             color="red")
 
     plt.savefig(location)
     plt.cla()
     plt.clf()
+
+
+def individual_visibility(date, delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight, stuff):
+    ra, dec, sid = stuff
+
+    obj_altazs_obsnight = get_visibility(frame_obsnight, ra, dec)
+
+    observability = np.ptp(delta_midnight[obj_altazs_obsnight.alt > 30])
+
+    plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/visibility.pdf", date=date)
+    plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/tiny_visibility.pdf")
+
+    return sid, observability
 
 
 def make_pdf(interesting_params, saveloc="interesting_doc.tex", get_lc=False, try_fold=False):
@@ -632,7 +644,7 @@ def make_pdf(interesting_params, saveloc="interesting_doc.tex", get_lc=False, tr
                             vels = rvtable["culum_fit_RV"].to_numpy()
                             verrs = rvtable["u_culum_fit_RV"].to_numpy()
                             times = rvtable["mjd"].to_numpy()
-                            phasefold_tiny(vels, verrs, times, period/24, gaia_id,
+                            phasefold_tiny(vels, verrs, times, period / 24, gaia_id,
                                            predetermined=False,
                                            custom_saveloc=f"output/{gaia_id}/tinyphfold_tess.pdf",
                                            custom_title="RV curve phasefolded for 2x TESS period")
@@ -644,7 +656,6 @@ def make_pdf(interesting_params, saveloc="interesting_doc.tex", get_lc=False, tr
                 if os.path.isfile(f"output/{gaia_id}/tinyphfold_tess.pdf"):
                     os.remove(f"output/{gaia_id}/tinyphfold_tess.pdf")
                 lc_success = False
-
 
             outtex.write(r"\pagestyle{empty}")
             outtex.write(flagtex(flags))
@@ -667,7 +678,7 @@ def make_pdf(interesting_params, saveloc="interesting_doc.tex", get_lc=False, tr
                     outtex.write(f"\\href{{https://ui.adsabs.harvard.edu/abs/{bibc}}}{{{linksafe}}}\\\\\n")
                 else:
                     if i == 10:
-                        outtex.write(f"and {len(bibcodes)-10} more")
+                        outtex.write(f"and {len(bibcodes) - 10} more")
                         outtex.write(f"\\href{{https://ui.adsabs.harvard.edu/abs/{bibc}}}{{.}}\n")
                     else:
                         outtex.write(f"\\href{{https://ui.adsabs.harvard.edu/abs/{bibc}}}{{.}}\n")
@@ -858,18 +869,15 @@ def create_one_stop_show(catalogue, result_params, date='2023-10-3 00:00:00', ut
     else:
         interesting_params = pd.read_csv("interesting_params.csv")
 
-    known_params = interesting_params[interesting_params["known_category"] == "known"].reset_index()
-    unknown_params = interesting_params[interesting_params["known_category"] == "unknown"].reset_index()
-    indeterminate_params = interesting_params[interesting_params["known_category"] == "indeterminate"].reset_index()
-    lk_params = interesting_params[interesting_params["known_category"] == "likely_known"].reset_index()
+    # known_params = interesting_params[interesting_params["known_category"] == "known"].reset_index()
+    # unknown_params = interesting_params[interesting_params["known_category"] == "unknown"].reset_index()
+    # indeterminate_params = interesting_params[interesting_params["known_category"] == "indeterminate"].reset_index()
+    # lk_params = interesting_params[interesting_params["known_category"] == "likely_known"].reset_index()
 
-    make_pdf(lk_params, "likelyknown_stars.tex", False, False)
-    make_pdf(unknown_params, "unknown_stars.tex", True, True)
-    make_pdf(indeterminate_params, "indeterminate_stars.tex", True, True)
-    make_pdf(known_params, "known_stars.tex", True, True)
-
-
-
+    # make_pdf(lk_params, "likelyknown_stars.tex", False, False)
+    # make_pdf(unknown_params, "unknown_stars.tex", True, True)
+    # make_pdf(indeterminate_params, "indeterminate_stars.tex", True, True)
+    # make_pdf(known_params, "known_stars.tex", True, True)
 
 
 if __name__ == "__main__":
@@ -878,7 +886,7 @@ if __name__ == "__main__":
     result_params = pd.read_csv("result_parameters.csv")
     catalogue = pd.read_csv("all_objects_withlamost.csv")
 
-    create_one_stop_show(catalogue, result_params, date='2023-10-3 00:00:00', utc_offset=-4)
+    create_one_stop_show(catalogue, result_params, date='2023-11-4 00:00:00', utc_offset=-4)
     # quick_tiny_visibility('2023-10-3 00:00:00', 230.46649284665, -0.39995045926, "tinytest.png")
 
     # rp = pd.read_csv("result_parameters.csv")
