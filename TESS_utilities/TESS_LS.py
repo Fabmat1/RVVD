@@ -28,7 +28,7 @@ import astropy.visualization as stretching
 from lightkurve import search_targetpixelfile
 import astropy.units as u
 import sys
-import TESSutils as tul
+from TESS_utilities import TESSutils as tul
 
 
 ################################
