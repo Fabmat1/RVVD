@@ -78,7 +78,7 @@ def comprehend_lstr(lstr):
     return l
 
 
-def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savepath=None, custom_xlim=None, use_ind_as_sid=False):
+def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savepath=None, custom_xlim=None, use_ind_as_sid=False, normalized=NORMALIZE):
     if use_ind_as_sid:
         trow = RES_PARAMETER_LIST[RES_PARAMETER_LIST["source_id"] == ind].iloc[0]
     else:
@@ -113,7 +113,7 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savep
 
         params, name = get_params_from_filename(paramtable, gaia_id, i)
 
-        if NORMALIZE:
+        if normalized:
             wl, flx, norm = normalize_spectrum(wl, flx)
             plt.plot(wl, flx + k, color=color[i - 1], label=name, zorder=5, linewidth=.5)
             if verbose:

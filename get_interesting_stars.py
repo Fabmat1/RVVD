@@ -1,16 +1,18 @@
 import ast
 import os
+from itertools import repeat
+from multiprocessing import Pool
 
 import pandas as pd
 import matplotlib.pyplot as plt
 from astropy import units as u
 import numpy as np
 from astropy.timeseries import LombScargle
-from astropy.visualization import astropy_mpl_style, quantity_support
+from astropy.visualization import quantity_support
+from tqdm import tqdm
 
-from analyse_results import vrad_pvalue
 from fit_rv_curve import phasefold_tiny
-from local_TESS_LS import do_tess_stuff
+from TESS_utilities.TESS_LS import do_tess_stuff
 
 quantity_support()
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord
@@ -510,17 +512,43 @@ def placeholders(text, location):
     plt.clf()
 
 
-def individual_visibility(date, delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight, stuff):
+def individual_visibility(stuff, delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight, date):
     ra, dec, sid = stuff
-
     obj_altazs_obsnight = get_visibility(frame_obsnight, ra, dec)
-
-    observability = np.ptp(delta_midnight[obj_altazs_obsnight.alt > 30])
-
-    plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/visibility.pdf", date=date)
-    plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/tiny_visibility.pdf")
+    try:
+        observability = np.ptp(delta_midnight[np.logical_and(obj_altazs_obsnight.alt > 30 * u.deg, sunaltazs_obsnight.alt < 0 * u.deg)])
+        if observability != 0:
+            plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/visibility.pdf", date=date)
+            plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/tiny_visibility.pdf")
+        observability = observability.value
+    except ValueError:
+        observability = 0
 
     return sid, observability
+
+
+def get_visibility_for_night(ra, dec, sid, date, utc_offset):
+    fileloc = "local_observing_conditions/" + date.replace("-", "_").replace(" 00:00:00", "") + ".csv"
+    if not os.path.isfile(fileloc):
+        delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight = get_frame(date, utc_offset)
+
+        assert len(ra) == len(dec) == len(sid)
+
+        stuff_list = [(r, d, s) for r, d, s in zip(ra, dec, sid)]
+
+        with Pool() as pool:
+            results = pool.starmap(individual_visibility, tqdm(zip(stuff_list, repeat(delta_midnight), repeat(frame_obsnight), repeat(sunaltazs_obsnight), repeat(moonaltazs_obsnight), repeat(date)), total=len(ra)), chunksize=10)
+
+        obs_conditions = pd.DataFrame(results, columns=['sid', 'observability'])
+
+        if not os.path.isdir("local_observing_conditions"):
+            os.mkdir("local_observing_conditions")
+
+        obs_conditions.to_csv(fileloc, index=False)
+    else:
+        obs_conditions = pd.read_csv(fileloc)
+
+    return obs_conditions
 
 
 def make_pdf(interesting_params, saveloc="interesting_doc.tex", get_lc=False, try_fold=False):
@@ -716,7 +744,7 @@ def make_pdf(interesting_params, saveloc="interesting_doc.tex", get_lc=False, tr
     os.system(f"lualatex -interaction=nonstopmode {saveloc}")
 
 
-def create_one_stop_show(catalogue, result_params, date='2023-10-3 00:00:00', utc_offset=-4):
+def create_one_stop_show(catalogue, result_params, date='2023-11-4 00:00:00', utc_offset=-4):
     if not os.path.isfile("interesting_params.csv"):
         interesting_params = pd.DataFrame(
             {
@@ -737,11 +765,16 @@ def create_one_stop_show(catalogue, result_params, date='2023-10-3 00:00:00', ut
                 "tic": [],
                 "known_category": [],
                 "flags": [],
-                "maxtime": []
+                "visible_hours": []
             }
         )
 
-        delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight = get_frame(date, utc_offset)
+        print("Calculating visibilities...")
+        obs_conditions = get_visibility_for_night(result_params.ra.to_numpy(),
+                                                  result_params.dec.to_numpy(),
+                                                  result_params.source_id.to_numpy(),
+                                                  date,
+                                                  utc_offset)
 
         for i, star in result_params.iterrows():
             print(f"Calculating for star {i + 1}/{len(result_params)}...")
@@ -773,21 +806,8 @@ def create_one_stop_show(catalogue, result_params, date='2023-10-3 00:00:00', ut
                 interestingness -= 1000
 
             if np.abs(rvavg) > 250:
+                interestingness += 20
                 flags.append("HV-detection")
-
-            if gmag > 19:
-                pass
-
-            obj_altazs_obsnight = get_visibility(frame_obsnight, ra, dec)
-
-            max_alt = np.array(obj_altazs_obsnight.alt).max()
-            time_of_max = delta_midnight[np.argmax(obj_altazs_obsnight.alt)]
-
-            # if time_of_max.value > 7. or time_of_max.value < -7.:
-            #     interestingness -= 1000
-            #
-            # if max_alt < 30:
-            #     interestingness -= 1000
 
             if logp < -4:
                 flags.append("rvv-detection")
@@ -804,8 +824,6 @@ def create_one_stop_show(catalogue, result_params, date='2023-10-3 00:00:00', ut
                 interestingness -= 5
 
             interestingness += (15 - gmag)
-
-            # interestingness += 5 - nspec
 
             bibcodes = bibcodes.split(";")
 
@@ -856,11 +874,8 @@ def create_one_stop_show(catalogue, result_params, date='2023-10-3 00:00:00', ut
                 "tic": [tic],
                 "known_category": [known_category],
                 "flags": [flags],
-                "maxtime": [time_of_max]
+                "visible_hours": [obs_conditions.loc[obs_conditions["sid"] == sid].iloc[0]["observability"]]
             })])
-
-            plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/visibility.pdf", date=date)
-            # plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/tiny_visibility.pdf")
 
         interesting_params = interesting_params.sort_values("interestingness", axis=0, ascending=False)
 

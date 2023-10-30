@@ -1522,7 +1522,7 @@ def plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id, merged=False, extravels
                         color=colors[1],
                         clip_on=False)
             if fit is not None:
-                timespace = np.linspace(start, end)
+                timespace = np.linspace(start, end, 1000)
                 ax.plot(timespace,
                         fit.evaluate(timespace),
                         color="darkred",

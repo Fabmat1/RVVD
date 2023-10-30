@@ -34,3 +34,5 @@ lightcurves/*
 /.ipynb_checkpoints/test-checkpoint.ipynb
 *.out
 *.s
+!/catalogues/hotSD_gaia_edr3_catalogue.fits
+!/catalogues/sd_catalogue_v56_pub.csv

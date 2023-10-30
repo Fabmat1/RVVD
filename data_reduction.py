@@ -1,9 +1,10 @@
+import ctypes
 import os
-
-import astropy.time
+from astropy.time import Time
+from scipy.constants import speed_of_light
+from astropy.coordinates import SkyCoord, EarthLocation
 import matplotlib.pyplot as plt
 import pandas as pd
-import scipy.interpolate
 from astropy.time import Time, TimeDelta
 from scipy.ndimage import sobel, median_filter, gaussian_filter, minimum_filter
 from scipy.interpolate import interp1d
@@ -11,10 +12,7 @@ from astropy.io import fits
 import cv2
 import numpy as np
 from scipy.optimize import curve_fit
-from matplotlib.colors import Normalize
-from scipy.signal import find_peaks
-import goodman_pipeline
-
+import astropy.units as u
 from main import load_spectrum
 
 COADD_SIDS = [2806984745409075328]
@@ -249,7 +247,13 @@ class WavelenthPixelTransform():
             return self.wstart + self.dwdp * px_arr + self.dwdp2 * px_arr ** 2 + self.dwdp3 * px_arr ** 3
 
 
-def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp):
+def wlshift(wl, vel_corr):
+    wl_shift = vel_corr/speed_of_light * wl
+    return wl+wl_shift
+
+
+def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mjd, location, ra, dec):
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
     image = fits.open(image_path)[0].data.astype(np.uint16)
 
     image = crop_image(image, *crop)
@@ -293,7 +297,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp):
                           xcenters,
                           ycenters)
 
-    # plt.scatter(xcenters, ycenters)
+    # plt.scatter(xcenters, ycenters, color="red", marker="x")
     # xspace = np.linspace(0, image.shape[1], 1000)
     # plt.plot(xspace, line(xspace, *params))
     # plt.tight_layout()
@@ -302,9 +306,8 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp):
     image64 = image.astype(np.float64)
     master_comp64 = master_comp.astype(np.float64)
 
-    # plt.imshow(master_comp)
-    # # plt.imshow(np.flip(master_comp))
-    # plt.plot(xspace, line(xspace, *params), color="lime")
+    # plt.imshow(image)
+    # plt.plot(xspace, line(xspace, *params), color="lime", linewidth=0.5)
     # plt.show()
 
     pixel = np.arange(image.shape[1]).astype(np.float64)
@@ -323,7 +326,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp):
 
     realcflux = gaussian_filter(realcflux, 3)
 
-    linelist, linetable = get_lines_from_intensity(5000)
+    # linelist, linetable = get_lines_from_intensity(5000)
 
     real_interp = interp1d(realcwl, realcflux)
 
@@ -377,6 +380,13 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp):
     #     plt.axvline(l, .9, .95, color=color, linewidth=np.log(linetable.iloc[i]["intens"])/2)
     # plt.tight_layout()
     # plt.show()
+
+    sc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
+    barycorr = sc.radial_velocity_correction(obstime=Time(mjd, format="mjd"), location=location)
+    barycorr.to(u.km / u.s)
+    barycorr = barycorr.value
+
+    final_wl_arr = wlshift(final_wl_arr, barycorr)
 
     return final_wl_arr, flux
 
@@ -483,7 +493,7 @@ if __name__ == "__main__":
         os.remove(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR.csv")
     for file in allfiles:
         file = r"C:\Users\fabia\PycharmProjects\auxillary\spectra_raw\SOAR" + "\\" + file
-        if "bias" not in file and "quartz" not in file and "test" not in file and "FeAr" not in file:
+        if "bias" not in file and "quartz" not in file and "test" not in file and "FeAr" not in file and ".txt" not in file and "RED" not in file:
             compfiles = []
 
             int_file_index = int(file.split("\\")[-1][:4])
@@ -508,9 +518,18 @@ if __name__ == "__main__":
             print(f'Working on index {int_file_index}, GAIA DR3 {trow["source_id"]}...')
             soardf = pd.concat([soardf, trow])
 
-            #TODO: fix getflux!!
+            cerropachon = EarthLocation.of_site('Cerro Pachon')
             try:
-                wl, flx = extract_spectrum(file, master_bias, master_flat, crop, master_comp)
+                wl, flx = extract_spectrum(
+                    file,
+                    master_bias,
+                    master_flat,
+                    crop,
+                    master_comp,
+                    mjd,
+                    cerropachon,
+                    trow["ra"],
+                    trow["dec"])
                 save_to_ascii(wl, flx, mjd, trow)
             except:
                 pass

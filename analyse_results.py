@@ -125,7 +125,7 @@ def result_statistics(analysis_params, catalogue):
 
 
 def compare_results(plot_comp=True):
-    catalog = pd.read_csv("sd_catalogue_v56_pub.csv", delimiter=",")
+    catalog = pd.read_csv("catalogues/sd_catalogue_v56_pub.csv", delimiter=",")
     idents = dict(zip(catalog.NAME, [str(g).replace("Gaia EDR3 ", "") for g in catalog.GAIA_DESIG.to_list()]))
     comparetable = pd.read_csv("rvs_all_final.csv", delimiter=",", names=["Identifier", "mjd", "RV", "u_RV", "source"]).replace({"Identifier": idents})
     RVs = comparetable.loc[comparetable["source"] == "SDSS"].groupby(["Identifier"])["RV"].apply(list).to_frame()

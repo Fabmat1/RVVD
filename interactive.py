@@ -1,4 +1,5 @@
 import ast
+import ctypes
 import multiprocessing
 import os
 import time
@@ -12,7 +13,6 @@ import numpy as np
 import pandas as pd
 import fitz
 import webbrowser
-
 
 def callback(url):
     webbrowser.open_new(url)
@@ -447,9 +447,10 @@ def analysis_tab(analysis):
         interestingness = star["interestingness"]
         flags = ast.literal_eval(star["flags"])
 
-        detail_window = tk.Toplevel(analysis)
+        detail_window = tk.Toplevel()
         detail_window.iconbitmap("favicon.ico")
         detail_window.title(f"Detail View for {gaia_id}")
+        detail_window.update_idletasks()  # This forces tkinter to update the window calculations.
         detail_window.geometry("800x600+0+0")
         detail_window.state('zoomed')
 
@@ -465,7 +466,11 @@ def analysis_tab(analysis):
 
         visplot = load_or_create_image(main_frame, f"output/{gaia_id}/visibility.pdf",
                                        imsize,
-                                       quick_visibility, saveloc=f"output/{gaia_id}/visibility.pdf")
+                                       quick_visibility,
+                                       ra=ra,
+                                       dec=dec,
+                                       date="2023-11-04 00:00:00",  #TODO: No! change this!
+                                       saveloc=f"output/{gaia_id}/visibility.pdf")
         visplot.grid(row=1, column=2, sticky="news")
 
         spoverview = load_or_create_image(main_frame,
@@ -529,13 +534,20 @@ def analysis_tab(analysis):
         simbad_btn = tk.Button(buttonframe, text="SIMBAD", command=simbad_link())
         simbad_btn.grid(row=3, column=1)
 
+        normalize = tk.BooleanVar(value=True)
+        normplot = tk.Checkbutton(buttonframe, text="Normalize", variable=normalize)
+        normplot.select()
+        normplot.grid(row=4, column=1)
+
         def viewplot():
+            nonlocal normalize
             return lambda: plot_system_from_ind(
                 ind=str(gaia_id),
-                use_ind_as_sid=True)
+                use_ind_as_sid=True,
+                normalized=normalize.get())
 
         viewplot = tk.Button(buttonframe, text="View Plot", command=viewplot())
-        viewplot.grid(row=4, column=1)
+        viewplot.grid(row=5, column=1)
 
         buttonframe.grid(row=1, column=3, sticky="news")
 
@@ -599,6 +611,7 @@ def gui_window(queue, p_queue):
         window.update()
         window.after(0, lambda: update_progress(bars, labels))
 
+    ctypes.windll.shcore.SetProcessDpiAwareness(0)
     # Initialize the main window
     window = tk.Tk()
     window.title("RVVD")

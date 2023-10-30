@@ -24,9 +24,9 @@ with open("specs_info.txt") as spinfo:
             ])
 
 startable = Table(np.array(stars), names=["source_id", "ra", "dec", "File"], dtype=['i8', 'f8', "f8", "U25"])
-reftable = pd.read_csv("sd_catalogue_v56_pub.csv")
+reftable = pd.read_csv("catalogues/sd_catalogue_v56_pub.csv")
 
-fits_reftable = fits.open("hotSD_gaia_edr3_catalogue.fits")
+fits_reftable = fits.open("catalogues/hotSD_gaia_edr3_catalogue.fits")
 fits_reftable = Table.read(fits_reftable[1])
 fits_reftable = fits_reftable.to_pandas()
 
