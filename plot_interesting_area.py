@@ -61,7 +61,7 @@ if __name__ == "__main__":
             n = 1
             if type(SPECFILE_NAME) == str:
                 while True:
-                    filename = f"spectra/{SPECFILE_NAME}_{n if len(str(n)) > 1 else '0' + str(n)}.txt"
+                    filename = f"spectra_processed/{SPECFILE_NAME}_{n if len(str(n)) > 1 else '0' + str(n)}.txt"
                     if os.path.isfile(filename):
                         n += 1
                         filenames.append(filename)
@@ -70,7 +70,7 @@ if __name__ == "__main__":
             if type(SPECFILE_NAME) == list:
                 for spfile in SPECFILE_NAME:
                     while True:
-                        filename = f"spectra/{spfile}_{n if len(str(n)) > 1 else '0' + str(n)}.txt"
+                        filename = f"spectra_processed/{spfile}_{n if len(str(n)) > 1 else '0' + str(n)}.txt"
                         if os.path.isfile(filename):
                             n += 1
                             filenames.append(filename)
@@ -82,12 +82,12 @@ if __name__ == "__main__":
     else:
         for specn in SUBSPEC:
             if len(SPECFILE_NAME) > 0:
-                filenames.append(f"spectra/{SPECFILE_NAME}_{specn if len(str(specn)) > 1 else '0' + str(specn)}.txt")
+                filenames.append(f"spectra_processed/{SPECFILE_NAME}_{specn if len(str(specn)) > 1 else '0' + str(specn)}.txt")
             else:
                 spectra_table = pd.read_csv("selected_objects.csv")
                 spectra_table = spectra_table.loc[spectra_table["source_id"] == GAIA_ID]
                 filenames.append(
-                    f"spectra/{spectra_table['file'][0]}_{specn if len(str(specn)) > 1 else '0' + str(specn)}.txt")
+                    f"spectra_processed/{spectra_table['file'][0]}_{specn if len(str(specn)) > 1 else '0' + str(specn)}.txt")
 
     if type(SPECFILE_NAME) == list:
         for f in SPECFILE_NAME:

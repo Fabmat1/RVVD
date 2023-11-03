@@ -6,8 +6,10 @@ output/*
 !output/.gitkeep
 *.txt
 !requirements.txt
-spectra/*
-!spectra/.gitkeep
+spectra_raw/*
+spectra_processed/*
+!spectra_raw/.gitkeep
+!spectra_processed/.gitkeep
 images/*
 !images/.gitkeep
 *.png

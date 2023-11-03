@@ -1,6 +1,7 @@
 import ctypes
 import os
 from astropy.time import Time
+from matplotlib.colors import Normalize, LogNorm
 from scipy.constants import speed_of_light
 from astropy.coordinates import SkyCoord, EarthLocation
 import matplotlib.pyplot as plt
@@ -16,7 +17,8 @@ import astropy.units as u
 from main import load_spectrum
 
 COADD_SIDS = [2806984745409075328]
-N_COADD = 3
+N_COADD = 2
+SKYFLUXSEP = 100
 
 
 def detect_spectral_area(flats_image):
@@ -174,8 +176,8 @@ def create_master_flat(image_list, second_image_list, hdu_id, master_bias=None, 
         return master
 
 
-def gaussian(x, a, mean, std_dev):
-    return a / (std_dev * np.sqrt(2 * np.pi)) * np.exp(-0.5 * ((x - mean) / std_dev) ** 2)
+def gaussian(x, a, mean, std_dev, h):
+    return a / (std_dev * np.sqrt(2 * np.pi)) * np.exp(-0.5 * ((x - mean) / std_dev) ** 2)+h
 
 
 def line(x, w, v, u, m, n):
@@ -276,7 +278,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
 
     # .82~.86 Angströms per pixel
 
-    for i in np.linspace(10, image.shape[1] - 10, 10):
+    for i in np.linspace(10, image.shape[1] - 10, 20):
         data = np.min(image[:, int(i - 5):int(i + 5)], axis=1)
         data = median_filter(data, 5)
         xarr = np.arange(len(data))
@@ -285,8 +287,9 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
                               xarr,
                               data,
                               p0=[
-                                  np.max(data), len(data) / 2, 2
-                              ])
+                                  np.max(data), len(data) / 2, 2, 0
+                              ],
+                              maxfev=100000)
 
         width.append(params[2])
         xcenters.append(int(i))
@@ -297,22 +300,41 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
                           xcenters,
                           ycenters)
 
-    # plt.scatter(xcenters, ycenters, color="red", marker="x")
+    xcenters = np.array(xcenters)
+    ycenters = np.array(ycenters)
+
+    resids = np.abs(ycenters-line(xcenters, *params))
+    outsidestd = resids > 2*np.std(resids)
+    if np.sum(outsidestd.astype(int)) > 0:
+        params, _ = curve_fit(line,
+                              xcenters[~outsidestd],
+                              ycenters[~outsidestd])
+
+
     # xspace = np.linspace(0, image.shape[1], 1000)
-    # plt.plot(xspace, line(xspace, *params))
+    # fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8))
+    # axs[0].plot(xspace, line(xspace, *params), zorder=1)
+    # axs[0].scatter(xcenters, ycenters, color="red", marker="x", zorder=5)
+    # axs[1].imshow(image, cmap="Greys_r", norm=LogNorm(1, 1000))
+    # axs[1].plot(xspace, line(xspace, *params), color="lime", linewidth=0.5)
+    # axs[1].plot(xspace, line(xspace, *params)-SKYFLUXSEP, color="red", linestyle="--", linewidth=0.5)
+    # axs[1].plot(xspace, line(xspace, *params)+SKYFLUXSEP, color="red", linestyle="--", linewidth=0.5)
+    # axs[1].plot(xspace, line(xspace, *params)+width, color="lime", linestyle="--", linewidth=0.5)
+    # axs[1].plot(xspace, line(xspace, *params)-width, color="lime", linestyle="--", linewidth=0.5)
     # plt.tight_layout()
     # plt.show()
 
     image64 = image.astype(np.float64)
     master_comp64 = master_comp.astype(np.float64)
 
-    # plt.imshow(image)
-    # plt.plot(xspace, line(xspace, *params), color="lime", linewidth=0.5)
-    # plt.show()
-
     pixel = np.arange(image.shape[1]).astype(np.float64)
     flux = np.array([get_flux(image64, p, line(p, *params), width) for p in pixel])
     compflux = np.array([get_flux(master_comp64, p, line(p, *params), width) for p in pixel])
+    uskyflx = np.array([get_flux(image64, p, line(p, *params)+SKYFLUXSEP, width) for p in pixel])
+    lskyflx = np.array([get_flux(image64, p, line(p, *params)-SKYFLUXSEP, width) for p in pixel])
+
+    skyflx = np.minimum(uskyflx, lskyflx)
+    flux -= skyflx
 
     realcflux = fits.open("compspec.fits")[0]
     zeropoint = realcflux.header["CRVAL1"]
@@ -400,7 +422,10 @@ def get_star_info(file, catalogue=None):
     header = dict(fits.open(file)[0].header)
     sid = np.int64(header["OBJECT"])
     sinfo = catalogue[catalogue["source_id"] == sid].iloc[0]
-    sinfo["file"] = file.split("\\")[-1]
+    if os.name == "nt":
+        sinfo["file"] = file.split("\\")[-1]
+    else:
+        sinfo["file"] = file.split("/")[-1]
 
     time = Time(header["DATE-OBS"], format='isot', scale='utc')
     time += TimeDelta(header["EXPTIME"], format='sec')
@@ -496,7 +521,10 @@ if __name__ == "__main__":
         if "bias" not in file and "quartz" not in file and "test" not in file and "FeAr" not in file and ".txt" not in file and "RED" not in file:
             compfiles = []
 
-            int_file_index = int(file.split("\\")[-1][:4])
+            if os.name == "nt":
+                int_file_index = int(file.split("\\")[-1][:4])
+            else:
+                int_file_index = int(file.split("/")[-1][:4])
 
             for i in range(6):
                 i += 1
@@ -519,20 +547,17 @@ if __name__ == "__main__":
             soardf = pd.concat([soardf, trow])
 
             cerropachon = EarthLocation.of_site('Cerro Pachon')
-            try:
-                wl, flx = extract_spectrum(
-                    file,
-                    master_bias,
-                    master_flat,
-                    crop,
-                    master_comp,
-                    mjd,
-                    cerropachon,
-                    trow["ra"],
-                    trow["dec"])
-                save_to_ascii(wl, flx, mjd, trow)
-            except:
-                pass
+            wl, flx = extract_spectrum(
+                file,
+                master_bias,
+                master_flat,
+                crop,
+                master_comp,
+                mjd,
+                cerropachon,
+                trow["ra"],
+                trow["dec"])
+            save_to_ascii(wl, flx, mjd, trow)
 
     if len(COADD_SIDS) > 0:
         directory = r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR"

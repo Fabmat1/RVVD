@@ -22,7 +22,7 @@ from analyse_results import result_analysis
 general_config = {
     "SPECTRUM_FILE_SEPARATOR": " ",  # Separator between columns in the ASCII file
     "CATALOGUE": "all_objects_withlamost.csv",  # the location of the catalogue
-    "FILE_LOC": "spectra",  # directory that holds the spectrum files
+    "FILE_LOC": "spectra_processed",  # directory that holds the spectrum files
     "OUTPUT_DIR": "output",
     "VERBOSE": False,  # enable/disable verbose output
     "NO_NEGATIVE_FLUX": True,  # check for negative flux values
@@ -1715,9 +1715,14 @@ def create_pdf():
         files_brokenaxis = [os.path.join(d, f"RV_variation_broken_axis{plot_config['PLOT_FMT']}") for d in dirs if
                             os.path.isfile(os.path.join(d, f"RV_variation_broken_axis{plot_config['PLOT_FMT']}"))]
 
-        files.sort(key=lambda f: result_params.index[result_params["source_id"] == f.split("\\")[-2]])
-        files_brokenaxis.sort(
-            key=lambda f: result_params.index[result_params["source_id"] == f.split("\\")[-2]].tolist()[0])
+        if os.name == "nt":
+            files.sort(key=lambda f: result_params.index[result_params["source_id"] == f.split("\\")[-2]])
+            files_brokenaxis.sort(
+                key=lambda f: result_params.index[result_params["source_id"] == f.split("\\")[-2]].tolist()[0])
+        else:
+            files.sort(key=lambda f: result_params.index[result_params["source_id"] == f.split("/")[-2]])
+            files_brokenaxis.sort(
+                key=lambda f: result_params.index[result_params["source_id"] == f.split("/")[-2]].tolist()[0])
 
         if plot_config['PLOT_FMT'].lower() != ".pdf":
             if not plotpdf_exists:
@@ -1765,8 +1770,6 @@ def initial_variables():
 
 
 def main_loop(gaia_id, configs=None):
-    print(f'Beginning work on star GAIA DR3 {gaia_id}.')
-
     if configs is not None:
         global general_config
         global fit_config

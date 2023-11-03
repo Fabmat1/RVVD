@@ -138,7 +138,7 @@ def sinusoid_fold_wrapper(x, amp, offset, shift):
     return sinusoid(x, amp, 1, offset, shift)
 
 
-def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, custom_saveloc=None, plot_fit=True):
+def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, custom_saveloc=None, plot_fit=True, saveplot=True):
     """
     :param vels: Radial velocities [km/s]
     :param verrs: Radial velocity errors [km/s]
@@ -231,11 +231,13 @@ def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, 
 
     plt.tight_layout()
 
-    if not custom_saveloc:
-        plt.savefig(f"images/{gaia_id}_phfold.pdf")
+    if saveplot:
+        if not custom_saveloc:
+            plt.savefig(f"images/{gaia_id}_phfold.pdf")
+        else:
+            plt.savefig(custom_saveloc, dpi=300)
     else:
-        plt.savefig(custom_saveloc, dpi=300)
-
+        plt.plot()
 
 def phasefold_tiny(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, custom_saveloc=None, plot_fit=True, custom_title=None):
     """

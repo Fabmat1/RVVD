@@ -11,6 +11,7 @@ from fit_rv_curve import fit_rv_curve
 import astroquery.exceptions
 
 OUTPUT_DIR = "output"
+ADD_BIBC_TIC = True
 
 def vrad_pvalue(vrad, vrad_err):
     """
@@ -98,7 +99,11 @@ def result_statistics(analysis_params, catalogue):
     frate = []
 
     for dir in dirs:
-        specname = dir.split("\\")[-1] if "\\" in dir else dir.split("/")[-1]
+        if os.name == "nt":
+            specname = dir.split("\\")[-1] if "\\" in dir else dir.split("/")[-1]
+        else:
+            specname = dir.split("/")[-1] if "\\" in dir else dir.split("/")[-1]
+
         if "spec" not in specname.split("_")[0]:
             continue
         if "_merged" in specname:
@@ -381,8 +386,11 @@ def add_bibcodes_and_tics(res_params):
 
     source_tic_table.to_csv("gaia_tic_reftable.csv", index=False)
 
-    stephancat = pd.read_csv("logp_values_rvvpaper.csv")
-    stephancat["GaiaDR2"].str.strip()
+    try:
+        stephancat = pd.read_csv("logp_values_rvvpaper.csv")
+        stephancat["GaiaDR2"].str.strip()
+    except:
+        pass
 
     list_items_dict = {}
 
@@ -400,6 +408,8 @@ def add_bibcodes_and_tics(res_params):
                     if logp < -1.3:
                         bibcodes.append("2022A&A...661A.113G")
                 except IndexError:
+                    pass
+                except:
                     pass
 
             else:
@@ -492,7 +502,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
                 "deltaRV": [""],
                 "deltaRV_err": [""],
                 "RVavg": [np.mean(culumvs)],
-                "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))],
+                "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))/len(culumv_errs)],
                 "Nspec": [1],
                 "timespan": [""],
                 "associated_files": [files]
@@ -514,14 +524,15 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
             "deltaRV": [deltarv],
             "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
             "RVavg": [np.mean(culumvs)],
-            "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))],
+            "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))/len(culumv_errs)],
             "Nspec": [len(culumvs)],
             "timespan": [timespan],
             "associated_files": [files]
         })])
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
-    analysis_params = add_bibcodes_and_tics(analysis_params)
+    if ADD_BIBC_TIC:
+        analysis_params = add_bibcodes_and_tics(analysis_params)
     output_params = analysis_params.copy()
     output_params.to_csv("result_parameters.csv", index=False)
     print("Creating Statistics...")
@@ -532,7 +543,11 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
 def result_analysis_with_rvfit():
     dirname = os.path.dirname(__file__)
     dirs = os.walk(os.path.join(dirname, OUTPUT_DIR))
-    dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
+    if os.name == "nt":
+        dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
+    else:
+        dirs = [d[0] for d in dirs if "spec" in d[0].split("/")[-1]]
+
     files = [os.path.join(d, "RV_variation.csv") for d in dirs]
 
     analysis_params = pd.DataFrame(
@@ -547,7 +562,10 @@ def result_analysis_with_rvfit():
     )
 
     for file in files:
-        specname = file.split("\\")[-2]
+        if os.name == "nt":
+            specname = file.split("\\")[-2]
+        else:
+            specname = file.split("/")[-2]
         filedata = np.genfromtxt(file, delimiter=',')
         culumvs = filedata[1:, 0]
         culumv_errs = filedata[1:, 1]
@@ -570,7 +588,8 @@ def result_analysis_with_rvfit():
         })])
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
-    analysis_params = add_bibcodes_and_tics(analysis_params)
+    if ADD_BIBC_TIC:
+        analysis_params = add_bibcodes_and_tics(analysis_params)
     analysis_params.to_csv("result_parameters.csv", index=False)
 
 

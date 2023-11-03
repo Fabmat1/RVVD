@@ -43,7 +43,7 @@ for_selection = pd.DataFrame({
 
 n = 0
 l = len(startable)
-dirfiles = os.listdir("spectra/")
+dirfiles = os.listdir("spectra_processed/")
 for star in startable:
     n += 1
     if n % 100 == 0:

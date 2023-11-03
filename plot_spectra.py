@@ -30,9 +30,11 @@ COLORMAP = cm.rainbow  # Optional matplotlib colormap
 
 ############################## FUNCTIONS ##############################
 
-RES_PARAMETER_LIST = pd.read_csv(RES_PARAMETER_LIST)
-RES_PARAMETER_LIST["source_id"] = RES_PARAMETER_LIST["source_id"].astype("U20")
-
+try:
+    RES_PARAMETER_LIST = pd.read_csv(RES_PARAMETER_LIST)
+    RES_PARAMETER_LIST["source_id"] = RES_PARAMETER_LIST["source_id"].astype("U20")
+except FileNotFoundError:
+    RES_PARAMETER_LIST = None
 
 def ind_to_strind(ind):
     return "0" + str(ind) if ind < 10 else str(ind)
@@ -52,7 +54,7 @@ def get_params_from_filename(paramtable: pd.DataFrame, gaia_id, subspec_ind):
 
 
 def normalize_spectrum(wl, flx):
-    wl_step = np.median(np.diff(wl))
+    wl_step = np.abs(np.median(np.diff(wl)))
     true_med_size = int(np.floor(MED_WINDOW / wl_step))
     true_max_size = int(np.floor(MAX_WINDOW / wl_step))
     if true_max_size == 0 or true_med_size == 0:
@@ -97,7 +99,7 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savep
         i = 1
         file = fname + "_" + ind_to_strind(i) + ".txt"
 
-        while os.path.isfile("spectra/" + file):
+        while os.path.isfile("spectra_processed/" + file):
             filelist.append(file)
             i += 1
             file = fname + "_" + ind_to_strind(i) + ".txt"
@@ -106,10 +108,13 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savep
 
     for i, file in enumerate(filelist):
         i += 1
-        data = np.genfromtxt("spectra/" + file)
+        data = np.genfromtxt("spectra_processed/" + file)
 
         wl = data[:, 0]
         flx = data[:, 1]
+        p = wl.argsort()
+        wl = wl[p]
+        flx = flx[p]
 
         params, name = get_params_from_filename(paramtable, gaia_id, i)
 

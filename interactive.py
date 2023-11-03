@@ -93,7 +93,10 @@ def open_settings(window, queue):
 
     # Open the settings dialogue
     settings_window = tk.Toplevel(window)
-    settings_window.iconbitmap("favicon.ico")
+    try:
+        settings_window.iconbitmap("favicon.ico")
+    except:
+        pass
     settings_window.title("Settings")
     settings_window.geometry("800x600+0+0")
 
@@ -205,12 +208,20 @@ def construct_table(master, params):
 
 def analysis_tab(analysis):
     frame = tk.Frame(analysis)
-    interesting_dataframe = pd.read_csv("interesting_params.csv")
+    try:
+        interesting_dataframe = pd.read_csv("interesting_params.csv")
+        sheet = Sheet(frame,
+                      data=interesting_dataframe.values.tolist())
+    except FileNotFoundError:
+        no_results_yet = tk.Label(frame,
+                                  font=('Segoe UI', 25),
+                                  fg='#ff0000',
+                                  text="No results to show yet!\nGenerate some using the processing tab!")
+        no_results_yet.place(in_=frame, anchor="center", relx=.5, rely=.5)
+        frame.pack(fill="both", expand=1)
+        return
 
     tablesettings_frame = tk.Frame(analysis)
-
-    sheet = Sheet(frame,
-                  data=interesting_dataframe.values.tolist())
 
     # global show_known
     # global show_unknown
@@ -260,12 +271,15 @@ def analysis_tab(analysis):
                         columns.index("gmag"),
                         ("#5ced73", "#abf7b1"))
 
-            sids = pd.read_csv("observation_list.csv")["source_id"].to_list()
-            cell_colors(sheet,
-                        current_dataframe["source_id"][current_dataframe["source_id"].isin(sids)].index.tolist(),
-                        current_dataframe["gmag"][np.logical_and(current_dataframe["gmag"] < 19, current_dataframe["gmag"] > 19)].index.tolist(),
-                        columns.index("source_id"),
-                        ("#5ced73", "#abf7b1"))
+            try:
+                sids = pd.read_csv("observation_list.csv")["source_id"].to_list()
+                cell_colors(sheet,
+                            current_dataframe["source_id"][current_dataframe["source_id"].isin(sids)].index.tolist(),
+                            current_dataframe["gmag"][np.logical_and(current_dataframe["gmag"] < 19, current_dataframe["gmag"] > 19)].index.tolist(),
+                            columns.index("source_id"),
+                            ("#5ced73", "#abf7b1"))
+            except FileNotFoundError:
+                pass
 
     highlight_cells(sheet, highlight.get())
 
@@ -315,6 +329,9 @@ def analysis_tab(analysis):
             elif "in" in k:
                 sp = prep_kstring(k)
                 current_dataframe = current_dataframe[current_dataframe[sp[1]].str.contains(sp[0])].reset_index(drop=True)
+            elif "obslist" in k:
+                sids = pd.read_csv("observation_list.csv")["source_id"].to_list()
+                current_dataframe = current_dataframe[current_dataframe["source_id"].isin(sids)]
 
         colname = sortset.get()
 
@@ -414,7 +431,7 @@ def analysis_tab(analysis):
             "deltaRV": deltarv,
             "deltaRV_err": np.sqrt(verrs[np.argmax(vels)] ** 2 + verrs[np.argmin(vels)] ** 2) / 2,
             "RVavg": np.mean(vels),
-            "RVavg_err": np.sqrt(np.sum(np.square(verrs))),
+            "RVavg_err": np.sqrt(np.sum(np.square(verrs)))/len(verrs),
         }
         print(list(updatedict.keys()), list(updatedict.values()))
         interesting_dataframe.loc[interesting_dataframe["source_id"] == gaia_id, list(updatedict.keys())] = list(updatedict.values())
@@ -448,11 +465,17 @@ def analysis_tab(analysis):
         flags = ast.literal_eval(star["flags"])
 
         detail_window = tk.Toplevel()
-        detail_window.iconbitmap("favicon.ico")
+        try:
+            detail_window.iconbitmap("favicon.ico")
+        except:
+            pass
         detail_window.title(f"Detail View for {gaia_id}")
         detail_window.update_idletasks()  # This forces tkinter to update the window calculations.
         detail_window.geometry("800x600+0+0")
-        detail_window.state('zoomed')
+        if os.name == 'nt':
+            detail_window.state('zoomed')
+        elif os.name == "posix":
+            detail_window.attributes('-zoomed', True)
 
         main_frame = tk.Frame(detail_window)
         main_frame.pack(fill="both", expand=1)
@@ -611,14 +634,20 @@ def gui_window(queue, p_queue):
         window.update()
         window.after(0, lambda: update_progress(bars, labels))
 
-    ctypes.windll.shcore.SetProcessDpiAwareness(0)
+    if os.name == 'nt':
+        ctypes.windll.shcore.SetProcessDpiAwareness(0)
     # Initialize the main window
     window = tk.Tk()
     window.title("RVVD")
-    window.iconbitmap("favicon.ico")
+    try:
+        window.iconbitmap("favicon.ico")
+    except:
+        pass
     window.geometry("800x600+0+0")
-    window.state('zoomed')
-
+    if os.name == 'nt':
+        window.state('zoomed')
+    elif os.name == "posix":
+        window.attributes('-zoomed', True)
     # Create the menu bar
     menu_bar = tk.Menu(window)
 
@@ -645,7 +674,7 @@ def gui_window(queue, p_queue):
 
     # Create a progress bar to track the overall progress of the task
     overall = tk.DoubleVar()
-    overall_progress = ttk.Progressbar(processing, variable=overall, orient="horizontal", length=500, mode="determinate")
+    overall_progress = ttk.Progressbar(processing, variable=overall, orient="horizontal", length=1000, mode="determinate")
     overall_progress.pack(pady=2)
     suplabel = tk.Label(processing, text="Overall progress")
     suplabel.pack()
@@ -675,14 +704,14 @@ def gui_window(queue, p_queue):
         progress_var = tk.DoubleVar()
 
         # Create the progress bar
-        progress = ttk.Progressbar(frame, variable=progress_var, orient="horizontal", length=200, mode="determinate")
+        progress = ttk.Progressbar(frame, variable=progress_var, orient="horizontal", length=400, mode="determinate")
         progress.grid(row=i // 2 * 2, column=i % 2, padx=10, pady=1)
         subprocess_progress.append(progress_var)
         ls.append(label)
 
     # Create the start button
-    start_button = tk.Button(processing, text="Start", command=lambda: start_proc(queue))
-    start_button.pack(side="right", padx=50, pady=10, ipadx=50)
+    start_button = tk.Button(processing, font=('Segoe UI', 12), text="Start", command=lambda: start_proc(queue), height=1, width=15, bg="#90EE90")
+    start_button.place(in_=processing, anchor="se", relx=0.95, rely=0.95)
 
     # Start the main loop to display the window
     update_progress(subprocess_progress, ls)
