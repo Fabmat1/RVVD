@@ -2,9 +2,14 @@ import ast
 import ctypes
 import multiprocessing
 import os
-import time
 import tkinter as tk
+from multiprocessing import Process
 from tkinter import ttk
+from tkinter import messagebox
+
+import astropy.table
+from astropy.table import Table
+from astroquery.vizier import Vizier
 
 from analyse_results import vrad_pvalue
 from data_reduction import *
@@ -13,6 +18,7 @@ import numpy as np
 import pandas as pd
 import fitz
 import webbrowser
+
 
 def callback(url):
     webbrowser.open_new(url)
@@ -425,13 +431,13 @@ def analysis_tab(analysis):
 
         logp = vrad_pvalue(vels, verrs)
         deltarv = np.ptp(vels)
-        
+
         updatedict = {
             "logp": logp,
             "deltaRV": deltarv,
             "deltaRV_err": np.sqrt(verrs[np.argmax(vels)] ** 2 + verrs[np.argmin(vels)] ** 2) / 2,
             "RVavg": np.mean(vels),
-            "RVavg_err": np.sqrt(np.sum(np.square(verrs)))/len(verrs),
+            "RVavg_err": np.sqrt(np.sum(np.square(verrs))) / len(verrs),
         }
         print(list(updatedict.keys()), list(updatedict.values()))
         interesting_dataframe.loc[interesting_dataframe["source_id"] == gaia_id, list(updatedict.keys())] = list(updatedict.values())
@@ -492,7 +498,7 @@ def analysis_tab(analysis):
                                        quick_visibility,
                                        ra=ra,
                                        dec=dec,
-                                       date="2023-11-04 00:00:00",  #TODO: No! change this!
+                                       date="2023-11-04 00:00:00",  # TODO: No! change this!
                                        saveloc=f"output/{gaia_id}/visibility.pdf")
         visplot.grid(row=1, column=2, sticky="news")
 
@@ -607,11 +613,93 @@ def analysis_tab(analysis):
     sheet.pack(fill="both", expand=1)
 
 
-def datareduction(window):
+def get_raw_files():
+    outlist = []
+    for f in os.listdir("spectra_raw"):
+        if ".gitkeep" in f:
+            continue
+        else:
+            outlist.append(f)
+
+    return outlist
+
+
+def preprocess(prep_tab):
+    prep_frame = tk.Frame(prep_tab)
+
+    input_container = tk.Frame(prep_frame)
+
+    filelist = get_raw_files()
+    input_label = tk.Label(input_container,
+                           text="Raw spectra",
+                           font="SegoeUI 12")
+    input_label.pack()
+    if len(filelist) == 0:
+        input_label = tk.Label(input_container,
+                               text="Please add your raw spectra files to\n./spectra_raw\nand restart this program",
+                               fg="blue",
+                               font="SegoeUI 12 italic")
+        input_label.pack()
+    else:
+        input_sheet = Sheet(input_container,
+                            data=get_raw_files(),
+                            )
+        input_sheet.hide(canvas="row_index")
+        input_sheet.hide(canvas="header")
+        input_sheet.pack()
+    input_container.grid(row=1, column=1)
+
     def reduce():
         pass
 
-    pass
+    prep_frame.pack(fill="both", expand=1, padx=50, pady=50)
+
+
+def download_catalogues():
+    vizier = Vizier(columns=["**"], row_limit=999999)  # "*" retrieves all columns
+    catalog_id = "J/A+A/662/A40/knownhsd"
+    knownsd = vizier.get_catalogs(catalog_id)
+    knownsd = knownsd[catalog_id]
+    knownsd = knownsd.to_pandas()
+    knownsd = knownsd.rename(columns=dict(zip(
+        [
+            "Name", "GaiaEDR3", "RA_ICRS", "DE_ICRS", "GLON", "GLAT", "SpClass", "SpClassS", "CSDSS", "CAPASS", "CPS1", "CSKYM", "Plx", "PlxZP", "e_Plx", "GMAG", "GGAIA", "e_GGAIA", "BPGAIA", "e_BPGAIA", "RPGAIA", "e_RPGAIA", "pmRAGAIA", "e_pmRAGAIA",
+            "pmDEGAIA", "e_pmDEGAIA", "RVSDSS", "e_RVSDSS", "RVLAMOST", "e_RVLAMOST", "Teff", "e_Teff", "logg", "e_logg", "logY", "e_logY", "Ref", "E_B-V_", "e_E_B-V_", "AV", "FUVGALEX", "e_FUVGALEX", "NUVGALEX", "e_NUVGALEX", "VAPASS", "e_VAPASS",
+            "BAPASS", "e_BAPASS", "gAPASS", "e_gAPASS", "rAPASS", "e_rAPASS", "iAPASS", "e_iAPASS", "uSDSS", "e_uSDSS", "gSDSS", "e_gSDSS", "rSDSS", "e_rSDSS", "iSDSS", "e_iSDSS", "zSDSS", "e_zSDSS", "uVST", "e_uVST", "gVST", "e_gVST", "rVST", "e_rVST",
+            "iVST", "e_iVST", "zVST", "e_zVST", "uSKYM", "e_uSKYM", "vSKYM", "e_vSKYM", "gSKYM", "e_gSKYM", "rSKYM", "e_rSKYM", "iSKYM", "e_iSKYM", "zSKYM", "e_zSKYM", "gPS1", "e_gPS1", "rPS1", "e_rPS1", "iPS1", "e_iPS1", "zPS1", "e_zPS1", "yPS1", "e_yPS1",
+            "J2MASS", "e_J2MASS", "H2MASS", "e_H2MASS", "K2MASS", "e_K2MASS", "YUKIDSS", "e_YUKIDSS", "JUKIDSS", "e_JUKIDSS", "HUKIDSS", "e_HUKIDSS", "KUKIDSS", "e_KUKIDSS", "ZVISTA", "e_ZVISTA", "YVISTA", "e_YVISTA", "JVISTA", "e_JVISTA", "HVISTA",
+            "e_HVISTA", "KsVISTA", "e_KsVISTA", "W1", "e_W1", "W2", "e_W2", "W3", "e_W3", "W4", "e_W4"
+        ],
+        [
+            "NAME", "GAIA_DESIG", "RA", "DEC", "GLON", "GLAT", "SPEC_CLASS", "SPEC_SIMBAD", "COLOUR_SDSS", "COLOUR_APASS", "COLOUR_PS1", "COLOUR_SKYM", "PLX", "PLX_ZP", "e_PLX", "M_G", "G_GAIA", "e_G_GAIA", "BP_GAIA", "e_BP_GAIA", "RP_GAIA", "e_RP_GAIA",
+            "PMRA_GAIA", "e_PMRA_GAIA", "PMDEC_GAIA", "e_PMDEC_GAIA",
+            "RV_SDSS", "e_RV_SDSS", "RV_LAMOST", "e_RV_LAMOST", "TEFF", "e_TEFF", "LOG_G", "e_LOG_G", "LOG_Y", "e_LOG_Y", "PARAMS_REF", "EB-V", "e_EB-V", "AV", "FUV_GALEX", "e_FUV_GALEX", "NUV_GALEX", "e_NUV_GALEX", "V_APASS", "e_V_APASS", "B_APASS",
+            "e_B_APASS", "g_APASS", "e_g_APASS", "r_APASS",
+            "e_r_APASS", "i_APASS", "e_i_APASS", "u_SDSS", "e_u_SDSS", "g_SDSS", "e_g_SDSS", "r_SDSS", "e_r_SDSS", "I_SDSS", "e_i_SDSS", "z_SDSS", "e_z_SDSS", "u_VST", "e_u_VST", "g_VST", "e_g_VST", "r_VST", "e_r_VST", "I_VST", "e_i_VST", "z_VST", "e_z_VST",
+            "u_SKYM", "e_u_SKYM", "v_SKYM", "e_v_SKYM", "g_SKYM",
+            "e_g_SKYM", "r_SKYM", "e_r_SKYM", "i_SKYM", "e_i_SKYM", "z_SKYM", "e_z_SKYM", "g_PS1", "e_g_PS1", "r_PS1", "e_r_PS1", "i_PS1", "e_i_PS1", "z_PS1", "e_z_PS1", "y_PS1", "e_y_PS1", "J_2MASS", "e_J_2MASS", "H_2MASS", "e_H_2MASS", "K_2MASS",
+            "e_K_2MASS", "Y_UKIDSS", "e_Y_UKIDSS", "J_UKIDSS", "e_J_UKIDSS",
+            "H_UKIDSS", "e_H_UKIDSS", "K_UKIDSS", "e_K_UKIDSS", "Z_VISTA", "e_Z_VISTA", "Y_VISTA", "e_Y_VISTA", "J_VISTA", "e_J_VISTA", "H_VISTA", "e_H_VISTA", "Ks_VISTA", "e_Ks_VISTA", "W1", "e_W1", "W2", "e_W2", "W3", "e_W3", "W4", "e_W4"
+        ]
+    )))
+    knownsd["GAIA_DESIG"] = np.array(["GAIA EDR3 "+str(t) for t in knownsd["GAIA_DESIG"].to_list()])
+    knownsd = knownsd.drop(columns=["recno", "_RA.icrs", "_DE.icrs"])
+    knownsd.to_csv("catalogues/sd_catalogue_v56_pub.csv", index=False)
+
+    vizier = Vizier(columns=["**"],
+                    row_limit=999999)  # "*" retrieves all columns
+    catalog_id = "J/A+A/662/A40/hotsd"
+    candsd = vizier.get_catalogs(catalog_id)
+    candsd = candsd[catalog_id]
+    pandastb = candsd.to_pandas()
+    pandastb = pandastb.drop(columns=["recno", "_RA.icrs", "_DE.icrs"])
+    pandastb = pandastb.rename(columns=dict(zip(['GaiaEDR3', 'RA_ICRS', 'DE_ICRS', 'GLON', 'GLAT', 'Plx', 'e_Plx', 'GMAG', 'Gmag', 'BP-RP', 'E_BP_RP_c', 'pmRA', 'e_pmRA', 'pmDE', 'e_pmDE', 'pm', 'e_pm', 'RUWE', 'Rpm', 'e_EFlux', 'f_Plx', 'f_pm'],
+                                ["source_id", "ra", "dec", "l", "b", "parallax", "parallax_error", "abs_g_mag", "phot_g_mean_mag", "bp_rp", "phot_bp_rp_excess_factor_corrected", "pmra", "pmra_error", "pmdec", "pmdec_error", "pm", "ruwe", "pm_error",
+                                 "reduced_proper_motion", "excess_flux_error", "parallax_selection_flag", "proper_motion_selection_flag"])))
+    hdu = fits.BinTableHDU(Table.from_pandas(pandastb))
+    hdu.writeto("catalogues/hotSD_gaia_edr3_catalogue.fits")
+
+    messagebox.showinfo("Download Complete", "Download of catalogues is complete.")
 
 
 def gui_window(queue, p_queue):
@@ -664,8 +752,8 @@ def gui_window(queue, p_queue):
     # Create the notebook
     main_tabs = ttk.Notebook(window)
 
-    data_reduction = tk.Frame(main_tabs)
-    main_tabs.add(data_reduction, text="Data Reduction")
+    prep = tk.Frame(main_tabs)
+    main_tabs.add(prep, text="Pre-Processing")
     processing = tk.Frame(main_tabs)
     main_tabs.add(processing, text="Processing")
     analysis = tk.Frame(main_tabs)
@@ -688,7 +776,7 @@ def gui_window(queue, p_queue):
 
     analysis_tab(analysis)
 
-    datareduction(data_reduction)
+    preprocess(prep)
 
     # Calculate the number of rows needed to display the progress bars in a grid with two columns
     num_cores = multiprocessing.cpu_count()
@@ -713,6 +801,14 @@ def gui_window(queue, p_queue):
     start_button = tk.Button(processing, font=('Segoe UI', 12), text="Start", command=lambda: start_proc(queue), height=1, width=15, bg="#90EE90")
     start_button.place(in_=processing, anchor="se", relx=0.95, rely=0.95)
 
+    if "sd_catalogue_v56_pub.csv" not in os.listdir("catalogues") or "hotSD_gaia_edr3_catalogue.fits" not in os.listdir("catalogues"):
+        result = messagebox.askokcancel("Catalogue Download Required",
+                                        "RVVD requires the Culpan(2022) catalogue of hot subdwarf stars to be downloaded in order to function correctly, do you wish to download the catalogue now?",
+                                        icon="question")
+
+        if result:
+            download_catalogues()
+
     # Start the main loop to display the window
     update_progress(subprocess_progress, ls)
     window.mainloop()
@@ -726,10 +822,10 @@ if __name__ == "__main__":
     gui_main = threading.Thread(None, gui_window, args=[queue, progress_queue])
     gui_main.start()
 
-    while True:
-        item = queue.get()
-        if item[0] == "update_configs":
-            configs = item[1]
-        elif item[0] == "start_process":
-            proc = threading.Thread(target=interactive_main, args=[configs, progress_queue])
-            proc.start()
+#    while True:
+#        item = queue.get()
+#        if item[0] == "update_configs":
+#            configs = item[1]
+#        elif item[0] == "start_process":
+#            proc = threading.Thread(target=interactive_main, args=[configs, progress_queue])
+#            proc.start()

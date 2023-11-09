@@ -16,7 +16,7 @@ from scipy.optimize import curve_fit
 import astropy.units as u
 from main import load_spectrum
 
-COADD_SIDS = [2806984745409075328]
+COADD_SIDS = []#[2806984745409075328]
 N_COADD = 2
 SKYFLUXSEP = 100
 
@@ -255,7 +255,8 @@ def wlshift(wl, vel_corr):
 
 
 def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mjd, location, ra, dec):
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    if os.name == "nt":
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
     image = fits.open(image_path)[0].data.astype(np.uint16)
 
     image = crop_image(image, *crop)
@@ -423,7 +424,7 @@ def get_star_info(file, catalogue=None):
     sid = np.int64(header["OBJECT"])
     sinfo = catalogue[catalogue["source_id"] == sid].iloc[0]
     if os.name == "nt":
-        sinfo["file"] = file.split("\\")[-1]
+        sinfo["file"] = file.split("/")[-1]
     else:
         sinfo["file"] = file.split("/")[-1]
 
@@ -434,8 +435,8 @@ def get_star_info(file, catalogue=None):
 
 
 def save_to_ascii(wl, flx, mjd, trow):
-    dir = r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR"
-    outtablefile = r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR.csv"
+    dir = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR"
+    outtablefile = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv"
     if os.path.isfile(outtablefile):
         outtable = pd.read_csv(outtablefile)
         outtable = pd.concat([outtable, pd.DataFrame([trow])])
@@ -462,21 +463,21 @@ def split_given_size(a, size):
 if __name__ == "__main__":
     print("Starting data reduction...")
     catalogue = pd.read_csv("all_objects_withlamost.csv")
-    allfiles = os.listdir(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_raw\SOAR")
+    allfiles = sorted(os.listdir(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR"))
 
     print("Searching files...")
     flat_list = []
     shifted_flat_list = []
     for file in allfiles:
         if "quartz" in file and "test" not in file and "bias" not in file and "shifted" not in file:
-            flat_list.append(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_raw\SOAR" + "\\" + file)
+            flat_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
         elif "quartz" in file and "test" not in file and "bias" not in file and "shifted" in file:
-            shifted_flat_list.append(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_raw\SOAR" + "\\" + file)
+            shifted_flat_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
 
     bias_list = []
     for file in allfiles:
         if "bias" in file and "test" not in file:
-            bias_list.append(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_raw\SOAR" + "\\" + file)
+            bias_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
 
     print("Cropping images...")
     master_flat = create_master_flat(flat_list, shifted_flat_list, 0)
@@ -514,15 +515,15 @@ if __name__ == "__main__":
     })
 
     print("Extracting Spectra...")
-    if os.path.isfile(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR.csv"):
-        os.remove(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR.csv")
+    if os.path.isfile(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv"):
+        os.remove(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv")
     for file in allfiles:
-        file = r"C:\Users\fabia\PycharmProjects\auxillary\spectra_raw\SOAR" + "\\" + file
+        file = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file
         if "bias" not in file and "quartz" not in file and "test" not in file and "FeAr" not in file and ".txt" not in file and "RED" not in file:
             compfiles = []
 
             if os.name == "nt":
-                int_file_index = int(file.split("\\")[-1][:4])
+                int_file_index = int(file.split("/")[-1][:4])
             else:
                 int_file_index = int(file.split("/")[-1][:4])
 
@@ -560,11 +561,11 @@ if __name__ == "__main__":
             save_to_ascii(wl, flx, mjd, trow)
 
     if len(COADD_SIDS) > 0:
-        directory = r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR"
-        labeltable = pd.read_csv(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR.csv")
+        directory = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR"
+        labeltable = pd.read_csv(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv")
 
         notincoaddtable = labeltable[~labeltable["source_id"].isin(COADD_SIDS)]
-        notincoaddtable.to_csv(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_processed\SOAR.csv", index=False)
+        notincoaddtable.to_csv(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv", index=False)
 
         for sid in COADD_SIDS:
             thissidlist = labeltable[labeltable["source_id"] == sid]
@@ -572,7 +573,7 @@ if __name__ == "__main__":
             for_coadd = split_given_size(filelist, N_COADD)
             for coadd_list in for_coadd:
                 n_file = coadd_list[0].replace(".fits", "_01.txt")
-                trow, _ = get_star_info(r"C:\Users\fabia\PycharmProjects\auxillary\spectra_raw\SOAR" + "\\" + coadd_list[0])
+                trow, _ = get_star_info(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR" + "/" + coadd_list[0])
                 mjds = []
                 for c in coadd_list:
                     with open(directory + "/" + c.replace(".fits", "_mjd.txt")) as mjdfile:
