@@ -730,11 +730,23 @@ def preprocess(prep_tab):
                                 fg="blue",
                                 font="SegoeUI 12 italic")
         output_descr.pack(side=tk.TOP)
+        output_sheet = Sheet(final_container,
+                             data=[[]],
+                             headers=[],
+                             show_top_left=False,
+                             show_row_index=False,
+                             width=800,
+                             height=800)
+        output_sheet.enable_bindings()
     else:
         obj_cat = pd.read_csv("object_catalogue.csv")
         output_label = tk.Label(final_container,
                                 text="Pre-Processed spectra",
                                 font="SegoeUI 20")
+        output_descr = tk.Label(final_container,
+                                text="Preprocessing has not been completed yet.",
+                                fg="blue",
+                                font="SegoeUI 12 italic")
         output_label.pack(side=tk.TOP)
         output_sheet = Sheet(final_container,
                              data=obj_cat.values.tolist(),
@@ -766,6 +778,9 @@ def preprocess(prep_tab):
         else:
             obj_cat = pd.read_csv("object_catalogue.csv")
             output_sheet.set_sheet_data(obj_cat.values.tolist())
+            output_sheet.headers(obj_cat.columns.tolist())
+            nonlocal output_descr
+            output_descr.pack_forget()
 
     process_btn = tk.Button(subcontainer, text="Preprocess", width=10, command=prep_wrapper)
     process_btn.pack()
