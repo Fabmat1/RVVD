@@ -20,10 +20,8 @@ TRUNC_WL = 25  # Wavelength margin by which to truncate the data before normaliz
 VET_RESULTS = True  # Whether to enable result verification features
 CUTLIM = 15
 CUTLINES = [6562.79, 4861.35, 4340.472, 4101.734, 3970.075, 3889.064, 3835.397, 4026.19, 4471.4802, 4921.9313, 5015.678, 5875.6, 6678.15, 4541.59, 4685.70, 5411.52]
-if NORMALIZE:
-    SEP = .5
-else:
-    SEP = 10
+
+SEP = (.5, 10) # Separation value to add to each subseqent spectrum, if normalized at index 0, if not normalized at index 1
 
 INDEX_TO_PLOT = 2  # Index of the system to be plotted in result_parameters.csv if not verifying results
 COLORMAP = cm.rainbow  # Optional matplotlib colormap
@@ -142,7 +140,8 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savep
             for line in lines_to_fit.values():
                 plt.axvline(line, color="darkgrey", linestyle="--", linewidth=.5, zorder=4)
 
-        k += 1*SEP
+        k += 1*SEP[0] if normalized else 1*SEP[1]
+        print(k)
 
     if custom_xlim:
         plt.xlim(custom_xlim)
