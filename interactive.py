@@ -765,6 +765,7 @@ def preprocess(prep_tab):
             return
         prep_settings["coordunit"] = drpdwn_val.get()
         preprocessing([(k, v.get()) for k, v in fenddict.items()], prep_settings)
+        nonlocal output_descr
         if os.path.isfile("object_catalogue.csv") == 0:
             output_label = tk.Label(final_container,
                                     text="Pre-Processed spectra",
@@ -779,7 +780,6 @@ def preprocess(prep_tab):
             obj_cat = pd.read_csv("object_catalogue.csv")
             output_sheet.set_sheet_data(obj_cat.values.tolist())
             output_sheet.headers(obj_cat.columns.tolist())
-            nonlocal output_descr
             output_descr.pack_forget()
 
     process_btn = tk.Button(subcontainer, text="Preprocess", width=10, command=prep_wrapper)
