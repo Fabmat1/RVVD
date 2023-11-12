@@ -780,6 +780,7 @@ def preprocess(prep_tab):
             obj_cat = pd.read_csv("object_catalogue.csv")
             output_sheet.set_sheet_data(obj_cat.values.tolist())
             output_sheet.headers(obj_cat.columns.tolist())
+            output_sheet.pack(fill="both", expand=1)
             output_descr.pack_forget()
 
     process_btn = tk.Button(subcontainer, text="Preprocess", width=10, command=prep_wrapper)
