@@ -937,8 +937,7 @@ def gui_window(queue, p_queue):
         window.after(0, lambda: update_progress(bars, labels))
 
     def on_closing():
-        if messagebox.askokcancel("Quit", "Do you want to quit?"):
-            os._exit(0)
+        os._exit(0)
 
     window.protocol("WM_DELETE_WINDOW", on_closing)
 
