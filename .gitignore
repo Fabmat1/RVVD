@@ -39,3 +39,4 @@ lightcurves/*
 /catalogues/hotSD_gaia_edr3_catalogue.fits
 /catalogues/sd_catalogue_v56_pub.csv
 !/catalogues/.gitkeep
+!/Arrow.png
