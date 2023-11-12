@@ -1,8 +1,10 @@
 import os
 import shutil
+import urllib.parse
 
 import numpy as np
 import pandas as pd
+import requests
 from astroquery.mast import Catalogs
 from matplotlib import pyplot as plt
 from scipy import stats
@@ -129,7 +131,7 @@ def result_statistics(analysis_params, catalogue):
         pass
 
 
-def compare_results(plot_comp=True):
+def compare_results(input_catalogue, plot_comp=True):
     catalog = pd.read_csv("catalogues/sd_catalogue_v56_pub.csv", delimiter=",")
     idents = dict(zip(catalog.NAME, [str(g).replace("Gaia EDR3 ", "") for g in catalog.GAIA_DESIG.to_list()]))
     comparetable = pd.read_csv("rvs_all_final.csv", delimiter=",", names=["Identifier", "mjd", "RV", "u_RV", "source"]).replace({"Identifier": idents})
@@ -138,7 +140,6 @@ def compare_results(plot_comp=True):
     times = comparetable.loc[comparetable["source"] == "SDSS"].groupby(["Identifier"])["mjd"].apply(list).to_frame()
 
     restable = pd.read_csv("result_parameters.csv", delimiter=",")
-    input_catalogue = pd.read_csv("all_objects_withlamost.csv")
 
     differences = np.array([])
     error_differences = np.array([])
@@ -361,19 +362,50 @@ def overview(restable, catalogue):
     os.system("lualatex result_parameters.tex")
 
 
-def add_bibcodes_and_tics(res_params):
+def simbad_request():
+    try:
+        with open("simbad_script.s", "r") as file:
+            simbad_script = file.read()
+    except FileNotFoundError:
+        print("File 'simbad_script.s' not found.")
+        return
 
+    url = "https://simbad.cds.unistra.fr/simbad/sim-script?script="
+    encoded_script = urllib.parse.quote_plus(simbad_script)
+
+    try:
+        response = requests.get(url + encoded_script)
+        response.raise_for_status()
+    except requests.RequestException:
+        print("Unable to make a get request. Saving an empty text file...")
+        with open("simbad.txt", "w") as file:
+            file.write("")
+        return
+
+    with open("simbad.txt", "w") as file:
+        file.write(response.text)
+
+def add_bibcodes_and_tics(res_params, catalogue):
+    with open("simbad_script.s", "w", encoding="utf-8") as outfile:
+        outfile.write('format object f1 "start %OBJECT\\n"+\n"%BIBCODELIST"\n')
+        for ind, row in res_params.iterrows():
+            outfile.write(f"query id GAIA DR3 {row['source_id']}\n")
+
+    simbad_request()
 
     if os.path.isfile("gaia_tic_reftable.csv"):
         source_tic_table = pd.read_csv("gaia_tic_reftable.csv")
+        source_tic_table["source_id"] = source_tic_table["source_id"].astype(str)
     else:
         source_tic_table = pd.DataFrame(columns=["source_id", "tic"])
 
+    gids = source_tic_table["source_id"].to_list()
+
     for ind, row in res_params.iterrows():
-        if ind < len(source_tic_table):
+        gaia_id = row["source_id"]
+        if gaia_id in gids:
             continue
         print(f"Getting TIC for object nr. {ind + 1}/{len(res_params)}")
-        gaia_id = row["source_id"]
         try:
             star_info = Catalogs.query_object("Gaia DR3 " + str(gaia_id), catalog="TIC")
         except astroquery.exceptions.ResolverError:
@@ -442,7 +474,51 @@ def add_bibcodes_and_tics(res_params):
     # Merge the two DataFrames based on the 'source_id' column
     merged_df = res_params.merge(source_tic_table[['source_id', 'tic', 'bibcodes']], on='source_id', how='inner')
 
-    return merged_df
+    out_df = pd.DataFrame(
+            {
+                "source_id": [],
+                "alias": [],
+                "ra": [],
+                "dec": [],
+                "gmag": [],
+                "spec_class": [],
+                "logp": [],
+                "deltaRV": [],
+                "deltaRV_err": [],
+                "RVavg": [],
+                "RVavg_err": [],
+                "Nspec": [],
+                "bibcodes": [],
+                "tic": [],
+                "associated_files": []
+            }
+        )
+
+    for i, star in merged_df.iterrows():
+        cat_dict = dict(catalogue.loc[catalogue["source_id"] == star["source_id"]].iloc[0])
+        gmag = cat_dict["gmag"]
+        sp_class = cat_dict["SPEC_CLASS"]
+        alias = cat_dict["name"]
+
+        out_df = pd.concat([out_df, pd.DataFrame({
+            "source_id": [star["source_id"]],
+            "alias": [alias],
+            "tic": [star["tic"]],
+            "ra": [star["ra"]],
+            "dec": [star["dec"]],
+            "gmag": [gmag],
+            "spec_class": [sp_class],
+            "logp": [star["logp"]],
+            "deltaRV": [star["deltaRV"]],
+            "deltaRV_err": [star["deltaRV_err"]],
+            "RVavg": [star["RVavg"]],
+            "RVavg_err": [star["RVavg_err"]],
+            "Nspec": [star["Nspec"]],
+            "bibcodes": [star["bibcodes"]],
+            "associated_files": [star["associated_files"]],
+        })])
+
+    return out_df
 
 
 def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
@@ -532,65 +608,12 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
     if ADD_BIBC_TIC:
-        analysis_params = add_bibcodes_and_tics(analysis_params)
+        analysis_params = add_bibcodes_and_tics(analysis_params, catalogue)
     output_params = analysis_params.copy()
     output_params.to_csv("result_parameters.csv", index=False)
     print("Creating Statistics...")
     overview(analysis_params, catalogue)
     result_statistics(analysis_params, catalogue)
-
-
-def result_analysis_with_rvfit():
-    dirname = os.path.dirname(__file__)
-    dirs = os.walk(os.path.join(dirname, OUTPUT_DIR))
-    if os.name == "nt":
-        dirs = [d[0] for d in dirs if "spec" in d[0].split("\\")[-1]]
-    else:
-        dirs = [d[0] for d in dirs if "spec" in d[0].split("/")[-1]]
-
-    files = [os.path.join(d, "RV_variation.csv") for d in dirs]
-
-    analysis_params = pd.DataFrame(
-        {
-            "spec": [],
-            "logp": [],
-            "K": [],
-            "u_K": [],
-            "p": [],
-            "u_p": []
-        }
-    )
-
-    for file in files:
-        if os.name == "nt":
-            specname = file.split("\\")[-2]
-        else:
-            specname = file.split("/")[-2]
-        filedata = np.genfromtxt(file, delimiter=',')
-        culumvs = filedata[1:, 0]
-        culumv_errs = filedata[1:, 1]
-        logp = vrad_pvalue(culumvs, culumv_errs)
-        if logp < -4 and len(culumvs) > 4:
-            [A, p], [u_A, u_p] = fit_rv_curve(specname, "auto", False, False)
-            if type(A) != str:
-                if A / u_A < 2:
-                    A = p = u_A = u_p = "--"
-        else:
-            A = p = u_A = u_p = "--"
-
-        analysis_params = pd.concat([analysis_params, pd.DataFrame({
-            "spec": [specname],
-            "logp": [logp],
-            "K": [A],
-            "u_K": [u_A],
-            "p": [p],
-            "u_p": [u_p]
-        })])
-
-    analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
-    if ADD_BIBC_TIC:
-        analysis_params = add_bibcodes_and_tics(analysis_params)
-    analysis_params.to_csv("result_parameters.csv", index=False)
 
 
 if __name__ == "__main__":

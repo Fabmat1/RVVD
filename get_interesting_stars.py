@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from fit_rv_curve import phasefold_tiny
 from TESS_utilities.TESS_LS import do_tess_stuff
+from main import general_config
 
 quantity_support()
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord
@@ -899,7 +900,7 @@ if __name__ == "__main__":
     placeholders("Sorry, no TESS data found!", "no_tess_placeholder.png")
     placeholders("Too few datapoints!", "too_few_RV_placeholder.png")
     result_params = pd.read_csv("result_parameters.csv")
-    catalogue = pd.read_csv("all_objects_withlamost.csv")
+    catalogue = pd.read_csv(general_config["CATALOGUE"])
 
     create_one_stop_show(catalogue, result_params, date='2023-11-4 00:00:00', utc_offset=-4)
     # quick_tiny_visibility('2023-10-3 00:00:00', 230.46649284665, -0.39995045926, "tinytest.png")

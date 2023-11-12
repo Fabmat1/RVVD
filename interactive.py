@@ -2,6 +2,8 @@ import ast
 import ctypes
 import multiprocessing
 import os
+import sys
+import time
 import tkinter as tk
 from multiprocessing import Process
 from tkinter import ttk
@@ -18,6 +20,7 @@ import numpy as np
 import pandas as pd
 import fitz
 import webbrowser
+from preprocessing import *
 
 
 def callback(url):
@@ -156,7 +159,11 @@ def open_settings(window, queue):
 
 
 def start_proc(queue):
-    queue.put(["start_process"])
+    print("Starting...")
+    if os.path.isfile("object_catalogue.csv"):
+        queue.put(["start_process"])
+    else:
+        messagebox.showwarning("No preprocessed spectra found", "No pre-processed spectra were detected in /spectra_processed.\nPlease preprocess your spectra.")
 
 
 def cell_colors(sheet, row_indices_full, row_indices_part, col_ind, colors):
@@ -190,7 +197,7 @@ def load_or_create_image(window, file_name, size, creation_func=None, remake=Fal
 
 
 def construct_table(master, params):
-    labels = ["Alias", "Spectral Class", "RA/DEC", "G mag", "N spec", "Delta RV", "RV avg", "log p", "Interestingness", ]
+    labels = ["Alias", "Spectral Class", "RA/DEC", "G mag", "N spec", "Delta RV", "RV avg", "log p"]
 
     tframe = tk.Frame(master)
     for i, p in enumerate(params):
@@ -215,7 +222,7 @@ def construct_table(master, params):
 def analysis_tab(analysis):
     frame = tk.Frame(analysis)
     try:
-        interesting_dataframe = pd.read_csv("interesting_params.csv")
+        interesting_dataframe = pd.read_csv("result_parameters.csv")
         sheet = Sheet(frame,
                       data=interesting_dataframe.values.tolist())
     except FileNotFoundError:
@@ -244,7 +251,7 @@ def analysis_tab(analysis):
     show_indeterminate = tk.IntVar(frame, value=1)
     highlight = tk.IntVar(frame, value=1)
     filter_kws = tk.StringVar(frame, value="")
-    sortset = tk.StringVar(frame, value="interestingness")
+    sortset = tk.StringVar(frame, value="logp")
 
     def highlight_cells(sheet, hlgt):
         nonlocal current_dataframe
@@ -319,7 +326,10 @@ def analysis_tab(analysis):
         if show_indeterminate.get() == 1:
             filters.append("indeterminate")
 
-        current_dataframe = interesting_dataframe[interesting_dataframe["known_category"].isin(filters)].reset_index(drop=True)
+        try:
+            current_dataframe = interesting_dataframe[interesting_dataframe["known_category"].isin(filters)].reset_index(drop=True)
+        except KeyError:
+            current_dataframe = interesting_dataframe.reset_index(drop=True)
 
         keywords = filter_kws.get().split(";")
         for k in keywords:
@@ -439,7 +449,7 @@ def analysis_tab(analysis):
             "RVavg": np.mean(vels),
             "RVavg_err": np.sqrt(np.sum(np.square(verrs))) / len(verrs),
         }
-        print(list(updatedict.keys()), list(updatedict.values()))
+
         interesting_dataframe.loc[interesting_dataframe["source_id"] == gaia_id, list(updatedict.keys())] = list(updatedict.values())
         interesting_dataframe = interesting_dataframe.sort_values(by="interestingness", ascending=False)
         interesting_dataframe.to_csv("interesting_params.csv", index=False)
@@ -467,8 +477,10 @@ def analysis_tab(analysis):
         sp_class = star["spec_class"]
         alias = star["alias"]
         logp = star["logp"]
-        interestingness = star["interestingness"]
-        flags = ast.literal_eval(star["flags"])
+        try:
+            flags = ast.literal_eval(star["flags"])
+        except KeyError:
+            flags = []
 
         detail_window = tk.Toplevel()
         try:
@@ -514,12 +526,15 @@ def analysis_tab(analysis):
 
         subframe = tk.Frame(main_frame)
 
-        params = [alias, sp_class, (ra, dec), gmag, nspec, (deltarv, u_deltarv), (rvavg, u_rvavg), logp, interestingness]
+        params = [alias, sp_class, (ra, dec), gmag, nspec, (deltarv, u_deltarv), (rvavg, u_rvavg), logp]
         table = construct_table(subframe, params)
         table.grid(row=1, column=1)
 
         bibframe = tk.Frame(subframe)
-        bibcodes = ast.literal_eval(star["bibcodes"])
+        if star["bibcodes"] != "-":
+            bibcodes = ast.literal_eval(star["bibcodes"])
+        else:
+            bibcodes = []
 
         def make_link(b):
             return lambda c: callback(f"https://ui.adsabs.harvard.edu/abs/{b}")
@@ -587,14 +602,15 @@ def analysis_tab(analysis):
     sheet.popup_menu_add_command("View detail window", view_detail_window)
     sheet.popup_menu_add_command("Reload System", reload_system)
 
-    k = tk.Checkbutton(tablesettings_frame, text="Show known", variable=show_known, command=update_sheet)
-    k.grid(row=1, column=1)
-    u = tk.Checkbutton(tablesettings_frame, text="Show unknown", variable=show_unknown, command=update_sheet)
-    u.grid(row=1, column=2)
-    lk = tk.Checkbutton(tablesettings_frame, text="Show likely known", variable=show_likely_known, command=update_sheet)
-    lk.grid(row=1, column=3)
-    nd = tk.Checkbutton(tablesettings_frame, text="Show indeterminate", variable=show_indeterminate, command=update_sheet)
-    nd.grid(row=1, column=4)
+    if "known_category" in interesting_dataframe.columns.tolist():
+        k = tk.Checkbutton(tablesettings_frame, text="Show known", variable=show_known, command=update_sheet)
+        k.grid(row=1, column=1)
+        u = tk.Checkbutton(tablesettings_frame, text="Show unknown", variable=show_unknown, command=update_sheet)
+        u.grid(row=1, column=2)
+        lk = tk.Checkbutton(tablesettings_frame, text="Show likely known", variable=show_likely_known, command=update_sheet)
+        lk.grid(row=1, column=3)
+        nd = tk.Checkbutton(tablesettings_frame, text="Show indeterminate", variable=show_indeterminate, command=update_sheet)
+        nd.grid(row=1, column=4)
     hg = tk.Checkbutton(tablesettings_frame, text="Highlight values", variable=highlight, command=update_sheet)
     hg.grid(row=1, column=5)
     droplabel = tk.Label(tablesettings_frame, text="Sort by: ")
@@ -625,6 +641,7 @@ def get_raw_files():
 
 
 def preprocess(prep_tab):
+    prep_settings = {}
     prep_frame = tk.Frame(prep_tab)
 
     input_container = tk.Frame(prep_frame)
@@ -632,8 +649,46 @@ def preprocess(prep_tab):
     filelist = get_raw_files()
     input_label = tk.Label(input_container,
                            text="Raw spectra",
-                           font="SegoeUI 12")
+                           font="SegoeUI 20")
     input_label.pack()
+    file_handling_choices = tk.Frame(input_container)
+
+    fileendings = []
+    for f in filelist:
+        fend = f.split(".")[-1]
+
+        if fend not in fileendings:
+            fileendings.append(fend)
+
+    fenddict = {}
+    iend = 0
+    for i, fend in enumerate(fileendings):
+        fendlabel = tk.Label(file_handling_choices, text=f".{fend}:")
+        fendlabel.grid(row=1, column=i*2)
+        fend_ch = tk.StringVar(file_handling_choices, value="Generic ASCII")
+        fend_drop = tk.OptionMenu(file_handling_choices,
+                             fend_ch,
+                             *["Generic ASCII",])
+                              # "Generic FITS",
+                              #  "LAMOST Low Resolution",
+                              #  "LAMOST Medium Resolution"])
+        fenddict[f"{fend}"] = fend_ch
+        fend_drop.grid(row=1, column=i*2+1)
+        iend = i
+
+    drpdwn_val = tk.StringVar(value="h,deg")
+    drpdwn_label = tk.Label(file_handling_choices, text=f"RA/DEC units used:")
+    drpdwn_label.grid(row=1, column=iend * 2 + 2)
+    drpdwn = tk.OptionMenu(
+        file_handling_choices,
+        drpdwn_val,
+        *["h,deg",
+          "deg,deg"]
+    )
+    drpdwn.grid(row=1, column=iend * 2 + 3)
+
+    file_handling_choices.pack()
+
     if len(filelist) == 0:
         input_label = tk.Label(input_container,
                                text="Please add your raw spectra files to\n./spectra_raw\nand restart this program",
@@ -642,15 +697,78 @@ def preprocess(prep_tab):
         input_label.pack()
     else:
         input_sheet = Sheet(input_container,
-                            data=get_raw_files(),
+                            data=[[f] for f in filelist],
+                            show_top_left=False,
+                            show_row_index=False,
+                            show_header=False,
+                            show_x_scrollbar=False,
+                            show_y_scrollbar=True,
+                            width=800,
+                            height=800,
+                            column_width=800
                             )
-        input_sheet.hide(canvas="row_index")
-        input_sheet.hide(canvas="header")
-        input_sheet.pack()
-    input_container.grid(row=1, column=1)
+        input_sheet.enable_bindings()
+        input_sheet.pack(fill="both", expand=1)
+    input_container.grid(row=1, column=1, sticky='NEWS')
 
-    def reduce():
-        pass
+    intermediate_container = tk.Frame(prep_frame)
+    subcontainer = tk.Frame(intermediate_container)
+    process_arrow = ImageTk.PhotoImage(Image.open("Arrow.png"))
+    parrlabel = tk.Label(subcontainer, image=process_arrow)
+    parrlabel.image = process_arrow
+    parrlabel.pack(padx=10, pady=10)
+
+    final_container = tk.Frame(prep_frame)
+
+    if os.path.isfile("object_catalogue.csv") == 0:
+        output_label = tk.Label(final_container,
+                                text="Pre-Processed spectra",
+                                font="SegoeUI 20")
+        output_label.pack(side=tk.TOP)
+        output_descr = tk.Label(final_container,
+                                text="Preprocessing has not been completed yet.",
+                                fg="blue",
+                                font="SegoeUI 12 italic")
+        output_descr.pack(side=tk.TOP)
+    else:
+        obj_cat = pd.read_csv("object_catalogue.csv")
+        output_label = tk.Label(final_container,
+                                text="Pre-Processed spectra",
+                                font="SegoeUI 20")
+        output_label.pack(side=tk.TOP)
+        output_sheet = Sheet(final_container,
+                             data=obj_cat.values.tolist(),
+                             headers=obj_cat.columns.tolist(),
+                             show_top_left=False,
+                             show_row_index=False,
+                             width=800,
+                             height=800)
+        output_sheet.enable_bindings()
+        output_sheet.pack(fill="both", expand=1)
+
+    final_container.grid(row=1, column=3, sticky='NEWS')
+    def prep_wrapper():
+        prep_settings["coordunit"] = drpdwn_val.get()
+        preprocessing([(k, v.get()) for k, v in fenddict.items()], prep_settings)
+        if os.path.isfile("object_catalogue.csv") == 0:
+            output_label = tk.Label(final_container,
+                                    text="Pre-Processed spectra",
+                                    font="SegoeUI 20")
+            output_label.pack(side=tk.TOP)
+            output_descr = tk.Label(final_container,
+                                    text="Preprocessing has not been completed yet.",
+                                    fg="blue",
+                                    font="SegoeUI 12 italic")
+            output_descr.pack(side=tk.TOP)
+        else:
+            obj_cat = pd.read_csv("object_catalogue.csv")
+            output_sheet.set_sheet_data(obj_cat.values.tolist())
+
+    process_btn = tk.Button(subcontainer, text="Preprocess", width=10, command=prep_wrapper)
+    process_btn.pack()
+    subcontainer.pack(side=tk.LEFT)
+    intermediate_container.grid(row=1, column=2, sticky='NS')
+
 
     prep_frame.pack(fill="both", expand=1, padx=50, pady=50)
 
@@ -682,7 +800,7 @@ def download_catalogues():
             "H_UKIDSS", "e_H_UKIDSS", "K_UKIDSS", "e_K_UKIDSS", "Z_VISTA", "e_Z_VISTA", "Y_VISTA", "e_Y_VISTA", "J_VISTA", "e_J_VISTA", "H_VISTA", "e_H_VISTA", "Ks_VISTA", "e_Ks_VISTA", "W1", "e_W1", "W2", "e_W2", "W3", "e_W3", "W4", "e_W4"
         ]
     )))
-    knownsd["GAIA_DESIG"] = np.array(["GAIA EDR3 "+str(t) for t in knownsd["GAIA_DESIG"].to_list()])
+    knownsd["GAIA_DESIG"] = np.array(["GAIA EDR3 " + str(t) for t in knownsd["GAIA_DESIG"].to_list()])
     knownsd = knownsd.drop(columns=["recno", "_RA.icrs", "_DE.icrs"])
     knownsd.to_csv("catalogues/sd_catalogue_v56_pub.csv", index=False)
 
@@ -694,8 +812,9 @@ def download_catalogues():
     pandastb = candsd.to_pandas()
     pandastb = pandastb.drop(columns=["recno", "_RA.icrs", "_DE.icrs"])
     pandastb = pandastb.rename(columns=dict(zip(['GaiaEDR3', 'RA_ICRS', 'DE_ICRS', 'GLON', 'GLAT', 'Plx', 'e_Plx', 'GMAG', 'Gmag', 'BP-RP', 'E_BP_RP_c', 'pmRA', 'e_pmRA', 'pmDE', 'e_pmDE', 'pm', 'e_pm', 'RUWE', 'Rpm', 'e_EFlux', 'f_Plx', 'f_pm'],
-                                ["source_id", "ra", "dec", "l", "b", "parallax", "parallax_error", "abs_g_mag", "phot_g_mean_mag", "bp_rp", "phot_bp_rp_excess_factor_corrected", "pmra", "pmra_error", "pmdec", "pmdec_error", "pm", "ruwe", "pm_error",
-                                 "reduced_proper_motion", "excess_flux_error", "parallax_selection_flag", "proper_motion_selection_flag"])))
+                                                ["source_id", "ra", "dec", "l", "b", "parallax", "parallax_error", "abs_g_mag", "phot_g_mean_mag", "bp_rp", "phot_bp_rp_excess_factor_corrected", "pmra", "pmra_error", "pmdec", "pmdec_error", "pm", "ruwe",
+                                                 "pm_error",
+                                                 "reduced_proper_motion", "excess_flux_error", "parallax_selection_flag", "proper_motion_selection_flag"])))
     hdu = fits.BinTableHDU(Table.from_pandas(pandastb))
     hdu.writeto("catalogues/hotSD_gaia_edr3_catalogue.fits")
 
@@ -703,25 +822,6 @@ def download_catalogues():
 
 
 def gui_window(queue, p_queue):
-    def update_progress(bars, labels):
-        try:
-            upd = p_queue.get(block=False)
-        except Empty:
-            upd = None
-        if upd is not None:
-            if upd[2] == "progressbar":
-                if upd[1] == 0:
-                    bars[upd[0] - 1].set(0)
-                else:
-                    val = bars[upd[0] - 1].get() + upd[1]
-                    if val > 100:
-                        val -= 100
-                    bars[upd[0] - 1].set(val)
-            elif upd[2] == "text":
-                labels[upd[0] - 1].configure(text=f"{upd[1]} - {round(bars[upd[0] - 1].get(), 2)}%")
-        window.update()
-        window.after(0, lambda: update_progress(bars, labels))
-
     if os.name == 'nt':
         ctypes.windll.shcore.SetProcessDpiAwareness(0)
     # Initialize the main window
@@ -809,6 +909,36 @@ def gui_window(queue, p_queue):
         if result:
             download_catalogues()
 
+
+    def update_progress(bars, labels):
+        try:
+            upd = p_queue.get(block=False)
+        except Empty:
+            upd = None
+        if upd is not None:
+            if upd[2] == "progressbar":
+                if upd[1] == 0:
+                    bars[upd[0] - 1].set(0)
+                else:
+                    val = bars[upd[0] - 1].get() + upd[1]
+                    if val > 100:
+                        val -= 100
+                    bars[upd[0] - 1].set(val)
+            elif upd[2] == "text":
+                labels[upd[0] - 1].configure(text=f"{upd[1]} - {round(bars[upd[0] - 1].get(), 2)}%")
+            elif upd[0] == "done":
+                for widget in analysis.winfo_children():
+                    widget.destroy()
+                analysis_tab(analysis)
+        window.update()
+        window.after(0, lambda: update_progress(bars, labels))
+
+    def on_closing():
+        if messagebox.askokcancel("Quit", "Do you want to quit?"):
+            os._exit(0)
+
+    window.protocol("WM_DELETE_WINDOW", on_closing)
+
     # Start the main loop to display the window
     update_progress(subprocess_progress, ls)
     window.mainloop()
@@ -822,10 +952,11 @@ if __name__ == "__main__":
     gui_main = threading.Thread(None, gui_window, args=[queue, progress_queue])
     gui_main.start()
 
-#    while True:
-#        item = queue.get()
-#        if item[0] == "update_configs":
-#            configs = item[1]
-#        elif item[0] == "start_process":
-#            proc = threading.Thread(target=interactive_main, args=[configs, progress_queue])
-#            proc.start()
+    while True:
+       item = queue.get()
+       time.sleep(0.1)
+       if item[0] == "update_configs":
+           configs = item[1]
+       elif item[0] == "start_process":
+           proc = threading.Thread(target=interactive_main, args=[configs, progress_queue])
+           proc.start()

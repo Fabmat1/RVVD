@@ -21,7 +21,7 @@ from analyse_results import result_analysis
 ### GENERAL EXECUTION SETTINGS
 general_config = {
     "SPECTRUM_FILE_SEPARATOR": " ",  # Separator between columns in the ASCII file
-    "CATALOGUE": "all_objects_withlamost.csv",  # the location of the catalogue
+    "CATALOGUE": "object_catalogue.csv",  # the location of the catalogue
     "FILE_LOC": "spectra_processed",  # directory that holds the spectrum files
     "OUTPUT_DIR": "output",
     "VERBOSE": False,  # enable/disable verbose output
@@ -1051,7 +1051,8 @@ def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[]):
         print(f"[{gaia_id}] First pass found no good lines, continuing to next spectrum...")
         return None, None, None, False
     mask = np.ones_like(wavelengthdata, dtype=bool)
-    mask[cr_inds] = False
+    cr_inds = np.array(cr_inds, dtype=int)
+    mask[cr_inds[cr_inds < len(cr_inds)]] = False
     wavelengthdata = wavelengthdata[mask]
     fluxdata = fluxdata[mask]
     flux_stddata = flux_stddata[mask]
@@ -1887,6 +1888,7 @@ def interactive_main(configs, queue):
     if configs[2]['CREATE_PDF']:
         create_pdf()
     print("All done!")
+    queue.put(["done", None, None])
 
 
 ############################## EXECUTION ##############################
