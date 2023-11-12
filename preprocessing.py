@@ -81,8 +81,8 @@ def getsign(number):
 
 
 def generic_ascii(filelist, coordunits):
+    global known_catalogue, candidate_catalogue
     if known_catalogue is None or candidate_catalogue is None:
-        global known_catalogue, candidate_catalogue
         known_catalogue, candidate_catalogue = load_catalogues()
     global n
     warn = False
