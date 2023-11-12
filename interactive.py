@@ -749,7 +749,7 @@ def preprocess(prep_tab):
     final_container.grid(row=1, column=3, sticky='NEWS')
     def prep_wrapper():
         if len(filelist) == 0:
-            messagebox.showwarning("No raw files found! Make sure that you placed your files in /spectra_raw and restarted this program.")
+            messagebox.showwarning("No raw files found", "No raw files found! Make sure that you placed your files in /spectra_raw and restarted this program.")
             return
         prep_settings["coordunit"] = drpdwn_val.get()
         preprocessing([(k, v.get()) for k, v in fenddict.items()], prep_settings)
