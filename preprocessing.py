@@ -79,6 +79,11 @@ def getsign(number):
     elif number < 0:
         return "-"
 
+def hjd_to_mjd(hjd):
+    # Convert JD to MJD
+    mjd = hjd - 2400000.5
+    return mjd
+
 
 def generic_ascii(filelist, coordunits):
     global known_catalogue, candidate_catalogue
@@ -96,6 +101,10 @@ def generic_ascii(filelist, coordunits):
             content = f.readlines()
             for i in content[0].split("), ("):
                 if "HJD" in i:
+                    with open(r"./spectra_processed/" + file.split(".")[0] + "_mjd.txt", "w") as outfile:
+                        hjd = float(clean_string(i.split(",")[-1]))
+                        outfile.write(str(hjd_to_mjd(hjd)))
+                elif "MJD" in i:
                     with open(r"./spectra_processed/" + file.split(".")[0] + "_mjd.txt", "w") as outfile:
                         outfile.write(clean_string(i.split(",")[-1]))
                 i = i.split(",")
