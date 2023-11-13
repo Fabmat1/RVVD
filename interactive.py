@@ -451,7 +451,7 @@ def analysis_tab(analysis):
         }
 
         interesting_dataframe.loc[interesting_dataframe["source_id"] == gaia_id, list(updatedict.keys())] = list(updatedict.values())
-        interesting_dataframe = interesting_dataframe.sort_values(by="interestingness", ascending=False)
+        interesting_dataframe = interesting_dataframe.sort_values(by="logp", ascending=False)
         interesting_dataframe.to_csv("interesting_params.csv", index=False)
 
         plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id, custom_saveloc=f"output/{gaia_id}/RV_variation_broken_axis.pdf")

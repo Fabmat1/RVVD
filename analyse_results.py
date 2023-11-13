@@ -362,7 +362,32 @@ def overview(restable, catalogue):
     os.system("lualatex result_parameters.tex")
 
 
-def simbad_request():
+def truncate_simbad(file_path):
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+
+    try:
+        data_index = lines.index("::data::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::\n")
+    except ValueError:
+        print("The specified line is not found in the file.")
+        return
+    del lines[:data_index+2]
+
+    with open(file_path, 'w') as f:
+        f.writelines(lines)
+
+
+def simbad_request(resparams):
+    if os.path.isfile("simbad.txt"):
+        sids = resparams.source_id.to_list()
+        with open("simbad.txt", "r") as sbfile:
+            for l in sbfile.readlines():
+                if "start GAIA DR3 " in l:
+                    l = l.replace("start GAIA DR3 ", "").strip()
+                    sids.remove(l)
+            if len(sids) == 0:
+                return
+
     try:
         with open("simbad_script.s", "r") as file:
             simbad_script = file.read()
@@ -385,36 +410,55 @@ def simbad_request():
     with open("simbad.txt", "w") as file:
         file.write(response.text)
 
-def add_bibcodes_and_tics(res_params, catalogue):
+    truncate_simbad("simbad.txt")
+
+
+def add_bibcodes_and_tics(res_params, catalogue, config):
+    res_params = res_params.reset_index().drop(columns="index")
     with open("simbad_script.s", "w", encoding="utf-8") as outfile:
         outfile.write('format object f1 "start %OBJECT\\n"+\n"%BIBCODELIST"\n')
         for ind, row in res_params.iterrows():
             outfile.write(f"query id GAIA DR3 {row['source_id']}\n")
 
-    simbad_request()
+    simbad_request(res_params)
 
     if os.path.isfile("gaia_tic_reftable.csv"):
         source_tic_table = pd.read_csv("gaia_tic_reftable.csv")
         source_tic_table["source_id"] = source_tic_table["source_id"].astype(str)
+        source_tic_table = source_tic_table[source_tic_table.tic != "notconfigured"]
+        source_tic_table = source_tic_table[source_tic_table.tic != "nointernet"]
     else:
         source_tic_table = pd.DataFrame(columns=["source_id", "tic"])
 
     gids = source_tic_table["source_id"].to_list()
 
-    for ind, row in res_params.iterrows():
-        gaia_id = row["source_id"]
-        if gaia_id in gids:
-            continue
-        print(f"Getting TIC for object nr. {ind + 1}/{len(res_params)}")
-        try:
-            star_info = Catalogs.query_object("Gaia DR3 " + str(gaia_id), catalog="TIC")
-        except astroquery.exceptions.ResolverError:
-            # star_info = Catalogs.query_region(SkyCoord(row["ra"], row["dec"], frame="icrs", unit="deg"))
-            star_info = [{"ID": "-"}]
+    if "GET_TICS" in config:
+        if config["GET_TICS"]:
+            for ind, row in res_params.iterrows():
+                gaia_id = row["source_id"]
+                if gaia_id in gids:
+                    continue
+                print(f"Getting TIC for object nr. {ind + 1}/{len(res_params)}")
+                try:
+                    star_info = Catalogs.query_object("Gaia DR3 " + str(gaia_id), catalog="TIC")
+                except astroquery.exceptions.ResolverError:
+                    # star_info = Catalogs.query_region(SkyCoord(row["ra"], row["dec"], frame="icrs", unit="deg"))
+                    star_info = [{"ID": "-"}]
+                except requests.exceptions.ConnectionError or astroquery.exceptions.TimeoutError:
+                    star_info = [{"ID": "nointernet"}]
 
-        tic_id = star_info[0]['ID']
-        source_tic_table = pd.concat([source_tic_table, pd.DataFrame({"source_id": [gaia_id], "tic": [tic_id]})])
-        source_tic_table.to_csv("gaia_tic_reftable.csv", index=False)
+                tic_id = star_info[0]['ID']
+                source_tic_table = pd.concat([source_tic_table, pd.DataFrame({"source_id": [gaia_id], "tic": [tic_id]})])
+                source_tic_table.to_csv("gaia_tic_reftable.csv", index=False)
+        else:
+            source_tic_table = pd.DataFrame(columns=["source_id", "tic"])
+            source_tic_table["source_id"] = res_params["source_id"]
+            source_tic_table["tic"] = np.full(np.shape(res_params["source_id"].to_numpy()), "notconfigured")
+    else:
+        source_tic_table = pd.DataFrame(columns=["source_id", "tic"])
+        source_tic_table["source_id"] = res_params["source_id"]
+        source_tic_table["tic"] = res_params["source_id"]
+        source_tic_table["tic"] = np.full(np.shape(res_params["source_id"].to_numpy()), "notconfigured")
 
     source_tic_table.to_csv("gaia_tic_reftable.csv", index=False)
 
@@ -422,7 +466,7 @@ def add_bibcodes_and_tics(res_params, catalogue):
         stephancat = pd.read_csv("logp_values_rvvpaper.csv")
         stephancat["GaiaDR2"].str.strip()
     except:
-        pass
+        stephancat = None
 
     list_items_dict = {}
 
@@ -433,17 +477,15 @@ def add_bibcodes_and_tics(res_params, catalogue):
             if line.startswith("start GAIA DR3"):
                 if source_id is not None:
                     list_items_dict[source_id] = bibcodes
-                source_id = int(line.split()[3].strip(":"))
+                source_id = line.split(" ")[3].strip()
                 bibcodes = []
-                try:
-                    logp = stephancat.loc[stephancat["GaiaDR2"] == str(source_id)].iloc[0]["logP"]
-                    if logp < -1.3:
-                        bibcodes.append("2022A&A...661A.113G")
-                except IndexError:
-                    pass
-                except:
-                    pass
-
+                if stephancat:
+                    try:
+                        logp = stephancat.loc[stephancat["GaiaDR2"] == str(source_id)].iloc[0]["logP"]
+                        if logp < -1.3:
+                            bibcodes.append("2022A&A...661A.113G")
+                    except IndexError:
+                        pass
             else:
                 bibcodes.append(line.strip())
 
@@ -452,12 +494,10 @@ def add_bibcodes_and_tics(res_params, catalogue):
 
     def joiner(x):
         try:
-            return ';'.join(x)
+            return str(x)
         except:
             if pd.isnull(x):
                 return "-"
-            print(x)
-            exit(-1)
 
     source_tic_table["bibcodes"] = source_tic_table["source_id"].map(list_items_dict)
     source_tic_table["bibcodes"] = source_tic_table["bibcodes"].apply(joiner)
@@ -521,8 +561,10 @@ def add_bibcodes_and_tics(res_params, catalogue):
     return out_df
 
 
-def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
+def result_analysis(catalogue: pd.DataFrame = None, outdir="output", config=None):
 
+    if config is None:
+        config = {}
     global OUTPUT_DIR
     OUTPUT_DIR = outdir
 
@@ -608,7 +650,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output"):
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
     if ADD_BIBC_TIC:
-        analysis_params = add_bibcodes_and_tics(analysis_params, catalogue)
+        analysis_params = add_bibcodes_and_tics(analysis_params, catalogue, config)
     output_params = analysis_params.copy()
     output_params.to_csv("result_parameters.csv", index=False)
     print("Creating Statistics...")

@@ -32,7 +32,7 @@ try:
     RES_PARAMETER_LIST = pd.read_csv(RES_PARAMETER_LIST)
     RES_PARAMETER_LIST["source_id"] = RES_PARAMETER_LIST["source_id"].astype("U20")
 except FileNotFoundError:
-    RES_PARAMETER_LIST = None
+    pass
 
 def ind_to_strind(ind):
     return "0" + str(ind) if ind < 10 else str(ind)
@@ -79,6 +79,14 @@ def comprehend_lstr(lstr):
 
 
 def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savepath=None, custom_xlim=None, use_ind_as_sid=False, normalized=NORMALIZE):
+    global RES_PARAMETER_LIST
+    if isinstance(RES_PARAMETER_LIST, str):
+        try:
+            RES_PARAMETER_LIST = pd.read_csv(RES_PARAMETER_LIST)
+            RES_PARAMETER_LIST["source_id"] = RES_PARAMETER_LIST["source_id"].astype("U20")
+        except FileNotFoundError:
+            raise FileNotFoundError("File result_parameters.csv not found. Please retry processing your spectra.")
+
     if use_ind_as_sid:
         trow = RES_PARAMETER_LIST[RES_PARAMETER_LIST["source_id"] == ind].iloc[0]
     else:
@@ -141,7 +149,6 @@ def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savep
                 plt.axvline(line, color="darkgrey", linestyle="--", linewidth=.5, zorder=4)
 
         k += 1*SEP[0] if normalized else 1*SEP[1]
-        print(k)
 
     if custom_xlim:
         plt.xlim(custom_xlim)

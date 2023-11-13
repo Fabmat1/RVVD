@@ -27,7 +27,9 @@ general_config = {
     "VERBOSE": False,  # enable/disable verbose output
     "NO_NEGATIVE_FLUX": True,  # check for negative flux values
     "SORT_OUT_NEG_FLX": 0.1,  # filter out spectra files with significant portions of negative flux
-    "SUBDWARF_SPECIFIC_ADJUSTMENTS": True  # Apply some tweaks for the script to be optimized to hot subdwarfs
+    "SUBDWARF_SPECIFIC_ADJUSTMENTS": True,  # Apply some tweaks for the script to be optimized to hot subdwarfs
+    "GET_TICS": False,  # Get TIC IDs via query. This will be slow the first time it is run.
+    "GET_VISIBILITY": False  # Whether to get the visibility of the objects for a certain night and location.
 }
 
 ### FIT SETTINGS
@@ -1884,7 +1886,7 @@ def interactive_main(configs, queue):
         pool.starmap(main_loop, zip(catalogue["source_id"].to_numpy(), itertools.repeat(configs)))
 
     print("Fits are completed, analysing results...")
-    result_analysis(catalogue)
+    result_analysis(catalogue, config=configs[0])
     if configs[2]['CREATE_PDF']:
         create_pdf()
     print("All done!")
@@ -1908,7 +1910,7 @@ if __name__ == "__main__":
     pool.map(main_loop, catalogue["source_id"].to_numpy())
 
     print("Fits are completed, analysing results...")
-    result_analysis(catalogue)
+    result_analysis(catalogue, config=general_config)
     if plot_config['CREATE_PDF']:
         create_pdf()
     print("All done!")
