@@ -4,7 +4,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from astroquery.vizier import Vizier
-
+from idlelib.tooltip import Hovertip
 from analyse_results import vrad_pvalue
 from data_reduction import *
 import fitz
@@ -25,6 +25,51 @@ from queue import Empty
 from tksheet import Sheet
 
 from plot_spectra import plot_system_from_ind
+
+configs = [general_config, fit_config, plot_config]
+
+
+general_tooltips = {
+    "SPECTRUM_FILE_SEPARATOR": ["Column Separator", "Separator between columns in the ASCII file"],
+    "CATALOGUE": ["Catalogue Location", "The location of the catalogue"],
+    "FILE_LOC": ["Spectra Directory", "Directory that holds the spectrum files"],
+    "OUTPUT_DIR": ["Output Directory", "Directory where outputs will be saved"],
+    "VERBOSE": ["Verbose Output", "Enable/Disable verbose output"],
+    "NO_NEGATIVE_FLUX": ["No Negative Flux Check", "Check for negative flux values"],
+    "SORT_OUT_NEG_FLX": ["Negative Flux Filter","Filter out spectra files with significant portions of negative flux"],
+    "SUBDWARF_SPECIFIC_ADJUSTMENTS": ["Subdwarf Adjustments", "Apply some tweaks for the script to be optimized to hot subdwarfs"],
+    "GET_TICS": ["Get TIC IDs", "Get TIC IDs via query. This will be slow the first time it is run."],
+    "GET_VISIBILITY": ["Get Visibility", "Whether to get the visibility of the objects for a certain night and location."],
+    "FOR_DATE": ["Visibility Date", "Date for which to get the visibility"],
+    "post_progress": ["IGNORE THIS SETTING", "Debug setting please ignore :)"]
+}
+
+fit_tooltips = {
+    "OUTLIER_MAX_SIGMA": ["Outlier Maximum Sigma", "Sigma value above which a line from the individual gets rejected as a fit to a wrong line. Outliers do not get used in the cumulative fit."],
+    "ALLOW_SINGLE_DATAPOINT_PEAKS": ["Allow Single Datapoint Peaks", "Whether to accept lines that are made up by only one datapoint."],
+    "MAX_ERR": ["Maximum Error", "Maximum allowed error above which a RV gets rejected as bad [m/s]"],
+    "CUT_MARGIN": ["Cut Margin", "Margin used for cutting out disturbing lines, if their standard deviation was not yet determined [Å]"],
+    "MARGIN": ["Window Margin", "Window margin around lines used in determining fits [Å]"],
+    "AUTO_REMOVE_OUTLIERS": ["Auto Remove Outliers", "Whether an input from the user is required to remove outliers from being used in the cumulative fit"],
+    "MIN_ALLOWED_SNR": ["Minimum SNR", "Minimum allowed SNR to include a line in the cumulative fit"],
+    "SNR_PEAK_RANGE": ["SNR Peak Range", "Width of the peak that is considered the \"signal\" [Multiples of the FWHM]"],
+    "COSMIC_RAY_DETECTION_LIM": ["Cosmic Ray Alert", "Minimum times peak height/flux std required to detect cr, minimum times diff std required to detect cr"],
+    "USE_LINE_AVERAGES": ["Use Line Averages", "Determine guessed FWHM by examining previously fitted lines, not recommended when using multiprocessing!"],
+}
+
+plot_tooltips = {
+    "FIG_DPI": ["Plot DPI", "DPI value of plots that are created, if they are not pdf files"],
+    "PLOT_FMT": ["Plot Format", "File format of plots (.pdf is recommended due to smaller file sizes)"],
+    "SHOW_PLOTS": ["Show Plots", "Show matplotlib plotting window for each plot"],
+    "PLOTOVERVIEW": ["Plot Overview", "Plot overview of entire subspectrum"],
+    "SAVE_SINGLE_IMGS": ["Save Single Images", "Save individual plots of fits as images in the respective folders !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!"],
+    "REDO_IMAGES": ["Redo Images", "Redo images already present in folders"],
+    "SAVE_COMPOSITE_IMG": ["Save Composite Image", "Save RV-Curve plot"],
+    "REDO_STARS": ["Redo Stars Calculation", "Whether to redo stars for which RVs have already be determined"],
+    "PLOT_LABELS_FONT_SIZE": ["Plot Labels Font Size", "Label font size"],
+    "PLOT_TITLE_FONT_SIZE": ["Plot Title Font Size", "Title font size"],
+    "CREATE_PDF": ["Create PDF", "Group all RV-plots into one big .pdf at the end of the calculations !MAY CREATE VERY LARGE FILES FOR BIG DATASETS!"],
+}
 
 
 # from terminedia import ColorGradient
@@ -67,20 +112,9 @@ class ToolTip(object):
             tw.destroy()
 
 
-def CreateToolTip(widget, text):
-    toolTip = ToolTip(widget)
-
-    def enter(event):
-        toolTip.showtip(text)
-
-    def leave(event):
-        toolTip.hidetip()
-
-    widget.bind('<Enter>', enter)
-    widget.bind('<Leave>', leave)
-
-
 def open_settings(window, queue):
+    global configs
+
     def save_settings():
         for cat in [mod_gc, mod_fc, mod_pc]:
             for key, val in cat.items():
@@ -91,6 +125,7 @@ def open_settings(window, queue):
 
     # Open the settings dialogue
     settings_window = tk.Toplevel(window)
+    settings_window.protocol("WM_DELETE_WINDOW", save_settings)
     try:
         settings_window.iconbitmap("favicon.ico")
     except:
@@ -115,31 +150,36 @@ def open_settings(window, queue):
     mod_fc = {}
     mod_pc = {}
 
-    for cat, tab, mod_cat in zip([general_config, fit_config, plot_config], [general, fitting, plotting], [mod_gc, mod_fc, mod_pc]):
+    for cat, tab, mod_cat, l_and_tt in zip(configs, [general, fitting, plotting], [mod_gc, mod_fc, mod_pc], [general_tooltips, fit_tooltips, plot_tooltips]):
         for key, val in cat.items():
+            labeltext, tooltip =  l_and_tt[key]
             if isinstance(val, str):
+                smolframe = tk.Frame(tab)
                 tk_stringval = tk.StringVar(value=val)
-                strval = tk.Entry(tab, textvariable=tk_stringval)
-                l = tk.Label(tab, text=key)
-                CreateToolTip(strval, "")
-                l.pack()
-                strval.pack()
+                strval = tk.Entry(smolframe, textvariable=tk_stringval)
+                l = tk.Label(smolframe, text=labeltext)
+                Hovertip(smolframe, tooltip, 250)
+                l.pack(side=tk.LEFT)
+                strval.pack(side=tk.LEFT)
+                smolframe.pack(anchor="w")
                 mod_cat[key] = tk_stringval
             elif isinstance(val, bool):
                 tk_bool = tk.BooleanVar()
-                boolval = tk.Checkbutton(tab, text=key, variable=tk_bool)
+                boolval = tk.Checkbutton(tab, text=labeltext, variable=tk_bool)
                 if val:
                     boolval.select()
-                CreateToolTip(boolval, "")
-                boolval.pack()
+                Hovertip(boolval, tooltip, 250)
+                boolval.pack(anchor="w")
                 mod_cat[key] = tk_bool
             elif isinstance(val, float) or isinstance(val, int):
+                smolframe = tk.Frame(tab)
                 tk_doub = tk.DoubleVar()
-                doubval = tk.Entry(tab, textvariable=tk_doub)
-                l = tk.Label(tab, text=key)
-                l.pack()
-                CreateToolTip(doubval, "")
-                doubval.pack()
+                doubval = tk.Entry(smolframe, textvariable=tk_doub)
+                l = tk.Label(smolframe, text=labeltext)
+                l.pack(side=tk.LEFT)
+                Hovertip(smolframe, tooltip, 250)
+                doubval.pack(side=tk.LEFT)
+                smolframe.pack(anchor="w")
                 tk_doub.set(val)
                 mod_cat[key] = tk_doub
 
@@ -653,16 +693,16 @@ def preprocess(prep_tab):
     iend = 0
     for i, fend in enumerate(fileendings):
         fendlabel = tk.Label(file_handling_choices, text=f".{fend}:")
-        fendlabel.grid(row=1, column=i*2)
+        fendlabel.grid(row=1, column=i * 2)
         fend_ch = tk.StringVar(file_handling_choices, value="Generic ASCII")
         fend_drop = tk.OptionMenu(file_handling_choices,
-                             fend_ch,
-                             *["Generic ASCII",])
-                              # "Generic FITS",
-                              #  "LAMOST Low Resolution",
-                              #  "LAMOST Medium Resolution"])
+                                  fend_ch,
+                                  *["Generic ASCII", ])
+        # "Generic FITS",
+        #  "LAMOST Low Resolution",
+        #  "LAMOST Medium Resolution"])
         fenddict[f"{fend}"] = fend_ch
-        fend_drop.grid(row=1, column=i*2+1)
+        fend_drop.grid(row=1, column=i * 2 + 1)
         iend = i
 
     drpdwn_val = tk.StringVar(value="h,deg")
@@ -748,6 +788,7 @@ def preprocess(prep_tab):
         output_sheet.pack(fill="both", expand=1)
 
     final_container.grid(row=1, column=3, sticky='NEWS')
+
     def prep_wrapper():
         if len(filelist) == 0:
             messagebox.showwarning("No raw files found", "No raw files found! Make sure that you placed your files in /spectra_raw and restarted this program.")
@@ -776,7 +817,6 @@ def preprocess(prep_tab):
     process_btn.pack()
     subcontainer.pack(side=tk.LEFT)
     intermediate_container.grid(row=1, column=2, sticky='NS')
-
 
     prep_frame.pack(fill="both", expand=1, padx=50, pady=50)
 
@@ -844,18 +884,6 @@ def gui_window(queue, p_queue):
         window.state('zoomed')
     elif os.name == "posix":
         window.attributes('-zoomed', True)
-    # Create the menu bar
-    menu_bar = tk.Menu(window)
-
-    # Create the File menu
-    file_menu = tk.Menu(menu_bar, tearoff=0)
-    file_menu.add_command(label="Settings", command=lambda: open_settings(window, queue))
-    file_menu.add_separator()
-    file_menu.add_command(label="Exit", command=close_window)
-    menu_bar.add_cascade(label="Menu", menu=file_menu)
-
-    # Add the menu bar to the window
-    window.config(menu=menu_bar)
 
     # Create the notebook
     main_tabs = ttk.Notebook(window)
@@ -921,7 +949,6 @@ def gui_window(queue, p_queue):
         if result:
             download_catalogues()
 
-
     def update_progress(bars, labels):
         try:
             upd = p_queue.get(block=False)
@@ -958,17 +985,16 @@ def gui_window(queue, p_queue):
 
 if __name__ == "__main__":
     man = multiprocessing.Manager()
-    configs = [general_config, fit_config, plot_config]
     queue = man.Queue()
     progress_queue = man.Queue()
     gui_main = threading.Thread(None, gui_window, args=[queue, progress_queue])
     gui_main.start()
 
     while True:
-       item = queue.get()
-       time.sleep(0.1)
-       if item[0] == "update_configs":
-           configs = item[1]
-       elif item[0] == "start_process":
-           proc = threading.Thread(target=interactive_main, args=[configs, progress_queue])
-           proc.start()
+        item = queue.get()
+        time.sleep(0.1)
+        if item[0] == "update_configs":
+            configs = item[1]
+        elif item[0] == "start_process":
+            proc = threading.Thread(target=interactive_main, args=[configs, progress_queue])
+            proc.start()

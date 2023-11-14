@@ -1341,7 +1341,7 @@ def files_from_catalogue(cat):
 
 
 def print_status(file, fileset, gaia_id, file_prefix):
-    if general_config["post_progress"] == True:
+    if general_config["post_progress"]:
         general_config["queue"].put(
             (current_process()._identity[0], 100 * (fileset.index(file) + 1) / (len(fileset)), "progressbar"))
         general_config["queue"].put((current_process()._identity[0], gaia_id, "text"))
