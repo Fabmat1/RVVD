@@ -367,11 +367,25 @@ def truncate_simbad(file_path):
         lines = f.readlines()
 
     try:
+        error_index = lines.index("::error:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::\n")
+    except ValueError:
+        error_index = None
+
+    try:
         data_index = lines.index("::data::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::\n")
+
     except ValueError:
         print("The specified line is not found in the file.")
         return
+
+    err_lines = []
+    if error_index is not None:
+        err_lines = lines[error_index+2:data_index-1]
+        err_lines = ["start"+e.split(":")[-1].upper() for e in err_lines]
+
     del lines[:data_index+2]
+
+    lines = err_lines+lines
 
     with open(file_path, 'w') as f:
         f.writelines(lines)
@@ -383,32 +397,24 @@ def simbad_request(resparams):
         with open("simbad.txt", "r") as sbfile:
             for l in sbfile.readlines():
                 if "start GAIA DR3 " in l:
-                    l = l.replace("start GAIA DR3 ", "").strip()
+                    l = l.replace("start GAIA DR3 ", "").replace(":", "").strip()
                     sids.remove(l)
             if len(sids) == 0:
                 return
 
-    try:
-        with open("simbad_script.s", "r") as file:
-            simbad_script = file.read()
-    except FileNotFoundError:
-        print("File 'simbad_script.s' not found.")
-        return
+    # Define the headers
 
-    url = "https://simbad.cds.unistra.fr/simbad/sim-script?script="
-    encoded_script = urllib.parse.quote_plus(simbad_script)
+    # Define the URL
+    url = 'http://simbad.u-strasbg.fr/simbad/sim-script'
 
-    try:
-        response = requests.get(url + encoded_script)
-        response.raise_for_status()
-    except requests.RequestException:
-        print("Unable to make a get request. Saving an empty text file...")
-        with open("simbad.txt", "w") as file:
-            file.write("")
-        return
+    # Open the file in binary mode
+    with open('simbad_script.s', 'rb') as f:
+        # Make the post request with the file and headers
+        response = requests.post(url, files={'scriptFile': f}, data={'submit': 'submit file'})
 
-    with open("simbad.txt", "w") as file:
-        file.write(response.text)
+    # Write the response content to a file
+    with open('simbad.txt', 'w') as f:
+        f.write(response.text)
 
     truncate_simbad("simbad.txt")
 
@@ -479,7 +485,7 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
                     list_items_dict[source_id] = bibcodes
                 source_id = line.split(" ")[3].strip()
                 bibcodes = []
-                if stephancat:
+                if stephancat is not None:
                     try:
                         logp = stephancat.loc[stephancat["GaiaDR2"] == str(source_id)].iloc[0]["logP"]
                         if logp < -1.3:

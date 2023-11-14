@@ -1,23 +1,12 @@
 import ast
-import ctypes
 import multiprocessing
-import os
-import sys
 import time
 import tkinter as tk
-from multiprocessing import Process
 from tkinter import ttk
-from tkinter import messagebox
-
-import astropy.table
-from astropy.table import Table
 from astroquery.vizier import Vizier
 
 from analyse_results import vrad_pvalue
 from data_reduction import *
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
 import fitz
 import webbrowser
 from preprocessing import *
@@ -531,7 +520,7 @@ def analysis_tab(analysis):
         table.grid(row=1, column=1)
 
         bibframe = tk.Frame(subframe)
-        if star["bibcodes"] != "-":
+        if star["bibcodes"] != "-" and isinstance(star["bibcodes"], str):
             bibcodes = ast.literal_eval(star["bibcodes"])
         else:
             bibcodes = []
@@ -917,8 +906,12 @@ def gui_window(queue, p_queue):
         ls.append(label)
 
     # Create the start button
-    start_button = tk.Button(processing, font=('Segoe UI', 12), text="Start", command=lambda: start_proc(queue), height=1, width=15, bg="#90EE90")
-    start_button.place(in_=processing, anchor="se", relx=0.95, rely=0.95)
+    buttons_frame = tk.Frame()
+    settings_button = tk.Button(buttons_frame, font=('Segoe UI', 12), text="Adjust Settings", command=lambda: open_settings(window, queue), height=1, width=15)
+    settings_button.pack(side=tk.LEFT)
+    start_button = tk.Button(buttons_frame, font=('Segoe UI', 12), text="Start", command=lambda: start_proc(queue), height=1, width=15, bg="#90EE90")
+    start_button.pack(side=tk.LEFT)
+    buttons_frame.place(in_=processing, anchor="se", relx=0.95, rely=0.95)
 
     if "sd_catalogue_v56_pub.csv" not in os.listdir("catalogues") or "hotSD_gaia_edr3_catalogue.fits" not in os.listdir("catalogues"):
         result = messagebox.askokcancel("Catalogue Download Required",
@@ -933,22 +926,23 @@ def gui_window(queue, p_queue):
         try:
             upd = p_queue.get(block=False)
         except Empty:
-            upd = None
-        if upd is not None:
-            if upd[2] == "progressbar":
-                if upd[1] == 0:
-                    bars[upd[0] - 1].set(0)
-                else:
-                    val = bars[upd[0] - 1].get() + upd[1]
-                    if val > 100:
-                        val -= 100
-                    bars[upd[0] - 1].set(val)
-            elif upd[2] == "text":
-                labels[upd[0] - 1].configure(text=f"{upd[1]} - {round(bars[upd[0] - 1].get(), 2)}%")
-            elif upd[0] == "done":
-                for widget in analysis.winfo_children():
-                    widget.destroy()
-                analysis_tab(analysis)
+            window.update()
+            window.after(0, lambda: update_progress(bars, labels))
+            return
+        if upd[2] == "progressbar":
+            if upd[1] == 0:
+                bars[upd[0] - 1].set(0)
+            else:
+                val = bars[upd[0] - 1].get() + upd[1]
+                if val > 100:
+                    val -= 100
+                bars[upd[0] - 1].set(val)
+        elif upd[2] == "text":
+            labels[upd[0] - 1].configure(text=f"{upd[1]} - {round(bars[upd[0] - 1].get(), 2)}%")
+        elif upd[0] == "done":
+            for widget in analysis.winfo_children():
+                widget.destroy()
+            analysis_tab(analysis)
         window.update()
         window.after(0, lambda: update_progress(bars, labels))
 

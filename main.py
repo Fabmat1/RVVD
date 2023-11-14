@@ -29,7 +29,8 @@ general_config = {
     "SORT_OUT_NEG_FLX": 0.1,  # filter out spectra files with significant portions of negative flux
     "SUBDWARF_SPECIFIC_ADJUSTMENTS": True,  # Apply some tweaks for the script to be optimized to hot subdwarfs
     "GET_TICS": False,  # Get TIC IDs via query. This will be slow the first time it is run.
-    "GET_VISIBILITY": False  # Whether to get the visibility of the objects for a certain night and location.
+    "GET_VISIBILITY": False,  # Whether to get the visibility of the objects for a certain night and location.
+    "FOR_DATE": "2023-12-09"  # Date for which to get the visibility
 }
 
 ### FIT SETTINGS
@@ -864,7 +865,6 @@ def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[]):
             # print(f"[{gaia_id}] Line {lstr} not covered by spectrum, skipping!")
             continue
 
-
         sanitize = False
         for i in disturbing_lines.values():
             if (i != center) and (i - fit_config['CUT_MARGIN'] < center + fit_config['MARGIN'] or i + fit_config['CUT_MARGIN'] > center - fit_config['MARGIN']):
@@ -911,7 +911,6 @@ def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[]):
         except ValueError:
             sucess = False
             continue
-
 
         if lstr != "unknown":
             if fit_config['USE_LINE_AVERAGES']:
@@ -1046,7 +1045,6 @@ def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[]):
             linelist.append(center)
             paramlist.append(params)
             r_facs.append(params[2] / center)
-
 
         # print(f"[{gaia_id}] First pass found {len(linelist)} good lines.")
     if len(linelist) == 0:
