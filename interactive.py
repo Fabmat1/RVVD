@@ -594,11 +594,16 @@ def analysis_tab(analysis):
 
         buttonframe.grid(row=1, column=3, sticky="news")
 
+    def create_master_spectrum():
+        gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
+
     sheet.enable_bindings()
     sheet.headers(newheaders=interesting_dataframe.columns.tolist())
+    sheet.disable_bindings( "cut", "paste", "delete","edit_cell","edit_header","edit_index")
     sheet.popup_menu_add_command("Add to observation list", add_to_observation_list)
     sheet.popup_menu_add_command("Remove from observation list", remove_from_observation_list)
     sheet.popup_menu_add_command("View detail window", view_detail_window)
+    sheet.popup_menu_add_command("Create master spectrum", create_master_spectrum)
     sheet.popup_menu_add_command("Reload System", reload_system)
 
     if "known_category" in interesting_dataframe.columns.tolist():
@@ -924,7 +929,7 @@ def gui_window(queue, p_queue):
             upd = p_queue.get(block=False)
         except Empty:
             window.update()
-            window.after(0, lambda: update_progress(bars, labels))
+            window.after(10, lambda: update_progress(bars, labels))
             return
         if upd[2] == "progressbar":
             if upd[1] == 0:
@@ -941,7 +946,7 @@ def gui_window(queue, p_queue):
                 widget.destroy()
             analysis_tab(analysis)
         window.update()
-        window.after(0, lambda: update_progress(bars, labels))
+        window.after(10, lambda: update_progress(bars, labels))
 
     def on_closing():
         os._exit(0)
@@ -962,7 +967,6 @@ if __name__ == "__main__":
 
     while True:
         item = queue.get()
-        time.sleep(0.1)
         if item[0] == "update_configs":
             configs = item[1]
         elif item[0] == "start_process":

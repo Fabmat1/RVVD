@@ -421,7 +421,11 @@ def get_star_info(file, catalogue=None):
         catalogue = pd.read_csv("all_objects_withlamost.csv")
 
     header = dict(fits.open(file)[0].header)
-    sid = np.int64(header["OBJECT"])
+    try:
+        sid = np.int64(header["OBJECT"])
+    except ValueError:
+        sid = np.int64(header["OBJECT"].replace("Gaia eDR3 ", "").strip())
+    print(sid)
     sinfo = catalogue[catalogue["source_id"] == sid].iloc[0]
     if os.name == "nt":
         sinfo["file"] = file.split("/")[-1]
