@@ -289,7 +289,7 @@ def pseudo_voigt(x, scaling, gamma, shift, slope, height, eta):
     return -scaling * (eta * g + (1 - eta) * l) + slope * x + height
 
 
-def load_spectrum(filename, preserve_below_zero=False):
+def load_spectrum(filename, preserve_below_zero=False, no_meta=False):
     """
     :param filename: Spectrum File location
     :return: Spectrum Wavelengths, Corresponding flux, time of observation, flux error (if available)
@@ -299,31 +299,35 @@ def load_spectrum(filename, preserve_below_zero=False):
     wavelength = data[:, 0]
     flux = data[:, 1]
     flux_std = data[:, 2]
-    filename_prefix, nspec = splitname(filename)
+
     if general_config["NO_NEGATIVE_FLUX"] and not preserve_below_zero:
         mask = flux > 0
         wavelength = wavelength[mask]
         flux_std = flux_std[mask]
         flux = flux[mask]
-    nspec = nspec.replace(".txt", "")
-    nspec = int(nspec)
-    try:
-        t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#",
-                                  delimiter=general_config["SPECTRUM_FILE_SEPARATOR"])[nspec - 1], format="mjd")
-    except IndexError:
-        t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#",
-                                  delimiter=general_config["SPECTRUM_FILE_SEPARATOR"]), format="mjd")
+    if not no_meta:
+        filename_prefix, nspec = splitname(filename)
+        nspec = nspec.replace(".txt", "")
+        nspec = int(nspec)
+        try:
+            t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#",
+                                      delimiter=general_config["SPECTRUM_FILE_SEPARATOR"])[nspec - 1], format="mjd")
+        except IndexError:
+            t = atime.Time(np.loadtxt(splitname(filename)[0] + "_mjd.txt", comments="#",
+                                      delimiter=general_config["SPECTRUM_FILE_SEPARATOR"]), format="mjd")
 
-    if plot_config['PLOTOVERVIEW']:
-        plt.title("Full Spectrum Overview")
-        plt.ylabel("Flux [ergs/s/cm^2/Å]")
-        plt.xlabel("Wavelength [Å]")
-        plt.plot(wavelength, flux, color="navy")
-        if plot_config['SHOW_PLOTS']:
-            plt.show()
-    if "flux_std" not in vars():
-        flux_std = np.zeros(np.shape(flux))
-    return wavelength, flux, t, flux_std
+        if plot_config['PLOTOVERVIEW']:
+            plt.title("Full Spectrum Overview")
+            plt.ylabel("Flux [ergs/s/cm^2/Å]")
+            plt.xlabel("Wavelength [Å]")
+            plt.plot(wavelength, flux, color="navy")
+            if plot_config['SHOW_PLOTS']:
+                plt.show()
+        if "flux_std" not in vars():
+            flux_std = np.zeros(np.shape(flux))
+        return wavelength, flux, t, flux_std
+    else:
+        return wavelength, flux, flux_std
 
 
 def calc_SNR(params, flux, wavelength, margin, cr_inds=None):

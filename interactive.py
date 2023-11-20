@@ -1,8 +1,12 @@
 import ast
+import itertools
 import multiprocessing
 import time
 import tkinter as tk
+import customtkinter as ctk
+from customtkinter import ctk_tk
 from tkinter import ttk
+import pandas as pd
 from astroquery.vizier import Vizier
 from idlelib.tooltip import Hovertip
 from analyse_results import vrad_pvalue
@@ -11,7 +15,6 @@ import fitz
 import webbrowser
 from preprocessing import *
 
-
 def callback(url):
     webbrowser.open_new(url)
 
@@ -19,7 +22,7 @@ def callback(url):
 from PIL import Image, ImageTk
 
 from get_interesting_stars import quick_visibility
-from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis
+from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis, open_spec_files, load_spectrum, lines_to_fit
 import threading
 from queue import Empty
 from tksheet import Sheet
@@ -216,7 +219,6 @@ def construct_table(master, params):
         value.grid(row=i + 1, column=2)
 
     return tframe
-
 
 def analysis_tab(analysis):
     frame = tk.Frame(analysis)
@@ -595,7 +597,104 @@ def analysis_tab(analysis):
         buttonframe.grid(row=1, column=3, sticky="news")
 
     def create_master_spectrum():
+        if not os.path.isdir("master_spectra"):
+            os.mkdir("master_spectra")
         gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
+        rv_table = pd.read_csv(f"output/{gaia_id}/RV_variation.csv")
+        assoc_files = interesting_dataframe[interesting_dataframe["source_id"] == gaia_id].iloc[0]["associated_files"].split(";")
+        assoc_files = [f.replace(".fits", "") for f in assoc_files]
+
+        mjddict = {}
+        wls = []
+        flxs = []
+
+        for f in assoc_files:
+            with open(f"spectra_processed/{f}_mjd.txt", "r") as infile:
+                mjds = [float(l.strip()) for l in infile.readlines()]
+            flist = open_spec_files("spectra_processed", [f])
+            for mjd, f in zip(mjds, flist):
+                mjddict[round(mjd, 4)] = f
+        for ind, row in rv_table.iterrows():
+            file = mjddict[round(row["mjd"], 4)]
+            wl, flx, _, _ = load_spectrum(f"{file}")
+            wl = wlshift(wl, -row["culum_fit_RV"])
+            s = wl.argsort()
+            wl = wl[s]
+            flx = flx[s]
+
+            wls.append(wl)
+            flxs.append(flx)
+
+        # for i, [w, f] in enumerate(zip(wls, flxs)):
+        #     plt.plot(w, f/f.mean() + i, zorder=1, linewidth=1)
+        # for l in lines_to_fit.values():
+        #     plt.gca().axvline(l, color="darkgray", linestyle="--", linewidth=1, zorder=1)
+        # plt.tight_layout()
+        # plt.show()
+
+        # step 1: calculating wavelength ranges
+        ranges = [np.ptp(x) for x in wls]
+
+        # step 2: grouping similar ranges
+        eps = 0.05
+        groups = []
+        for i, r1 in enumerate(ranges):
+            thisgroup = []
+            for j, r2 in enumerate(ranges):
+                if i != j and abs((r1 - r2) / r1) <= eps:
+                    thisgroup.append(sorted([i, j]))
+            thisgroup = np.unique(list(itertools.chain.from_iterable(thisgroup))).tolist()
+            groups.append(thisgroup)
+
+        # sort and remove duplicate groups
+        groups.sort()
+        groups = list(groups for groups, _ in itertools.groupby(groups))
+
+        # compute frequencies of the groups
+        lengths = [len(group) for group in groups]
+
+        # get the max frequency and group
+        max_length = max(lengths)
+        largest_group = groups[lengths.index(max_length)]
+
+        # step 3: reducing the arrays
+        wls = [wls[i] for i in largest_group]
+
+        # step 4: remove the flux arrays not corresponding to the biggest group of wavelength arrays
+        flxs = [flxs[i] for i in largest_group]
+
+        # Compute the global min and max wavelengths and mean wavelength step
+        min_wl = np.min([np.min(wl) for wl in wls])
+        max_wl = np.max([np.max(wl) for wl in wls])
+        mean_step = np.mean([np.mean(np.diff(wl)) for wl in wls])
+
+        # Generate the new global wavelength array
+        global_wls = np.arange(min_wl, max_wl, mean_step)
+
+        # Initialize the global flux array
+        global_flxs = np.zeros_like(global_wls)
+
+        n_in_bin = np.zeros(global_flxs.shape)
+        # Loop over the individual wls and flxs arrays
+        for wl, flx in zip(wls, flxs):
+            # Compute the indices of the 'left' wavelength bin limits of the original in the new array
+            ind = np.digitize(wl, global_wls) - 1
+            # Compute the fraction of each flux that belongs to the 'left' bin
+            frac = np.abs((global_wls[ind] - wl)) / mean_step
+            # Add the fluxes to the new array, distributing them proportionally
+            np.add.at(global_flxs, ind, frac * flx)
+            np.add.at(global_flxs, ind[ind+1 < len(wl)] + 1, (1 - frac[ind+1 < len(wl)]) * flx[ind+1 < len(wl)])
+            np.add.at(n_in_bin, ind, 1)
+            np.add.at(n_in_bin, ind[ind+1 < len(wl)] + 1, 1)
+
+        global_flxs = global_flxs[n_in_bin != 0]
+        n_in_bin = n_in_bin[n_in_bin != 0]
+        global_flxs /= n_in_bin
+
+        outdata = np.stack((global_wls, global_flxs, np.zeros(global_wls.shape)), axis=-1)
+        np.savetxt(f"master_spectra/{gaia_id}_stacked.txt", outdata, fmt='%1.4f')
+
+
 
     sheet.enable_bindings()
     sheet.headers(newheaders=interesting_dataframe.columns.tolist())

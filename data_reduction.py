@@ -91,15 +91,6 @@ def detect_spectral_area(flats_image):
     else:
         l_y = np.max(l_y) + 5
 
-    # Display the image using Matplotlib
-    # plt.imshow(image_data, zorder=1, cmap="Greys_r")
-    # plt.axvline(l_x, color="lime", zorder=5)
-    # plt.axvline(u_x, color="lime", zorder=5)
-    # plt.axhline(l_y, color="lime", zorder=5)
-    # plt.axhline(u_y, color="lime", zorder=5)
-    # plt.axis('off')  # Turn off axis labels
-    # plt.show()
-
     return [(l_x, u_x), (l_y, u_y)]
 
 
@@ -132,6 +123,7 @@ def create_master_image(image_list, hdu_id, bounds, master_bias=None, master_con
 
 
 def create_master_flat(image_list, second_image_list, hdu_id, master_bias=None, bounds=None):
+
     if bounds is None:
         image_data = fits.open(image_list[0])[hdu_id].data
     else:
@@ -161,6 +153,11 @@ def create_master_flat(image_list, second_image_list, hdu_id, master_bias=None, 
 
     master *= 1 / master.max()
     master2 *= 1 / master2.max()
+
+    if bounds is not None:
+        # Get rid of littrow ghost
+        center_diff = np.median(master)-np.median(master2)
+        master2 += center_diff
 
     master = np.minimum(master, master2)
     # master *= 1 / master.max()
@@ -250,8 +247,41 @@ class WavelenthPixelTransform():
 
 
 def wlshift(wl, vel_corr):
-    wl_shift = vel_corr/speed_of_light * wl
-    return wl+wl_shift
+    # wl_shift = vel_corr/speed_of_light * wl
+    # return wl+wl_shift
+    return wl/(1-(vel_corr/(speed_of_light/1000)))
+
+
+def fluxstatistics(wl, flux):
+    med = median_filter(flux, 5)
+    flux_norm = flux/med-1
+    std = pd.Series(flux_norm).rolling(min_periods=1, window=20, center=True).std().to_numpy()
+
+    # plt.plot(flux_norm)
+    # plt.plot(3*std)
+    # plt.tight_layout()
+    # plt.show()
+
+    flux = flux[flux_norm < 3*std]
+    wl = wl[flux_norm < 3*std]
+
+    med = median_filter(flux, 5)
+    flux_norm = flux / med - 1
+    std = pd.Series(flux_norm).rolling(min_periods=1, window=20, center=True).std().to_numpy()
+
+    # plt.plot(flux_norm)
+    # plt.plot(3 * std)
+    # plt.tight_layout()
+    # plt.show()
+
+    flx_std = flux*std
+
+    # plt.plot(wl, flux)
+    # plt.fill_between(wl, flux-flx_std, flux+flx_std, color="red", alpha=0.5)
+    # plt.tight_layout()
+    # plt.show()
+
+    return wl, flux, flx_std
 
 
 def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mjd, location, ra, dec):
@@ -277,7 +307,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
     xcenters = []
     width = []
 
-    # .82~.86 Angströms per pixel
+    # 0.82 to 0.86 Angströms per pixel is usual for SOAR
 
     for i in np.linspace(10, image.shape[1] - 10, 20):
         data = np.min(image[:, int(i - 5):int(i + 5)], axis=1)
@@ -375,43 +405,23 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
 
     # print(params, np.sqrt(np.diag(errs)))
 
-    # residgrid = np.zeros([200, 50])
-    # for i in range(200):
-    #     for j in range(50):
-    #         wpt.wstart = 3550 + i/2
-    #         wpt.dwdp = 0.73 + j/75
-    #         shiftedwl = wpt.px_to_wl(pixel)
-    #
-    #         reference = interp1d(realcwl, realcflux)
-    #
-    #         residgrid[i, j] = np.sum(compflux**2-reference(shiftedwl)**2)
-
-    # plt.imshow(residgrid, aspect='auto')
-    # plt.show()
     final_wl_arr = wpt.px_to_wl(pixel)
 
     # plt.plot(realcwl, realcflux)
     # plt.plot(final_wl_arr, compflux.min() - flux.max() + flux, linewidth=1, color="gray")
     # plt.plot(final_wl_arr, compflux, color="darkred")
-    # plt.scatter(linelist, intensities/10, s=2, marker="x", color="red")
-    # for i, l in enumerate(linelist):
-    #     ident = linetable.iloc[i]["ident"].strip()
-    #     color = {"FeI": "green",
-    #              "FeII": "blue",
-    #              "ArI": "red",
-    #              "ArII": "orange"}[ident]
-    #     plt.axvline(l, .9, .95, color=color, linewidth=np.log(linetable.iloc[i]["intens"])/2)
-    # plt.tight_layout()
     # plt.show()
 
     sc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
     barycorr = sc.radial_velocity_correction(obstime=Time(mjd, format="mjd"), location=location)
-    barycorr.to(u.km / u.s)
+    barycorr = barycorr.to(u.km / u.s)
     barycorr = barycorr.value
 
     final_wl_arr = wlshift(final_wl_arr, barycorr)
 
-    return final_wl_arr, flux
+    final_wl_arr, flux, flx_std = fluxstatistics(final_wl_arr, flux)
+
+    return final_wl_arr, flux, flx_std
 
     # Save to file in other function
 
@@ -425,7 +435,6 @@ def get_star_info(file, catalogue=None):
         sid = np.int64(header["OBJECT"])
     except ValueError:
         sid = np.int64(header["OBJECT"].replace("Gaia eDR3 ", "").strip())
-    print(sid)
     sinfo = catalogue[catalogue["source_id"] == sid].iloc[0]
     if os.name == "nt":
         sinfo["file"] = file.split("/")[-1]
@@ -438,7 +447,7 @@ def get_star_info(file, catalogue=None):
     return sinfo, time.mjd
 
 
-def save_to_ascii(wl, flx, mjd, trow):
+def save_to_ascii(wl, flx, flx_std, mjd, trow):
     dir = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR"
     outtablefile = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv"
     if os.path.isfile(outtablefile):
@@ -456,7 +465,7 @@ def save_to_ascii(wl, flx, mjd, trow):
         datefile.write(str(mjd))
 
     outtable.to_csv(outtablefile, index=False)
-    outdata = np.stack((wl, flx, np.zeros(wl.shape)), axis=-1)
+    outdata = np.stack((wl, flx, flx_std), axis=-1)
     np.savetxt(fname, outdata, fmt='%1.4f')
 
 
@@ -464,14 +473,15 @@ def split_given_size(a, size):
     return np.split(a, np.arange(size, len(a), size))
 
 
+# You should only need to modify
 if __name__ == "__main__":
     print("Starting data reduction...")
     catalogue = pd.read_csv("all_objects_withlamost.csv")
     allfiles = sorted(os.listdir(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR"))
 
     print("Searching files...")
-    flat_list = []
-    shifted_flat_list = []
+    flat_list = [] # Flats
+    shifted_flat_list = [] # Flats created with a small camera tilt to get rid of the Littrow ghost
     for file in allfiles:
         if "quartz" in file and "test" not in file and "bias" not in file and "shifted" not in file:
             flat_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
@@ -524,10 +534,10 @@ if __name__ == "__main__":
     for file in allfiles:
         file = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file
         if "bias" not in file and "quartz" not in file and "test" not in file and "FeAr" not in file and ".txt" not in file and "RED" not in file:
-            compfiles = []
+            compfiles = [] # Complamp list for this file
 
             if os.name == "nt":
-                int_file_index = int(file.split("/")[-1][:4])
+                int_file_index = int(file.split("\\")[-1][:4])
             else:
                 int_file_index = int(file.split("/")[-1][:4])
 
@@ -547,12 +557,12 @@ if __name__ == "__main__":
 
             master_comp = create_master_image(compfiles, 0, crop, master_bias)
 
-            trow, mjd = get_star_info(file, catalogue)
+            trow, mjd = get_star_info(file, catalogue) # You probably need to write your own function. Trow needs to be a dict with "ra" and "dec" keys. Mjd is self-explanatory
             print(f'Working on index {int_file_index}, GAIA DR3 {trow["source_id"]}...')
             soardf = pd.concat([soardf, trow])
 
-            cerropachon = EarthLocation.of_site('Cerro Pachon')
-            wl, flx = extract_spectrum(
+            cerropachon = EarthLocation.of_site('Cerro Pachon')  # Location of SOAR
+            wl, flx, flx_std = extract_spectrum(
                 file,
                 master_bias,
                 master_flat,
@@ -562,8 +572,10 @@ if __name__ == "__main__":
                 cerropachon,
                 trow["ra"],
                 trow["dec"])
-            save_to_ascii(wl, flx, mjd, trow)
+            save_to_ascii(wl, flx, flx_std, mjd, trow)  # You probably need to write your own function for saving the wl and flx
 
+
+    # You can ignore everything below, this is only for Coadding spectra.
     if len(COADD_SIDS) > 0:
         directory = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR"
         labeltable = pd.read_csv(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv")
@@ -586,15 +598,19 @@ if __name__ == "__main__":
 
                 allflx = []
                 allwl = []
+                all_flx_std = []
                 for f in coadd_list:
-                    wl, flx, _, _ = load_spectrum(directory + "/" + f.replace(".fits", "_01.txt"))
+                    wl, flx, t, flx_std = load_spectrum(directory + "/" + f.replace(".fits", "_01.txt"))
                     allwl.append(wl)
                     allflx.append(flx)
+                    all_flx_std.append(flx_std)
 
                 allwl = np.vstack(allwl)
                 allflx = np.vstack(allflx)
+                all_flx_std = np.vstack(all_flx_std)
 
                 allwl = np.mean(allwl, axis=0)
                 allflx = np.sum(allflx, axis=0) / len(allflx)
+                all_flx_std = np.sum(all_flx_std, axis=0) / len(all_flx_std)
 
-                save_to_ascii(allwl, allflx, mean_mjd, trow)
+                save_to_ascii(allwl, allflx, all_flx_std, mean_mjd, trow)
