@@ -3,17 +3,20 @@ import itertools
 import multiprocessing
 import time
 import tkinter as tk
-import customtkinter as ctk
-from customtkinter import ctk_tk
+import matplotlib.pyplot as plt
 from tkinter import ttk
 import pandas as pd
 from astroquery.vizier import Vizier
 from idlelib.tooltip import Hovertip
+
+from scipy.interpolate import UnivariateSpline
+
 from analyse_results import vrad_pvalue
 from data_reduction import *
 import fitz
 import webbrowser
 from preprocessing import *
+
 
 def callback(url):
     webbrowser.open_new(url)
@@ -31,7 +34,6 @@ from plot_spectra import plot_system_from_ind
 
 configs = [general_config, fit_config, plot_config]
 
-
 general_tooltips = {
     "SPECTRUM_FILE_SEPARATOR": ["Column Separator", "Separator between columns in the ASCII file"],
     "CATALOGUE": ["Catalogue Location", "The location of the catalogue"],
@@ -39,12 +41,13 @@ general_tooltips = {
     "OUTPUT_DIR": ["Output Directory", "Directory where outputs will be saved"],
     "VERBOSE": ["Verbose Output", "Enable/Disable verbose output"],
     "NO_NEGATIVE_FLUX": ["No Negative Flux Check", "Check for negative flux values"],
-    "SORT_OUT_NEG_FLX": ["Negative Flux Filter","Filter out spectra files with significant portions of negative flux"],
+    "SORT_OUT_NEG_FLX": ["Negative Flux Filter", "Filter out spectra files with significant portions of negative flux"],
     "SUBDWARF_SPECIFIC_ADJUSTMENTS": ["Subdwarf Adjustments", "Apply some tweaks for the script to be optimized to hot subdwarfs"],
     "GET_TICS": ["Get TIC IDs", "Get TIC IDs via query. This will be slow the first time it is run."],
     "GET_VISIBILITY": ["Get Visibility", "Whether to get the visibility of the objects for a certain night and location."],
     "FOR_DATE": ["Visibility Date", "Date for which to get the visibility"],
-    "post_progress": ["IGNORE THIS SETTING", "Debug setting please ignore :)"]
+    "post_progress": ["IGNORE THIS SETTING", "Debug setting please ignore :)"],
+    "TAG_KNOWN": ["Tag Known", "Tag systems whose RV variability is known"]
 }
 
 fit_tooltips = {
@@ -125,7 +128,7 @@ def open_settings(window, queue):
 
     for cat, tab, mod_cat, l_and_tt in zip(configs, [general, fitting, plotting], [mod_gc, mod_fc, mod_pc], [general_tooltips, fit_tooltips, plot_tooltips]):
         for key, val in cat.items():
-            labeltext, tooltip =  l_and_tt[key]
+            labeltext, tooltip = l_and_tt[key]
             if isinstance(val, str):
                 smolframe = tk.Frame(tab)
                 tk_stringval = tk.StringVar(value=val)
@@ -219,6 +222,20 @@ def construct_table(master, params):
         value.grid(row=i + 1, column=2)
 
     return tframe
+
+
+def get_interpolation_function(arr_x, arr_y):
+    interpolations = [interp1d(x, y, bounds_error=False, fill_value=(y[0], y[-1])) for x, y in zip(arr_x, arr_y)]
+
+    def interpolated_median(x):
+        # Evaluate the interpolations at x
+        evaluated = [interp(x) for interp in interpolations]
+
+        # Return the median
+        return np.median(evaluated, axis=0)
+
+    return interpolated_median
+
 
 def analysis_tab(analysis):
     frame = tk.Frame(analysis)
@@ -511,7 +528,7 @@ def analysis_tab(analysis):
                                        quick_visibility,
                                        ra=ra,
                                        dec=dec,
-                                       date="2023-11-04 00:00:00",  # TODO: No! change this!
+                                       date=general_config["FOR_DATE"],
                                        saveloc=f"output/{gaia_id}/visibility.pdf")
         visplot.grid(row=1, column=2, sticky="news")
 
@@ -610,7 +627,7 @@ def analysis_tab(analysis):
 
         for f in assoc_files:
             with open(f"spectra_processed/{f}_mjd.txt", "r") as infile:
-                mjds = [float(l.strip()) for l in infile.readlines()]
+                mjds = [float(l.strip()) for l in infile.readlines() if "#" not in l]
             flist = open_spec_files("spectra_processed", [f])
             for mjd, f in zip(mjds, flist):
                 mjddict[round(mjd, 4)] = f
@@ -624,13 +641,6 @@ def analysis_tab(analysis):
 
             wls.append(wl)
             flxs.append(flx)
-
-        # for i, [w, f] in enumerate(zip(wls, flxs)):
-        #     plt.plot(w, f/f.mean() + i, zorder=1, linewidth=1)
-        # for l in lines_to_fit.values():
-        #     plt.gca().axvline(l, color="darkgray", linestyle="--", linewidth=1, zorder=1)
-        # plt.tight_layout()
-        # plt.show()
 
         # step 1: calculating wavelength ranges
         ranges = [np.ptp(x) for x in wls]
@@ -663,13 +673,21 @@ def analysis_tab(analysis):
         # step 4: remove the flux arrays not corresponding to the biggest group of wavelength arrays
         flxs = [flxs[i] for i in largest_group]
 
+        interpolated_diff = get_interpolation_function([h[:-1] for h in wls], [np.diff(w) for w in wls])
+
         # Compute the global min and max wavelengths and mean wavelength step
         min_wl = np.min([np.min(wl) for wl in wls])
         max_wl = np.max([np.max(wl) for wl in wls])
-        mean_step = np.mean([np.mean(np.diff(wl)) for wl in wls])
 
         # Generate the new global wavelength array
-        global_wls = np.arange(min_wl, max_wl, mean_step)
+        global_wls = []
+
+        w = min_wl
+        while w < max_wl:
+            global_wls.append(w)
+            w += interpolated_diff(w)
+
+        global_wls = np.array(global_wls)
 
         # Initialize the global flux array
         global_flxs = np.zeros_like(global_wls)
@@ -679,26 +697,30 @@ def analysis_tab(analysis):
         for wl, flx in zip(wls, flxs):
             # Compute the indices of the 'left' wavelength bin limits of the original in the new array
             ind = np.digitize(wl, global_wls) - 1
+
             # Compute the fraction of each flux that belongs to the 'left' bin
-            frac = np.abs((global_wls[ind] - wl)) / mean_step
+            frac = np.abs((global_wls[ind[ind + 1 < len(global_wls)]] - wl[ind + 1 < len(global_wls)])) / (np.abs(global_wls[ind[ind + 1 < len(global_wls)] + 1] - global_wls[ind[ind + 1 < len(global_wls)]]))
             # Add the fluxes to the new array, distributing them proportionally
-            np.add.at(global_flxs, ind, frac * flx)
-            np.add.at(global_flxs, ind[ind+1 < len(wl)] + 1, (1 - frac[ind+1 < len(wl)]) * flx[ind+1 < len(wl)])
+            np.add.at(global_flxs, ind[ind + 1 < len(global_wls)], frac * flx[ind + 1 < len(global_wls)])
+            np.add.at(global_flxs, ind[ind + 1 < len(global_wls)] + 1, (1 - frac) * flx[ind + 1 < len(global_wls)])
             np.add.at(n_in_bin, ind, 1)
-            np.add.at(n_in_bin, ind[ind+1 < len(wl)] + 1, 1)
+            np.add.at(n_in_bin, ind[ind + 1 < len(global_wls)] + 1, 1)
 
         global_flxs = global_flxs[n_in_bin != 0]
+        global_wls = global_wls[n_in_bin != 0]
         n_in_bin = n_in_bin[n_in_bin != 0]
         global_flxs /= n_in_bin
+
+        plt.plot(global_wls, global_flxs)
+        plt.tight_layout()
+        plt.show()
 
         outdata = np.stack((global_wls, global_flxs, np.zeros(global_wls.shape)), axis=-1)
         np.savetxt(f"master_spectra/{gaia_id}_stacked.txt", outdata, fmt='%1.4f')
 
-
-
     sheet.enable_bindings()
     sheet.headers(newheaders=interesting_dataframe.columns.tolist())
-    sheet.disable_bindings( "cut", "paste", "delete","edit_cell","edit_header","edit_index")
+    sheet.disable_bindings("cut", "paste", "delete", "edit_cell", "edit_header", "edit_index")
     sheet.popup_menu_add_command("Add to observation list", add_to_observation_list)
     sheet.popup_menu_add_command("Remove from observation list", remove_from_observation_list)
     sheet.popup_menu_add_command("View detail window", view_detail_window)

@@ -1,7 +1,13 @@
+import ast
 import os
 import shutil
 import urllib.parse
-
+from itertools import repeat
+from multiprocessing import Pool
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+from astropy.time import Time
+from astropy.coordinates import get_body, get_sun
+import astropy.units as u
 import numpy as np
 import pandas as pd
 import requests
@@ -14,6 +20,82 @@ import astroquery.exceptions
 
 OUTPUT_DIR = "output"
 ADD_BIBC_TIC = True
+
+
+# Big words: catalogue, study, indeterminate, irrelevant
+# Prefixes, Suffixes: OG, HV, RV, WD, phot, spec, pulsation
+paper_associations = {
+    "2022A&A...662A..40C": "catalogue",
+    "2019A&A...621A..38G": "catalogue",
+    "2020A&A...635A.193G": "catalogue",
+    "2017A&A...600A..50G": "catalogue",
+    "2021ApJS..256...28L": "catalogue_RV",
+    "2015MNRAS.448.2260G": "WD_catalogue",
+    "2011MNRAS.417.1210G": "WD_catalogue",
+    "2019MNRAS.482.4570G": "WD_catalogue",
+    "2021MNRAS.508.3877G": "WD_catalogue",
+    "2019ApJ...881....7L": "catalogue_RV",
+    "2019MNRAS.486.2169K": "WD_catalogue",
+    "2015MNRAS.446.4078K": "WD_catalogue",
+    "2017ApJ...845..171B": "pulsation_catalogue",
+    "2006ApJS..167...40E": "OG_WD_catalogue",
+    "1986ApJS...61..305G": "OG_catalogue",
+    "2017MNRAS.469.2102A": "WD_catalogue_RV",
+    "2013ApJS..204....5K": "WD_catalogue",
+    "1988SAAOC..12....1K": "OG_catalogue",
+    "2019ApJ...881..135L": "catalogue",
+    "2021A&A...650A.205V": "phot_study",
+    "2020MNRAS.491.2280S": "irrelevant",
+    "2016yCat....1.2035M": "WD_catalogue",
+    "2020ApJ...901...93B": "irrelevant",
+    "2016MNRAS.455.3413K": "catalogue",
+    "2018ApJ...868...70L": "catalogue_RV",
+    "2003AJ....126.1455S": "OG_spec_study",
+    "2023ApJ...942..109L": "spec_study",
+    "2004ApJ...607..426K": "OG_WD_catalogue",
+    "2009yCat....1.2023S": "irrelevant",
+    "2015MNRAS.452..765G": "WD_catalogue",
+    "2008AJ....136..946M": "OG_variability_study",
+    "2004A&A...426..367M": "OG_variability_study",
+    "2020ApJ...889..117L": "catalogue",
+    "2020ApJ...898...64L": "catalogue_RV",
+    "2016ApJ...818..202L": "catalogue",
+    "2022A&A...661A.113G": "variability_study",
+    "1992AJ....104..203W": "OG_catalogue",
+    "2016MNRAS.457.3396P": "spec_catalogue",
+    "2015A&A...577A..26G": "variability_study",
+    "2010A&A...513A...6O": "pulsation_study",
+    "2021A&A...654A.107C": "catalogue",
+    "2010MNRAS.407..681M": "WD_catalogue_RV",
+    "2007ApJ...660..311B": "OG_HV_study",
+    "2011A&A...530A..28G": "variability_study",
+    "1957BOTT....2p...3I": "OG_catalogue",
+    "2015MNRAS.450.3514K": "variability_study",
+    "2013A&A...551A..31D": "irrelevant",
+    "2019MNRAS.482.5222T": "WD_catalogue",
+    "2012MNRAS.427.2180N": "spec_catalogue",
+    "1997A&A...317..689T": "OG_catalogue_RV",
+    "2005RMxAA..41..155S": "OG_catalogue",
+    "2012ApJ...751...55B": "HV_study_RV",
+    "2000A&AS..147..169B": "irrelevant",
+    "1977A&AS...28..123B": "OG_catalogue",
+    "2010AJ....139...59B": "irrelevant",
+    "2015A&A...576A..44K": "variability_study",
+    "2008ApJ...684.1143X": "irrelevant",
+    "2019MNRAS.490.3158C": "irrelevant",
+    "2017MNRAS.472.4173R": "WD_catalogue_RV",
+    "2018MNRAS.475.2480P": "catalogue_RV",
+    "2019MNRAS.488.2892P": "WD_catalogue",
+    "2013MNRAS.429.2143C": "variability_study",
+    "1980AnTok..18...55N": "OG_catalogue",
+    "1984AnTok..20..130K": "OG_catalogue",
+    "2011ApJ...730..128T": "WD_spec_catalogue",
+    "2019PASJ...71...41L": "spec_catalogue",
+    "2016A&A...596A..49B": "catalogue",
+    "1990A&AS...86...53M": "OG_catalogue",
+    "2007ApJ...671.1708B": "OG_HV_study_RV",
+}
+
 
 def vrad_pvalue(vrad, vrad_err):
     """
@@ -313,6 +395,7 @@ def round_or_string(num_or_str, to_digit=0):
     else:
         return round(num_or_str, to_digit)
 
+
 def overview(restable, catalogue):
     preamble = [
         r"\documentclass[a4paper]{article}",
@@ -352,11 +435,14 @@ def overview(restable, catalogue):
                 cl = cl[:8]
 
             if row["logp"] == 0:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & NaN\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"],
+                                                                                                                                              4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & NaN\\" + "\n")
             elif row["logp"] == -500:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & $<-500$\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"],
+                                                                                                                                              4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & $<-500$\\" + "\n")
             else:
-                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"], 4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & ${round_or_string(row['logp'], 2)}$\\" + "\n")
+                outtex.write(f"{n}&" + name + "&" + row["source_id"] + r"&" + str(round_or_string(row["ra"], 4)) + r"&" + str(round_or_string(row["dec"],
+                                                                                                                                              4)) + r"&" + cl + f"&${int(row['Nspec'])}$" + "&" + rf"{minusstring} ${rvavg}\pm{round_or_string(row['RVavg_err'])}$" + rf"& ${round_or_string(row['deltaRV'])}\pm{round_or_string(row['deltaRV_err'])}$" + rf" & ${round_or_string(row['logp'], 2)}$\\" + "\n")
         for line in postamble:
             outtex.write(line + "\n")
     os.system("lualatex result_parameters.tex")
@@ -380,12 +466,12 @@ def truncate_simbad(file_path):
 
     err_lines = []
     if error_index is not None:
-        err_lines = lines[error_index+2:data_index-1]
-        err_lines = ["start"+e.split(":")[-1].upper() for e in err_lines]
+        err_lines = lines[error_index + 2:data_index - 1]
+        err_lines = ["start" + e.split(":")[-1].upper() for e in err_lines]
 
-    del lines[:data_index+2]
+    del lines[:data_index + 2]
 
-    lines = err_lines+lines
+    lines = err_lines + lines
 
     with open(file_path, 'w') as f:
         f.writelines(lines)
@@ -417,6 +503,128 @@ def simbad_request(resparams):
         f.write(response.text)
 
     truncate_simbad("simbad.txt")
+
+
+def plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=None, date=None):
+    plt.figure(figsize=(4.8 * 16 / 9, 4.8))
+    plt.grid(color="lightgray", zorder=1)
+    if date:
+        plt.title(f"Visibility for {date}")
+    plt.plot(delta_midnight, sunaltazs_obsnight.alt, color='r', label='Sun', zorder=3)
+    plt.plot(delta_midnight, moonaltazs_obsnight.alt, color=[0.75] * 3, ls='--', label='Moon', zorder=3)
+    plt.plot(delta_midnight, obj_altazs_obsnight.alt, label='Target', color='lime', zorder=3)
+    plt.fill_between(delta_midnight, 0 * u.deg, 90 * u.deg,
+                     sunaltazs_obsnight.alt < -0 * u.deg, color='0.5', zorder=0)
+    plt.fill_between(delta_midnight, 0 * u.deg, 90 * u.deg,
+                     sunaltazs_obsnight.alt < -18 * u.deg, color='k', zorder=0)
+    plt.legend(loc='upper left')
+    plt.xlim(-8 * u.hour, 8 * u.hour)
+    plt.xticks((np.arange(9) * 2 - 8) * u.hour)
+    plt.ylim(0 * u.deg, 90 * u.deg)
+    plt.xlabel('Hours from EDT Midnight')
+    plt.ylabel('Altitude [deg]')
+    plt.tight_layout()
+    if saveloc:
+        plt.savefig(saveloc)
+        plt.close()
+    else:
+        plt.show()
+
+
+def plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=None):
+    plt.figure(figsize=(3, 3))
+    plt.grid(color="lightgray", zorder=1)
+    # plt.plot(delta_midnight, sunaltazs_obsnight.alt, color='r', label='Sun', zorder=3)
+    # plt.plot(delta_midnight, moonaltazs_obsnight.alt, color=[0.75] * 3, ls='--', label='Moon', zorder=3)
+    plt.plot(delta_midnight, obj_altazs_obsnight.alt, label='Target', color='lime', zorder=3)
+    plt.fill_between(delta_midnight, 0 * u.deg, 90 * u.deg,
+                     sunaltazs_obsnight.alt < -0 * u.deg, color='0.5', zorder=0)
+    plt.fill_between(delta_midnight, 0 * u.deg, 90 * u.deg,
+                     sunaltazs_obsnight.alt < -18 * u.deg, color='k', zorder=0)
+    plt.xlabel("")
+    plt.ylabel("")
+
+    plt.xlim(-8 * u.hour, 8 * u.hour)
+    plt.ylim(0 * u.deg, 90 * u.deg)
+
+    ax = plt.gca()
+    # Hide X and Y axes label marks
+    ax.xaxis.set_tick_params(labelbottom=False)
+    ax.yaxis.set_tick_params(labelleft=False)
+    plt.axhline(30, color="gold", linestyle="--")
+    plt.axhline(20, color="red", linestyle="--")
+
+    # Hide X and Y axes tick marks
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    plt.tight_layout()
+    if saveloc:
+        plt.savefig(saveloc)
+        plt.close()
+    else:
+        plt.show()  #
+
+def get_visibility(frame, ra, dec):
+    observed_obj = SkyCoord(ra * u.deg, dec * u.deg, frame='icrs')
+    obj_altazs_obsnight = observed_obj.transform_to(frame)
+
+    return obj_altazs_obsnight
+
+def individual_visibility(stuff, delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight, date):
+    ra, dec, sid = stuff
+    obj_altazs_obsnight = get_visibility(frame_obsnight, ra, dec)
+    try:
+        observability = np.ptp(delta_midnight[np.logical_and(obj_altazs_obsnight.alt > 30 * u.deg, sunaltazs_obsnight.alt < 0 * u.deg)])
+        if observability != 0:
+            plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/visibility.pdf", date=date)
+            plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/tiny_visibility.pdf")
+        observability = observability.value
+    except ValueError:
+        observability = 0
+
+    return sid, observability
+
+def get_frame(date='2023-10-12 00:00:00', utc_offset=-4):
+    # Location of the SOAR telescope
+    location = EarthLocation.of_site("Cerro Pachon")
+
+    utcoffset = utc_offset * u.hour
+    midnight = Time(date) - utcoffset
+
+    delta_midnight = np.linspace(-8, 8, 1000) * u.hour
+    times_obsnight = midnight + delta_midnight
+    frame_obsnight = AltAz(obstime=times_obsnight, location=location)
+    sunaltazs_obsnight = get_sun(times_obsnight).transform_to(frame_obsnight)
+
+    moon_obsnight = get_body("moon", times_obsnight)
+    moonaltazs_obsnight = moon_obsnight.transform_to(frame_obsnight)
+
+    return delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight
+
+def get_visibility_for_night(ra, dec, sid, date, utc_offset):
+    fileloc = "local_observing_conditions/" + date.replace("-", "_").replace(" 00:00:00", "") + ".csv"
+    if not os.path.isfile(fileloc):
+        delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight = get_frame(date, utc_offset)
+
+        assert len(ra) == len(dec) == len(sid)
+
+        stuff_list = [(r, d, s) for r, d, s in zip(ra, dec, sid)]
+
+        with Pool() as pool:
+            results = pool.starmap(individual_visibility, zip(stuff_list, repeat(delta_midnight), repeat(frame_obsnight), repeat(sunaltazs_obsnight), repeat(moonaltazs_obsnight), repeat(date)))
+
+        obs_conditions = pd.DataFrame(results, columns=['sid', 'observability'])
+
+        if not os.path.isdir("local_observing_conditions"):
+            os.mkdir("local_observing_conditions")
+
+        obs_conditions.to_csv(fileloc, index=False)
+    else:
+        obs_conditions = pd.read_csv(fileloc)
+        obs_conditions["sid"] = obs_conditions["sid"].astype(str)
+
+    return obs_conditions
 
 
 def add_bibcodes_and_tics(res_params, catalogue, config):
@@ -521,24 +729,24 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
     merged_df = res_params.merge(source_tic_table[['source_id', 'tic', 'bibcodes']], on='source_id', how='inner')
 
     out_df = pd.DataFrame(
-            {
-                "source_id": [],
-                "alias": [],
-                "ra": [],
-                "dec": [],
-                "gmag": [],
-                "spec_class": [],
-                "logp": [],
-                "deltaRV": [],
-                "deltaRV_err": [],
-                "RVavg": [],
-                "RVavg_err": [],
-                "Nspec": [],
-                "bibcodes": [],
-                "tic": [],
-                "associated_files": []
-            }
-        )
+        {
+            "source_id": [],
+            "alias": [],
+            "ra": [],
+            "dec": [],
+            "gmag": [],
+            "spec_class": [],
+            "logp": [],
+            "deltaRV": [],
+            "deltaRV_err": [],
+            "RVavg": [],
+            "RVavg_err": [],
+            "Nspec": [],
+            "bibcodes": [],
+            "tic": [],
+            "associated_files": []
+        }
+    )
 
     for i, star in merged_df.iterrows():
         cat_dict = dict(catalogue.loc[catalogue["source_id"] == star["source_id"]].iloc[0])
@@ -564,11 +772,71 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
             "associated_files": [star["associated_files"]],
         })])
 
+    if config["GET_VISIBILITY"]:
+        print("Getting visibility conditions...")
+        obs_conditions = get_visibility_for_night(out_df.ra.to_numpy(),
+                                                  out_df.dec.to_numpy(),
+                                                  out_df.source_id.to_numpy(),
+                                                  config["FOR_DATE"]+" 00:00:00",
+                                                  -4)
+
+        merged_df = pd.merge(out_df, obs_conditions[['sid', 'observability']], left_on='source_id', right_on='sid', how='left')
+
+        # Drop the redundant 'sid' column after merging if needed
+        merged_df.drop('sid', axis=1, inplace=True)
+
+        out_df = merged_df
+
+    if config["TAG_KNOWN"]:
+        out_df["known_category"] = "unknown"
+        out_df["flags"] = None
+        for ind, row in out_df.iterrows():
+            bibcodes = ast.literal_eval(row["bibcodes"])
+            known_category = "unknown"
+            flags = []
+            bibcode_associations = []
+
+            if len(bibcodes) >= 10:
+                known_category = "indeterminate"
+            if isinstance(row["RVavg"], float):
+                if np.abs(row["RVavg"]) > 250:
+                    flags.append("HV-detection")
+            if isinstance(row["logp"], float):
+                if row["logp"] < -4:
+                    flags.append("rvv-detection")
+                elif row["logp"] < -1.3:
+                    flags.append("rvv-candidate")
+
+            for b in bibcodes:
+                try:
+                    bibcode_associations.append(paper_associations[b])
+                except KeyError:
+                    known_category = "indeterminate"
+
+            for association in bibcode_associations:
+                if association == "variability_study":
+                    known_category = "known"
+                    break
+                if "study" in association:
+                    known_category = "likely_known"
+                split_assoc = association.split("_")
+                for flg in ["OG", "HV", "RV", "phot", "spec", "pulsation"]:
+                    if flg in split_assoc:
+                        known_category = "likely_known"
+                        if flg not in flags:
+                            flags.append(flg)
+                if "WD" in split_assoc:
+                    flags.append("WD")
+            if "+" in row["spec_class"]:
+                known_category = "known"
+
+            out_df.at[ind, "known_category"] = known_category
+            out_df.at[ind, "flags"] = flags
+
     return out_df
 
 
 def result_analysis(catalogue: pd.DataFrame = None, outdir="output", config=None):
-
     if config is None:
         config = {}
     global OUTPUT_DIR
@@ -595,7 +863,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output", config=None
         dec = star["dec"]
         specclass = star["SPEC_CLASS"]
 
-        filedata = np.genfromtxt(f"{OUTPUT_DIR}/"+sid+"/RV_variation.csv", delimiter=",", skip_header=True)
+        filedata = np.genfromtxt(f"{OUTPUT_DIR}/" + sid + "/RV_variation.csv", delimiter=",", skip_header=True)
         files = ";".join(star["file"])
 
         if filedata.ndim == 1 and len(filedata) == 0:
@@ -626,7 +894,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output", config=None
                 "deltaRV": [""],
                 "deltaRV_err": [""],
                 "RVavg": [np.mean(culumvs)],
-                "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))/len(culumv_errs)],
+                "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs))) / len(culumv_errs)],
                 "Nspec": [1],
                 "timespan": [""],
                 "associated_files": [files]
@@ -648,7 +916,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output", config=None
             "deltaRV": [deltarv],
             "deltaRV_err": [np.sqrt(culumv_errs[np.argmax(culumvs)] ** 2 + culumv_errs[np.argmin(culumvs)] ** 2) / 2],
             "RVavg": [np.mean(culumvs)],
-            "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs)))/len(culumv_errs)],
+            "RVavg_err": [np.sqrt(np.sum(np.square(culumv_errs))) / len(culumv_errs)],
             "Nspec": [len(culumvs)],
             "timespan": [timespan],
             "associated_files": [files]

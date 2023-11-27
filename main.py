@@ -30,7 +30,8 @@ general_config = {
     "SUBDWARF_SPECIFIC_ADJUSTMENTS": True,  # Apply some tweaks for the script to be optimized to hot subdwarfs
     "GET_TICS": False,  # Get TIC IDs via query. This will be slow the first time it is run.
     "GET_VISIBILITY": False,  # Whether to get the visibility of the objects for a certain night and location.
-    "FOR_DATE": "2023-12-09"  # Date for which to get the visibility
+    "FOR_DATE": "2023-12-09",  # Date for which to get the visibility
+    "TAG_KNOWN": False  # Tag systems where RV variability is known
 }
 
 ### FIT SETTINGS

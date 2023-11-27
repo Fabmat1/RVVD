@@ -66,6 +66,12 @@ def normalize_spectrum(wl, flx):
     flx_for_interpol = flx_for_interpol[cutmask]
     wl_for_interpol = wl[cutmask]
 
+    # getting unique elements from a first array
+    wl_for_interpol, indices = np.unique(wl_for_interpol, return_inverse=True)
+
+    # taking mean of respective duplicate values in the second array
+    flx_for_interpol = np.bincount(indices, flx_for_interpol) / np.bincount(indices)
+
     norm_fit = InterpolatedUnivariateSpline(wl_for_interpol, flx_for_interpol, k=3)
 
     n_flx = flx / norm_fit(wl)
