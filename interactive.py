@@ -205,6 +205,17 @@ def construct_table(master, params):
     labels = ["Alias", "Spectral Class", "RA/DEC", "G mag", "N spec", "Delta RV", "RV avg", "log p"]
 
     tframe = tk.Frame(master)
+
+    def copyfnt(event):
+        siblings = list(event.widget.master.children.values())
+        thisindex = siblings.index(event.widget)
+        if thisindex % 2 == 0:
+            copyval = siblings[thisindex + 1].cget("text")
+        else:
+            copyval = siblings[thisindex].cget("text")
+        master.clipboard_clear()
+        master.clipboard_append(copyval)
+
     for i, p in enumerate(params):
         label = tk.Label(tframe, text=labels[i])
         if isinstance(params[i], tuple):
@@ -218,6 +229,8 @@ def construct_table(master, params):
             else:
                 value = tk.Label(tframe, text=f"{p}")
 
+        label.bind("<Button-1>", copyfnt)
+        value.bind("<Button-1>", copyfnt)
         label.grid(row=i + 1, column=1)
         value.grid(row=i + 1, column=2)
 
