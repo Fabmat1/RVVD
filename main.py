@@ -1338,8 +1338,13 @@ def files_from_catalogue(cat):
         'SPEC_CLASS': 'first',
         'bp_rp': 'first',
         'gmag': 'first',
+        'pmra': 'first',
+        'pmdec': 'first',
+        'pmra_error': 'first',
+        'pmdec_error': 'first',
+        'parallax': 'first',
+        'parallax_error': 'first',
         'nspec': 'sum',
-
     })
     catalogue.source_id = catalogue.source_id.str.decode(encoding="ASCII")
     return catalogue

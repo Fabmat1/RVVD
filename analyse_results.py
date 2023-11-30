@@ -21,7 +21,6 @@ import astroquery.exceptions
 OUTPUT_DIR = "output"
 ADD_BIBC_TIC = True
 
-
 # Big words: catalogue, study, indeterminate, irrelevant
 # Prefixes, Suffixes: OG, HV, RV, WD, phot, spec, pulsation
 paper_associations = {
@@ -448,7 +447,7 @@ def overview(restable, catalogue):
     os.system("lualatex result_parameters.tex")
 
 
-def truncate_simbad(file_path):
+def truncate_simbad(file_path, isbibcodes=True):
     with open(file_path, 'r') as f:
         lines = f.readlines()
 
@@ -459,34 +458,51 @@ def truncate_simbad(file_path):
 
     try:
         data_index = lines.index("::data::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::\n")
-
     except ValueError:
         print("The specified line is not found in the file.")
         return
 
-    err_lines = []
-    if error_index is not None:
-        err_lines = lines[error_index + 2:data_index - 1]
-        err_lines = ["start" + e.split(":")[-1].upper() for e in err_lines]
+    if isbibcodes:
+        err_lines = []
+        if error_index is not None:
+            err_lines = lines[error_index + 2:data_index - 1]
+            err_lines = ["start" + e.split(":")[-1].upper() for e in err_lines]
 
-    del lines[:data_index + 2]
+        del lines[:data_index + 2]
 
-    lines = err_lines + lines
+        lines = err_lines + lines
+
+    else:
+        del lines[:data_index + 2]
+
+        lines = [l.replace("TIC ", "").replace("GAIA DR3 ", "") for l in lines]
+        lines = ["source_id,tic\n"] + lines
 
     with open(file_path, 'w') as f:
         f.writelines(lines)
 
 
-def simbad_request(resparams):
-    if os.path.isfile("simbad.txt"):
-        sids = resparams.source_id.to_list()
-        with open("simbad.txt", "r") as sbfile:
-            for l in sbfile.readlines():
-                if "start GAIA DR3 " in l:
-                    l = l.replace("start GAIA DR3 ", "").replace(":", "").strip()
-                    sids.remove(l)
-            if len(sids) == 0:
-                return
+def simbad_request(resparams, script_location, output_location, isbibcodes=True):
+    if isbibcodes:
+        if os.path.isfile(output_location):
+            sids = resparams.source_id.to_list()
+            with open(output_location, "r") as sbfile:
+                for l in sbfile.readlines():
+                    if "start GAIA DR3 " in l:
+                        l = l.replace("start GAIA DR3 ", "").replace(":", "").strip()
+                        sids.remove(l)
+                if len(sids) == 0:
+                    return
+    else:
+        if os.path.isfile(output_location):
+            sids = resparams.source_id.to_list()
+            try:
+                sid_tics_table_column = pd.read_csv(output_location)["source_id"].tolist()
+                result = all([s in sid_tics_table_column for s in sids])
+                if result:
+                    return
+            except:
+                pass
 
     # Define the headers
 
@@ -494,15 +510,15 @@ def simbad_request(resparams):
     url = 'http://simbad.u-strasbg.fr/simbad/sim-script'
 
     # Open the file in binary mode
-    with open('simbad_script.s', 'rb') as f:
+    with open(script_location, 'rb') as f:
         # Make the post request with the file and headers
         response = requests.post(url, files={'scriptFile': f}, data={'submit': 'submit file'})
 
     # Write the response content to a file
-    with open('simbad.txt', 'w') as f:
+    with open(output_location, 'w') as f:
         f.write(response.text)
 
-    truncate_simbad("simbad.txt")
+    truncate_simbad(output_location, isbibcodes)
 
 
 def plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=None, date=None):
@@ -565,11 +581,13 @@ def plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight
     else:
         plt.show()  #
 
+
 def get_visibility(frame, ra, dec):
     observed_obj = SkyCoord(ra * u.deg, dec * u.deg, frame='icrs')
     obj_altazs_obsnight = observed_obj.transform_to(frame)
 
     return obj_altazs_obsnight
+
 
 def individual_visibility(stuff, delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight, date):
     ra, dec, sid = stuff
@@ -584,6 +602,7 @@ def individual_visibility(stuff, delta_midnight, frame_obsnight, sunaltazs_obsni
         observability = 0
 
     return sid, observability
+
 
 def get_frame(date='2023-10-12 00:00:00', utc_offset=-4):
     # Location of the SOAR telescope
@@ -601,6 +620,7 @@ def get_frame(date='2023-10-12 00:00:00', utc_offset=-4):
     moonaltazs_obsnight = moon_obsnight.transform_to(frame_obsnight)
 
     return delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight
+
 
 def get_visibility_for_night(ra, dec, sid, date, utc_offset):
     fileloc = "local_observing_conditions/" + date.replace("-", "_").replace(" 00:00:00", "") + ".csv"
@@ -627,47 +647,62 @@ def get_visibility_for_night(ra, dec, sid, date, utc_offset):
     return obs_conditions
 
 
-def add_bibcodes_and_tics(res_params, catalogue, config):
+def calculate_spatial_velocity(rv, pmra, pmdec, parallax, rv_err=None, pmra_err=None, pmdec_err=None, parallax_err=None):
+    if not all([isinstance(k, float) for k in [rv, pmra, pmdec, parallax, rv_err, pmra_err, pmdec_err, parallax_err]]):
+        return np.nan, np.nan
+
+    parallax = np.abs(parallax/1000)
+    parallax_err /= 1000
+    distance = 1 / parallax
+
+    ra_speed = pmra * np.pi/648000000 * distance * 978462  # pc/yr to km/s
+    dec_speed = pmdec * np.pi/648000000 * distance * 978462  # pc/yr to km/s
+
+    spatial_vel = np.sqrt(rv ** 2 + ra_speed ** 2 + dec_speed ** 2)
+
+    if parallax_err < parallax / 2:
+        distance_err = parallax_err / parallax ** 2
+        ra_speed_err = np.sqrt((distance_err * distance * np.pi/648000000 * 978462) ** 2 + (pmra_err * pmra * np.pi/648000000 * 978462) ** 2)
+        dec_speed_err = np.sqrt((distance_err * distance * np.pi/648000000 * 978462) ** 2 + (pmdec_err * pmdec * np.pi/648000000 * 978462) ** 2)
+
+        spatial_vel_err = np.sqrt((rv_err * rv / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2 +
+                                  (ra_speed_err * ra_speed / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2 +
+                                  (dec_speed_err * dec_speed / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2)
+        return spatial_vel, spatial_vel_err
+    else:
+        parallax = np.abs(parallax) + parallax_err
+        distance = 1 / parallax
+
+        ra_speed = pmra * distance * np.pi/648000000 * 978462  # pc/yr to km/s
+        dec_speed = pmdec * distance * np.pi/648000000 * 978462 # pc/yr to km/s
+
+        spatial_vel = np.sqrt(rv ** 2 + ra_speed ** 2 + dec_speed ** 2)
+
+        return spatial_vel, spatial_vel
+
+
+def add_useful_columns(res_params, catalogue, config):
     res_params = res_params.reset_index().drop(columns="index")
     with open("simbad_script.s", "w", encoding="utf-8") as outfile:
         outfile.write('format object f1 "start %OBJECT\\n"+\n"%BIBCODELIST"\n')
         for ind, row in res_params.iterrows():
             outfile.write(f"query id GAIA DR3 {row['source_id']}\n")
 
-    simbad_request(res_params)
+    simbad_request(res_params, "simbad_script.s", "simbad.txt", True)
 
-    if os.path.isfile("gaia_tic_reftable.csv"):
-        source_tic_table = pd.read_csv("gaia_tic_reftable.csv")
-        source_tic_table["source_id"] = source_tic_table["source_id"].astype(str)
-        source_tic_table = source_tic_table[source_tic_table.tic != "notconfigured"]
-        source_tic_table = source_tic_table[source_tic_table.tic != "nointernet"]
-    else:
-        source_tic_table = pd.DataFrame(columns=["source_id", "tic"])
-
-    gids = source_tic_table["source_id"].to_list()
+    source_tic_table = pd.DataFrame(columns=["source_id"])
+    source_tic_table["source_id"] = res_params["source_id"]
 
     if "GET_TICS" in config:
-        if config["GET_TICS"]:
+        with open("tic_script.s", "w") as ticscript:
+            ticscript.write(r'format object f1 "%OBJECT,%IDLIST(TIC)\n"' + "\n")
             for ind, row in res_params.iterrows():
-                gaia_id = row["source_id"]
-                if gaia_id in gids:
-                    continue
-                print(f"Getting TIC for object nr. {ind + 1}/{len(res_params)}")
-                try:
-                    star_info = Catalogs.query_object("Gaia DR3 " + str(gaia_id), catalog="TIC")
-                except astroquery.exceptions.ResolverError:
-                    # star_info = Catalogs.query_region(SkyCoord(row["ra"], row["dec"], frame="icrs", unit="deg"))
-                    star_info = [{"ID": "-"}]
-                except requests.exceptions.ConnectionError or astroquery.exceptions.TimeoutError:
-                    star_info = [{"ID": "nointernet"}]
-
-                tic_id = star_info[0]['ID']
-                source_tic_table = pd.concat([source_tic_table, pd.DataFrame({"source_id": [gaia_id], "tic": [tic_id]})])
-                source_tic_table.to_csv("gaia_tic_reftable.csv", index=False)
-        else:
-            source_tic_table = pd.DataFrame(columns=["source_id", "tic"])
-            source_tic_table["source_id"] = res_params["source_id"]
-            source_tic_table["tic"] = np.full(np.shape(res_params["source_id"].to_numpy()), "notconfigured")
+                ticscript.write(f"query id GAIA DR3 {row['source_id']}\n")
+        simbad_request(res_params, "tic_script.s", "simbadtics.txt", False)
+        tictable = pd.read_csv("simbadtics.txt")
+        tictable["source_id"] = tictable["source_id"].astype("U20")
+        tictable["tic"] = tictable["tic"].astype(int, errors="ignore").astype(str)
+        source_tic_table = pd.merge(source_tic_table, tictable, on='source_id', how='left')
     else:
         source_tic_table = pd.DataFrame(columns=["source_id", "tic"])
         source_tic_table["source_id"] = res_params["source_id"]
@@ -735,6 +770,7 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
             "ra": [],
             "dec": [],
             "gmag": [],
+            "bp_rp": [],
             "spec_class": [],
             "logp": [],
             "deltaRV": [],
@@ -742,6 +778,12 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
             "RVavg": [],
             "RVavg_err": [],
             "Nspec": [],
+            "parallax": [],
+            "parallax_err": [],
+            "pmra": [],
+            "pmra_err": [],
+            "pmdec": [],
+            "pmdec_err": [],
             "bibcodes": [],
             "tic": [],
             "associated_files": []
@@ -751,8 +793,15 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
     for i, star in merged_df.iterrows():
         cat_dict = dict(catalogue.loc[catalogue["source_id"] == star["source_id"]].iloc[0])
         gmag = cat_dict["gmag"]
+        bp_rp = cat_dict["bp_rp"]
         sp_class = cat_dict["SPEC_CLASS"]
         alias = cat_dict["name"]
+        plx = cat_dict["parallax"]
+        plx_err = cat_dict["parallax_error"]
+        pmra = cat_dict["pmra"]
+        pmra_err = cat_dict["pmra_error"]
+        pmdec = cat_dict["pmdec"]
+        pmdec_err = cat_dict["pmdec_error"]
 
         out_df = pd.concat([out_df, pd.DataFrame({
             "source_id": [star["source_id"]],
@@ -761,6 +810,7 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
             "ra": [star["ra"]],
             "dec": [star["dec"]],
             "gmag": [gmag],
+            "bp_rp": [bp_rp],
             "spec_class": [sp_class],
             "logp": [star["logp"]],
             "deltaRV": [star["deltaRV"]],
@@ -768,6 +818,12 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
             "RVavg": [star["RVavg"]],
             "RVavg_err": [star["RVavg_err"]],
             "Nspec": [star["Nspec"]],
+            "parallax": [plx],
+            "parallax_err": [plx_err],
+            "pmra": [pmra],
+            "pmra_err": [pmra_err],
+            "pmdec": [pmdec],
+            "pmdec_err": [pmdec_err],
             "bibcodes": [star["bibcodes"]],
             "associated_files": [star["associated_files"]],
         })])
@@ -777,7 +833,7 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
         obs_conditions = get_visibility_for_night(out_df.ra.to_numpy(),
                                                   out_df.dec.to_numpy(),
                                                   out_df.source_id.to_numpy(),
-                                                  config["FOR_DATE"]+" 00:00:00",
+                                                  config["FOR_DATE"] + " 00:00:00",
                                                   -4)
 
         merged_df = pd.merge(out_df, obs_conditions[['sid', 'observability']], left_on='source_id', right_on='sid', how='left')
@@ -832,6 +888,19 @@ def add_bibcodes_and_tics(res_params, catalogue, config):
 
             out_df.at[ind, "known_category"] = known_category
             out_df.at[ind, "flags"] = flags
+
+    applied_thingy = pd.DataFrame(list(out_df.apply(lambda x: calculate_spatial_velocity(x['RVavg'],
+                                                                                                   x['pmra'],
+                                                                                                   x['pmdec'],
+                                                                                                   x['parallax'],
+                                                                                                   x['RVavg_err'],
+                                                                                                   x['pmra_err'],
+                                                                                                   x['pmdec_err'],
+                                                                                                   x['parallax_err']), axis=1)))
+    applied_thingy.columns = ["spatial_vels", "spatial_vels_err"]
+
+    out_df["spatial_vels"] = applied_thingy["spatial_vels"]
+    out_df["spatial_vels_err"] = applied_thingy["spatial_vels_err"]
 
     return out_df
 
@@ -924,7 +993,7 @@ def result_analysis(catalogue: pd.DataFrame = None, outdir="output", config=None
 
     analysis_params = analysis_params.sort_values("logp", axis=0, ascending=True)
     if ADD_BIBC_TIC:
-        analysis_params = add_bibcodes_and_tics(analysis_params, catalogue, config)
+        analysis_params = add_useful_columns(analysis_params, catalogue, config)
     output_params = analysis_params.copy()
     output_params.to_csv("result_parameters.csv", index=False)
     print("Creating Statistics...")

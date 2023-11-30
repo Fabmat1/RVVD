@@ -267,13 +267,6 @@ def analysis_tab(analysis):
 
     tablesettings_frame = tk.Frame(analysis)
 
-    # global show_known
-    # global show_unknown
-    # global show_likely_known
-    # global show_indeterminate
-    # global highlight
-    # global current_dataframe
-    # global sortset
     current_dataframe = interesting_dataframe
 
     show_known = tk.IntVar(frame, value=1)
@@ -281,6 +274,7 @@ def analysis_tab(analysis):
     show_likely_known = tk.IntVar(frame, value=1)
     show_indeterminate = tk.IntVar(frame, value=1)
     highlight = tk.IntVar(frame, value=1)
+    exclude_columns = tk.IntVar(frame, value=1)
     filter_kws = tk.StringVar(frame, value="")
     sortset = tk.StringVar(frame, value="logp")
 
@@ -356,10 +350,14 @@ def analysis_tab(analysis):
             filters.append("likely_known")
         if show_indeterminate.get() == 1:
             filters.append("indeterminate")
+        if exclude_columns.get() == 1:
+            excluded_cols = ["deltaRV_err", "RVavg_err", "bibcodes", "associated_files", "known_category", "flags", "pmra_err", "pmdec_err"]
+        else:
+            excluded_cols = []
 
-        try:
+        if "known_category" in interesting_dataframe.columns:
             current_dataframe = interesting_dataframe[interesting_dataframe["known_category"].isin(filters)].reset_index(drop=True)
-        except KeyError:
+        else:
             current_dataframe = interesting_dataframe.reset_index(drop=True)
 
         keywords = filter_kws.get().split(";")
@@ -387,6 +385,11 @@ def analysis_tab(analysis):
         else:
             current_dataframe = current_dataframe.sort_values(by=[colname], ascending=False).reset_index(drop=True)
 
+        for col in current_dataframe.columns:
+            if col in excluded_cols:
+                current_dataframe = current_dataframe.drop(columns=[col])
+
+        sheet.headers(current_dataframe.columns)
         sheet.set_sheet_data(current_dataframe.values.tolist(), redraw=True)
 
         highlight_cells(sheet, highlight.get())
@@ -751,20 +754,24 @@ def analysis_tab(analysis):
         nd.grid(row=1, column=4)
     hg = tk.Checkbutton(tablesettings_frame, text="Highlight values", variable=highlight, command=update_sheet)
     hg.grid(row=1, column=5)
+    excol = tk.Checkbutton(tablesettings_frame, text="Exclude Columns", variable=exclude_columns, command=update_sheet)
+    excol.grid(row=1, column=6)
     droplabel = tk.Label(tablesettings_frame, text="Sort by: ")
-    droplabel.grid(row=1, column=6)
+    droplabel.grid(row=1, column=7)
     drop = tk.OptionMenu(tablesettings_frame, sortset, *interesting_dataframe.columns, command=update_sheet)
-    drop.grid(row=1, column=7)
+    drop.grid(row=1, column=8)
     filter_kw_label = tk.Label(tablesettings_frame, text="Filters: ")
-    filter_kw_label.grid(row=1, column=8)
+    filter_kw_label.grid(row=1, column=9)
     filter_kw = tk.Entry(tablesettings_frame, textvariable=filter_kws)
-    filter_kw.grid(row=1, column=9)
+    filter_kw.grid(row=1, column=10)
     filter_kw_btn = tk.Button(tablesettings_frame, text="Filter", command=update_sheet)
-    filter_kw_btn.grid(row=1, column=10)
+    filter_kw_btn.grid(row=1, column=11)
 
     tablesettings_frame.pack()
     frame.pack(fill="both", expand=1)
     sheet.pack(fill="both", expand=1)
+
+    update_sheet()
 
 
 def get_raw_files():
