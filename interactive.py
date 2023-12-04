@@ -1,6 +1,7 @@
 import ast
 import itertools
 import multiprocessing
+import os
 import time
 import tkinter as tk
 import matplotlib.pyplot as plt
@@ -202,7 +203,7 @@ def load_or_create_image(window, file_name, size, creation_func=None, remake=Fal
 
 
 def construct_table(master, params):
-    labels = ["Alias", "Spectral Class", "RA/DEC", "G mag", "N spec", "Delta RV", "RV avg", "log p"]
+    labels = ["Alias", "Spectral Class", "RA/DEC", "G mag", "N spec", "Delta RV", "RV avg", "log p", "pmra/pmdec", "Parallax", "Spatial Velocity"]
 
     tframe = tk.Frame(master)
 
@@ -219,13 +220,13 @@ def construct_table(master, params):
     for i, p in enumerate(params):
         label = tk.Label(tframe, text=labels[i])
         if isinstance(params[i], tuple):
-            if labels[i] == "RA/DEC":
+            if labels[i] == "RA/DEC" or labels[i] == "pmra/pmdec":
                 value = tk.Label(tframe, text=f"{round(p[0], 4)}/{round(p[1], 4)}")
             else:
                 value = tk.Label(tframe, text=f"{round(p[0], 2)}±{round(p[1], 2)}")
         else:
             if isinstance(p, float):
-                value = tk.Label(tframe, text=f"{round(p, 2)}")
+                value = tk.Label(tframe, text=f"{round(p, 4)}")
             else:
                 value = tk.Label(tframe, text=f"{p}")
 
@@ -248,6 +249,44 @@ def get_interpolation_function(arr_x, arr_y):
         return np.median(evaluated, axis=0)
 
     return interpolated_median
+
+
+def fitsed(window, gaia_id):
+    print(gaia_id)
+
+
+def fitmodel(window, gaia_id):
+    print(gaia_id)
+
+
+def viewlc(window, gaia_id):
+    print(gaia_id)
+
+
+def savenote(gaia_id, text, window=None):
+    with open(f"{general_config['OUTPUT_DIR']}/{gaia_id}/note.txt", "w") as notefile:
+        notefile.write(text)
+    if window is not None:
+        window.destroy()
+
+
+def viewnote(window, gaia_id):
+    notewindow = tk.Toplevel(window)
+    notewindow.title(f"Note for {gaia_id}")
+    notewindow.geometry("800x600+0+0")
+
+    noteframe = tk.Frame(notewindow)
+    notepad = tk.Text(noteframe)
+    if os.path.isfile(f"{general_config['OUTPUT_DIR']}/{gaia_id}/note.txt"):
+        with open(f"{general_config['OUTPUT_DIR']}/{gaia_id}/note.txt", "r") as notefile:
+            notepad.insert("1.0", notefile.read())
+    savebtn = tk.Button(notewindow, text="Save Note", command=lambda: savenote(gaia_id, notepad.get("1.0", 'end-1c')))
+    notewindow.protocol("WM_DELETE_WINDOW", lambda: savenote(gaia_id, notepad.get("1.0", 'end-1c'), notewindow))
+
+    notepad.pack(fill="both")
+    noteframe.pack(fill="both")
+    savebtn.pack(side=tk.RIGHT)
+
 
 
 def analysis_tab(analysis):
@@ -511,6 +550,11 @@ def analysis_tab(analysis):
         sp_class = star["spec_class"]
         alias = star["alias"]
         logp = star["logp"]
+        pmra = star["pmra"]
+        pmdec = star["pmdec"]
+        parallax = star["parallax"]
+        parallax_error = star["parallax_err"]
+        spatial_vel = star["spatial_vels"]
         try:
             flags = ast.literal_eval(star["flags"])
         except KeyError:
@@ -560,7 +604,7 @@ def analysis_tab(analysis):
 
         subframe = tk.Frame(main_frame)
 
-        params = [alias, sp_class, (ra, dec), gmag, nspec, (deltarv, u_deltarv), (rvavg, u_rvavg), logp]
+        params = [alias, sp_class, (ra, dec), gmag, nspec, (deltarv, u_deltarv), (rvavg, u_rvavg), logp, (pmra, pmdec), (parallax, parallax_error), spatial_vel]
         table = construct_table(subframe, params)
         table.grid(row=1, column=1)
 
@@ -610,12 +654,12 @@ def analysis_tab(analysis):
             return lambda: callback(f"https://simbad.cds.unistra.fr/simbad/sim-id?Ident=Gaia+DR3+{gaia_id}&submit=submit+id")
 
         simbad_btn = tk.Button(buttonframe, text="SIMBAD", command=simbad_link())
-        simbad_btn.grid(row=3, column=1)
+        simbad_btn.grid(row=4, column=1)
 
         normalize = tk.BooleanVar(value=True)
         normplot = tk.Checkbutton(buttonframe, text="Normalize", variable=normalize)
         normplot.select()
-        normplot.grid(row=4, column=1)
+        normplot.grid(row=6, column=1)
 
         def viewplot():
             nonlocal normalize
@@ -624,9 +668,24 @@ def analysis_tab(analysis):
                 use_ind_as_sid=True,
                 normalized=normalize.get())
 
-        viewplot = tk.Button(buttonframe, text="View Plot", command=viewplot())
-        viewplot.grid(row=5, column=1)
 
+        viewplot = tk.Button(buttonframe, text="View Plot", command=viewplot())
+        viewplot.grid(row=7, column=1)
+
+        viewplot = tk.Button(buttonframe, text="Fit SED", command=lambda: fitsed(analysis, gaia_id))
+        viewplot.grid(row=9, column=1)
+
+        viewplot = tk.Button(buttonframe, text="Fit Model", command=lambda: fitmodel(analysis, gaia_id))
+        viewplot.grid(row=10, column=1)
+
+        viewplot = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id))
+        viewplot.grid(row=12, column=1)
+
+        viewplot = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
+        viewplot.grid(row=13, column=1)
+
+        for i in range(13):
+            buttonframe.grid_rowconfigure(i+1, minsize=25)
         buttonframe.grid(row=1, column=3, sticky="news")
 
     def create_master_spectrum():
