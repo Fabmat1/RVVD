@@ -9,7 +9,7 @@ from tkinter import ttk
 import pandas as pd
 from astroquery.vizier import Vizier
 from idlelib.tooltip import Hovertip
-
+from shutil import which
 from scipy.interpolate import UnivariateSpline
 
 from analyse_results import vrad_pvalue
@@ -17,11 +17,6 @@ from data_reduction import *
 import fitz
 import webbrowser
 from preprocessing import *
-
-
-def callback(url):
-    webbrowser.open_new(url)
-
 
 from PIL import Image, ImageTk
 
@@ -32,6 +27,11 @@ from queue import Empty
 from tksheet import Sheet
 
 from plot_spectra import plot_system_from_ind
+
+
+def callback(url):
+    webbrowser.open_new(url)
+
 
 configs = [general_config, fit_config, plot_config]
 
@@ -251,8 +251,79 @@ def get_interpolation_function(arr_x, arr_y):
     return interpolated_median
 
 
+def calcsed(gaia_id, parameter_list, griddirs, isisdir):
+    starline = f'variable star = "GAIA DR3 {gaia_id}";'
+    paramstring = f'''variable par = struct{{name = [{",".join([p[0] for p in parameter_list])}],
+    value = [{",".join([p[1] for p in parameter_list])}],
+    freeze = [{",".join([p[2] for p in parameter_list])}]}};'''
+    griddirectories = str(griddirs) + ";"
+    isispath = f"bpaths = {str(isisdir)}"
+
+
 def fitsed(window, gaia_id):
-    print(gaia_id)
+    fitsedwindow = tk.Toplevel(window)
+    fitsedwindow.title(f"Fit SED for {gaia_id}")
+    fitsedwindow.geometry("800x600+0+0")
+
+    isisexists = which("isis") is not None
+
+    if not isisexists:
+        isisdoesnotexist = tk.Label(fitsedwindow,
+                                    font=('Segoe UI', 25),
+                                    fg='#ff0000',
+                                    text="No ISIS installation found!")
+        isisdoesnotexist.pack()
+        return
+
+    if os.name == 'nt':
+        fitsedwindow.state('zoomed')
+    elif os.name == "posix":
+        fitsedwindow.attributes('-zoomed', True)
+    fitsedframe = tk.Frame(fitsedwindow)
+    fitinputframe = tk.Frame(fitsedframe)
+    fitoutputframe = tk.Frame(fitsedframe)
+
+    def enable_star_two_inputs():
+        if var.get():
+            for input_box in star_two_inputs:
+                input_box.config(state='normal')
+        else:
+            for input_box in star_two_inputs:
+                input_box.config(state='disabled')
+
+    star_one_frame = ttk.LabelFrame(fitinputframe, text="Star One")
+    star_one_label_names = ["Effective Temperature", "Surface Gravity", "Helium Abundance"]
+    star_one_inputs = [ttk.Entry(star_one_frame) for _ in star_one_label_names]
+
+    for i, (label_name, entry) in enumerate(zip(star_one_label_names, star_one_inputs)):
+        ttk.Label(star_one_frame, text=label_name).grid(row=i, column=0)
+        entry.grid(row=i, column=1)
+
+    star_two_frame = ttk.LabelFrame(fitinputframe, text="Star Two")
+    star_two_label_names = ["Effective Temperature", "Surface Gravity", "Helium Abundance"]
+    star_two_inputs = [ttk.Entry(star_two_frame, state='disabled') for _ in star_two_label_names]
+
+    for i, (label_name, entry) in enumerate(zip(star_two_label_names, star_two_inputs)):
+        ttk.Label(star_two_frame, text=label_name).grid(row=i, column=0)
+        entry.grid(row=i, column=1)
+
+    var = tk.IntVar()
+    checkbox = ttk.Checkbutton(fitinputframe, text='Fit an SED for two stars?', variable=var, command=enable_star_two_inputs)
+
+    star_one_frame.pack(fill='x', padx=10, pady=10)
+    star_two_frame.pack(fill='x', padx=10, pady=10)
+    checkbox.pack()
+
+    if os.path.isdir(f"SEDs/{gaia_id}"):
+        pass
+    else:
+        pass
+
+    fitinputframe.grid(row=1, column=1)
+    fitoutputframe.grid(row=1, column=2)
+    fitsedframe.pack(fill="both", expand=1)
+
+
 
 
 def fitmodel(window, gaia_id):
@@ -287,6 +358,136 @@ def viewnote(window, gaia_id):
     noteframe.pack(fill="both")
     savebtn.pack(side=tk.RIGHT)
 
+
+def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=None, custom_select=None):
+    if custom_select == "":
+        custom_select = None
+    if not os.path.isdir("master_spectra"):
+        os.mkdir("master_spectra")
+    rv_table = pd.read_csv(f"output/{gaia_id}/RV_variation.csv")
+
+
+    mjddict = {}
+    wls = []
+    flxs = []
+
+    for f in assoc_files:
+        with open(f"spectra_processed/{f}_mjd.txt", "r") as infile:
+            mjds = [float(l.strip()) for l in infile.readlines() if "#" not in l]
+        flist = open_spec_files("spectra_processed", [f])
+        for mjd, f in zip(mjds, flist):
+            mjddict[round(mjd, 4)] = f
+
+    if not custom_select:
+        for ind, row in rv_table.iterrows():
+            file = mjddict[round(row["mjd"], 4)]
+            wl, flx, _, _ = load_spectrum(file)
+            wl = wlshift(wl, -row["culum_fit_RV"])
+            s = wl.argsort()
+            wl = wl[s]
+            flx = flx[s]
+
+            wls.append(wl)
+            flxs.append(flx)
+
+        # step 1: calculating wavelength ranges
+        ranges = [np.ptp(x) for x in wls]
+
+        # step 2: grouping similar ranges
+        eps = 0.05
+        groups = []
+        for i, r1 in enumerate(ranges):
+            thisgroup = []
+            for j, r2 in enumerate(ranges):
+                if i != j and abs((r1 - r2) / r1) <= eps:
+                    thisgroup.append(sorted([i, j]))
+            thisgroup = np.unique(list(itertools.chain.from_iterable(thisgroup))).tolist()
+            groups.append(thisgroup)
+
+        # sort and remove duplicate groups
+        groups.sort()
+        groups = list(groups for groups, _ in itertools.groupby(groups))
+
+        # compute frequencies of the groups
+        lengths = [len(group) for group in groups]
+
+        # get the max frequency and group
+        max_length = max(lengths)
+        largest_group = groups[lengths.index(max_length)]
+    else:
+        rv_table["mjd"] = rv_table["mjd"].round(4)
+        for m, f in mjddict.items():
+            wl, flx, _, _ = load_spectrum(f)
+            if custom_rv is not None:
+                wl = wlshift(wl, -custom_rv)
+            else:
+                try:
+                    rv = rv_table.loc[rv_table["mjd"] == m].iloc[0]
+                except IndexError:
+                    print("Some selected columns have no RVs!")
+                    return
+                wl = wlshift(wl, -rv)
+            s = wl.argsort()
+            wl = wl[s]
+            flx = flx[s]
+
+            wls.append(wl)
+            flxs.append(flx)
+        largest_group = [int(i) for i in custom_select.split(",")]
+
+    # step 3: reducing the arrays
+    wls = [wls[i] for i in largest_group]
+
+    # step 4: remove the flux arrays not corresponding to the biggest group of wavelength arrays
+    flxs = [flxs[i] for i in largest_group]
+
+    interpolated_diff = get_interpolation_function([h[:-1] for h in wls], [np.diff(w) for w in wls])
+
+    # Compute the global min and max wavelengths and mean wavelength step
+    min_wl = np.min([np.min(wl) for wl in wls])
+    max_wl = np.max([np.max(wl) for wl in wls])
+
+    # Generate the new global wavelength array
+    global_wls = []
+
+    w = min_wl
+    while w < max_wl:
+        global_wls.append(w)
+        w += interpolated_diff(w)
+
+    global_wls = np.array(global_wls)
+
+    # Initialize the global flux array
+    global_flxs = np.zeros_like(global_wls)
+
+    n_in_bin = np.zeros(global_flxs.shape)
+    # Loop over the individual wls and flxs arrays
+    for wl, flx in zip(wls, flxs):
+        # Compute the indices of the 'left' wavelength bin limits of the original in the new array
+        ind = np.digitize(wl, global_wls) - 1
+
+        # Compute the fraction of each flux that belongs to the 'left' bin
+        frac = np.abs((global_wls[ind[ind + 1 < len(global_wls)]] - wl[ind + 1 < len(global_wls)])) / (np.abs(global_wls[ind[ind + 1 < len(global_wls)] + 1] - global_wls[ind[ind + 1 < len(global_wls)]]))
+        # Add the fluxes to the new array, distributing them proportionally
+        np.add.at(global_flxs, ind[ind + 1 < len(global_wls)], frac * flx[ind + 1 < len(global_wls)])
+        np.add.at(global_flxs, ind[ind + 1 < len(global_wls)] + 1, (1 - frac) * flx[ind + 1 < len(global_wls)])
+        np.add.at(n_in_bin, ind, 1)
+        np.add.at(n_in_bin, ind[ind + 1 < len(global_wls)] + 1, 1)
+
+    global_flxs = global_flxs[n_in_bin != 0]
+    global_wls = global_wls[n_in_bin != 0]
+    n_in_bin = n_in_bin[n_in_bin != 0]
+    global_flxs /= n_in_bin
+
+    plt.plot(global_wls, global_flxs)
+    plt.tight_layout()
+    plt.show()
+
+    outdata = np.stack((global_wls, global_flxs, np.zeros(global_wls.shape)), axis=-1)
+    if custom_name is None:
+        np.savetxt(f"master_spectra/{gaia_id}_stacked.txt", outdata, fmt='%1.4f')
+    else:
+        np.savetxt(f"master_spectra/{custom_name}.txt", outdata, fmt='%1.4f')
 
 
 def analysis_tab(analysis):
@@ -668,7 +869,6 @@ def analysis_tab(analysis):
                 use_ind_as_sid=True,
                 normalized=normalize.get())
 
-
         viewplot = tk.Button(buttonframe, text="View Plot", command=viewplot())
         viewplot.grid(row=7, column=1)
 
@@ -685,113 +885,54 @@ def analysis_tab(analysis):
         viewplot.grid(row=13, column=1)
 
         for i in range(13):
-            buttonframe.grid_rowconfigure(i+1, minsize=25)
+            buttonframe.grid_rowconfigure(i + 1, minsize=25)
         buttonframe.grid(row=1, column=3, sticky="news")
 
-    def create_master_spectrum():
-        if not os.path.isdir("master_spectra"):
-            os.mkdir("master_spectra")
+    def master_spectrum_window():
         gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
-        rv_table = pd.read_csv(f"output/{gaia_id}/RV_variation.csv")
+        create_master_window = tk.Toplevel()
+        try:
+            create_master_window.iconbitmap("favicon.ico")
+        except:
+            pass
+        create_master_window.title(f"Create master spectrum for {gaia_id}")
+        create_master_window.update_idletasks()  # This forces tkinter to update the window calculations.
+        create_master_window.geometry("800x600+0+0")
+
+        masspecframe = tk.Frame(create_master_window)
+
+        custom_name_val = tk.StringVar(value="")
+        custom_name_entry = tk.Entry(masspecframe, textvariable=custom_name_val)
+        custom_name_l = tk.Label(masspecframe, text="Custom Name")
+        custom_name_l.grid(row=1, column=1)
+        custom_name_entry.grid(row=1, column=2)
+
+        custom_sel_val = tk.StringVar(value="")
+        custom_sel_entry = tk.Entry(masspecframe, textvariable=custom_sel_val)
+        custom_sel_l = tk.Label(masspecframe, text="Custom Selection")
+        custom_sel_l.grid(row=2, column=1)
+        custom_sel_entry.grid(row=2, column=2)
+
+        custom_rv_val = tk.StringVar(value="")
+        custom_rv_entry = tk.Entry(masspecframe, textvariable=custom_rv_val)
+        custom_rv_l = tk.Label(masspecframe, text="Custom RV val")
+        custom_rv_l.grid(row=3, column=1)
+        custom_rv_entry.grid(row=3, column=2)
+
+        gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
         assoc_files = interesting_dataframe[interesting_dataframe["source_id"] == gaia_id].iloc[0]["associated_files"].split(";")
         assoc_files = [f.replace(".fits", "") for f in assoc_files]
 
-        mjddict = {}
-        wls = []
-        flxs = []
+        def do_master_thing():
+            if custom_name_val.get() == "" and custom_sel_val.get() == "" and custom_rv_val.get() == "":
+                create_master_spectrum(gaia_id, assoc_files)
+            else:
+                create_master_spectrum(gaia_id, assoc_files, custom_name_val.get(), float(custom_rv_val.get()), custom_sel_val.get())
 
-        for f in assoc_files:
-            with open(f"spectra_processed/{f}_mjd.txt", "r") as infile:
-                mjds = [float(l.strip()) for l in infile.readlines() if "#" not in l]
-            flist = open_spec_files("spectra_processed", [f])
-            for mjd, f in zip(mjds, flist):
-                mjddict[round(mjd, 4)] = f
-        for ind, row in rv_table.iterrows():
-            file = mjddict[round(row["mjd"], 4)]
-            wl, flx, _, _ = load_spectrum(f"{file}")
-            wl = wlshift(wl, -row["culum_fit_RV"])
-            s = wl.argsort()
-            wl = wl[s]
-            flx = flx[s]
+        do_master_button = tk.Button(masspecframe,  text="Create Master Spectrum", command=do_master_thing)
+        do_master_button.grid(row=4, column=2)
+        masspecframe.pack()
 
-            wls.append(wl)
-            flxs.append(flx)
-
-        # step 1: calculating wavelength ranges
-        ranges = [np.ptp(x) for x in wls]
-
-        # step 2: grouping similar ranges
-        eps = 0.05
-        groups = []
-        for i, r1 in enumerate(ranges):
-            thisgroup = []
-            for j, r2 in enumerate(ranges):
-                if i != j and abs((r1 - r2) / r1) <= eps:
-                    thisgroup.append(sorted([i, j]))
-            thisgroup = np.unique(list(itertools.chain.from_iterable(thisgroup))).tolist()
-            groups.append(thisgroup)
-
-        # sort and remove duplicate groups
-        groups.sort()
-        groups = list(groups for groups, _ in itertools.groupby(groups))
-
-        # compute frequencies of the groups
-        lengths = [len(group) for group in groups]
-
-        # get the max frequency and group
-        max_length = max(lengths)
-        largest_group = groups[lengths.index(max_length)]
-
-        # step 3: reducing the arrays
-        wls = [wls[i] for i in largest_group]
-
-        # step 4: remove the flux arrays not corresponding to the biggest group of wavelength arrays
-        flxs = [flxs[i] for i in largest_group]
-
-        interpolated_diff = get_interpolation_function([h[:-1] for h in wls], [np.diff(w) for w in wls])
-
-        # Compute the global min and max wavelengths and mean wavelength step
-        min_wl = np.min([np.min(wl) for wl in wls])
-        max_wl = np.max([np.max(wl) for wl in wls])
-
-        # Generate the new global wavelength array
-        global_wls = []
-
-        w = min_wl
-        while w < max_wl:
-            global_wls.append(w)
-            w += interpolated_diff(w)
-
-        global_wls = np.array(global_wls)
-
-        # Initialize the global flux array
-        global_flxs = np.zeros_like(global_wls)
-
-        n_in_bin = np.zeros(global_flxs.shape)
-        # Loop over the individual wls and flxs arrays
-        for wl, flx in zip(wls, flxs):
-            # Compute the indices of the 'left' wavelength bin limits of the original in the new array
-            ind = np.digitize(wl, global_wls) - 1
-
-            # Compute the fraction of each flux that belongs to the 'left' bin
-            frac = np.abs((global_wls[ind[ind + 1 < len(global_wls)]] - wl[ind + 1 < len(global_wls)])) / (np.abs(global_wls[ind[ind + 1 < len(global_wls)] + 1] - global_wls[ind[ind + 1 < len(global_wls)]]))
-            # Add the fluxes to the new array, distributing them proportionally
-            np.add.at(global_flxs, ind[ind + 1 < len(global_wls)], frac * flx[ind + 1 < len(global_wls)])
-            np.add.at(global_flxs, ind[ind + 1 < len(global_wls)] + 1, (1 - frac) * flx[ind + 1 < len(global_wls)])
-            np.add.at(n_in_bin, ind, 1)
-            np.add.at(n_in_bin, ind[ind + 1 < len(global_wls)] + 1, 1)
-
-        global_flxs = global_flxs[n_in_bin != 0]
-        global_wls = global_wls[n_in_bin != 0]
-        n_in_bin = n_in_bin[n_in_bin != 0]
-        global_flxs /= n_in_bin
-
-        plt.plot(global_wls, global_flxs)
-        plt.tight_layout()
-        plt.show()
-
-        outdata = np.stack((global_wls, global_flxs, np.zeros(global_wls.shape)), axis=-1)
-        np.savetxt(f"master_spectra/{gaia_id}_stacked.txt", outdata, fmt='%1.4f')
 
     sheet.enable_bindings()
     sheet.headers(newheaders=interesting_dataframe.columns.tolist())
@@ -799,7 +940,7 @@ def analysis_tab(analysis):
     sheet.popup_menu_add_command("Add to observation list", add_to_observation_list)
     sheet.popup_menu_add_command("Remove from observation list", remove_from_observation_list)
     sheet.popup_menu_add_command("View detail window", view_detail_window)
-    sheet.popup_menu_add_command("Create master spectrum", create_master_spectrum)
+    sheet.popup_menu_add_command("Create master spectrum", master_spectrum_window)
     sheet.popup_menu_add_command("Reload System", reload_system)
 
     if "known_category" in interesting_dataframe.columns.tolist():
