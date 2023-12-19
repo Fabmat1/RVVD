@@ -405,7 +405,7 @@ def gen_interesting_table(result_params, catalogue, date='2023-10-12 00:00:00', 
 
 
 def quick_visibility(date, ra, dec, saveloc=None):
-    delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight = get_frame(date)
+    delta_midnight, frame_obsnight, sunaltazs_obsnight, moonaltazs_obsnight = get_frame(date, utc_offset=-5)
     obj_altazs_obsnight = get_visibility(frame_obsnight, ra, dec)
     plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=saveloc)
 

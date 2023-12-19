@@ -1,11 +1,13 @@
 import ast
 import itertools
+import json
 import multiprocessing
 import os
+import subprocess
 import time
 import tkinter as tk
 import matplotlib.pyplot as plt
-from tkinter import ttk
+from tkinter import ttk, filedialog
 import pandas as pd
 from astroquery.vizier import Vizier
 from idlelib.tooltip import Hovertip
@@ -84,6 +86,22 @@ plot_tooltips = {
 
 def close_window():
     os._exit(1)
+
+
+def save_preferences(pref_dict):
+    with open(".RVVDprefs", "w") as preffile:
+        json.dump(pref_dict, preffile)
+
+
+def load_preferences():
+    if not os.path.isfile(".RVVDprefs"):
+        with open(".RVVDprefs", "w") as preffile:
+            json.dump({
+                "isisdir": "/ISIS_models"
+            }, preffile)
+    with open(".RVVDprefs", "r") as preffile:
+        preferences = json.load(preffile)
+    return preferences
 
 
 # red_green_gradient = ColorGradient([(0, (255, 65, 34)), (0.5, (255, 255, 255)), (1, (92, 237, 115))])
@@ -252,15 +270,162 @@ def get_interpolation_function(arr_x, arr_y):
 
 
 def calcsed(gaia_id, parameter_list, griddirs, isisdir):
+    parameter_list = [("c*_xi", "0", 1), ("c*_z", "0", 1)] + parameter_list
+    n_list = []
+    for a, b, c in parameter_list:
+        if b != "":
+            n_list.append((a, b, c))
+    parameter_list = n_list
     starline = f'variable star = "GAIA DR3 {gaia_id}";'
-    paramstring = f'''variable par = struct{{name = [{",".join([p[0] for p in parameter_list])}],
+    paramstring = f'''variable par = struct{{name = ["{'","'.join([p[0] for p in parameter_list])}"],
     value = [{",".join([p[1] for p in parameter_list])}],
-    freeze = [{",".join([p[2] for p in parameter_list])}]}};'''
-    griddirectories = str(griddirs) + ";"
-    isispath = f"bpaths = {str(isisdir)}"
+    freeze = [{",".join([str(p[2]) for p in parameter_list])}]}};'''
+    double_quoted_list = ', '.join([f'"{item}"' for item in griddirs])
+    griddirectories = "variable griddirectories, bpaths;\ngriddirectories = [" + double_quoted_list + "];"
+    isispath = f'bpaths = ["{str(isisdir)}"];'
+
+    if not os.path.isdir(f"SEDs/{gaia_id}"):
+        os.mkdir(f"SEDs/{gaia_id}")
+    else:
+        os.remove(f"SEDs/{gaia_id}/photometry.sl")
+    with open(f"SEDs/{gaia_id}/photometry.sl", "w") as script:
+        script.write(starline + "\n")
+        script.write(paramstring + "\n")
+        script.write(griddirectories + "\n")
+        script.write(isispath + "\n")
+        with open(f"SEDs/sedscriptbase.sl", "r") as restofthefnowl:
+            script.write(restofthefnowl.read())
+
+    p = subprocess.Popen(f"isis photometry.sl", shell=True, cwd=f"SEDs/{gaia_id}")
+
+    return p
+
+
+def setCanvasSize(window, canvas):
+    # Force tkinter to update the GUI, thus calculating the correct screen size
+    window.update_idletasks()
+
+    # Setting the canvas size according to frame size
+    canvas.configure(width=window.winfo_width() * 0.75, height=window.winfo_height() * 0.9)
+
+
+def showimages(gaia_id, frame, window):
+    canvas = tk.Canvas(frame)
+    scrollbar_y = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+    scrollbar_x = tk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
+    scroll_frame = tk.Frame(canvas)
+
+    scroll_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")
+        )
+    )
+
+    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+
+    images = []
+
+    for pdfpath in [f"SEDs/{gaia_id}/photometry_SED.pdf", f"SEDs/{gaia_id}/photometry_results.pdf"]:
+        try:
+            doc = fitz.open(pdfpath)
+            zoom = 2
+            mat = fitz.Matrix(zoom, zoom)
+            page = doc.load_page(0)
+            pix = page.get_pixmap(matrix=mat)
+            im = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            img_tk = ImageTk.PhotoImage(im)
+            image_label = tk.Label(scroll_frame, image=img_tk)
+            image_label.image = img_tk
+            image_label.pack()
+            images.append(image_label)
+        except fitz.fitz.FileNotFoundError:
+            noresults = tk.Label(scroll_frame,
+                                 font=('Segoe UI', 25),
+                                 fg='#ff0000',
+                                 text="No results to show yet!\nGenerate some!")
+            noresults.pack(fill="both", expand=1)
+            break
+
+    scrollbar_y.pack(side=tk.RIGHT, fill="y")
+    scrollbar_x.pack(side=tk.BOTTOM, fill="x")
+    canvas.pack(side=tk.LEFT, fill="both", expand=True)
+
+    def scrollHorizontally(event):
+        if os.name == 'nt':
+            canvas.xview_scroll(-1, "units")
+        elif os.name == "posix":
+            canvas.xview_scroll(-1, "units")
+
+    def scrollVertically(event):
+        if os.name == 'nt':
+            canvas.yview_scroll(-1, "units")
+        elif os.name == "posix":
+            canvas.yview_scroll(-1, "units")
+
+    def scrollHorizontallyInverse(event):
+        if os.name == 'nt':
+            canvas.xview_scroll(1, "units")
+        elif os.name == "posix":
+            canvas.xview_scroll(1, "units")
+
+    def scrollVerticallyInverse(event):
+        if os.name == 'nt':
+            canvas.yview_scroll(1, "units")
+        elif os.name == "posix":
+            canvas.yview_scroll(1, "units")
+
+    def bind_to_element(element):
+        element.bind('<Up>', scrollVertically)
+        element.bind('<Down>', scrollVerticallyInverse)
+        element.bind('<Left>', scrollHorizontally)
+        element.bind('<Right>', scrollHorizontallyInverse)
+        element.bind('<Button-4>', scrollVertically)
+        element.bind('<Button-5>', scrollVerticallyInverse)
+        element.bind('<Shift-Button-4>', scrollHorizontally)
+        element.bind('<Shift-Button-5>', scrollHorizontallyInverse)
+
+    for i in images:
+        bind_to_element(i)
+    bind_to_element(canvas)
+    setCanvasSize(frame, window)
+
+
+def getgridoptions(isis_dir):
+    if not isinstance(isis_dir, str):
+        return ["ISIS directory not properly configured"]
+    grid_fits_dirs = []
+    start_depth = isis_dir.count(os.sep)
+
+    for dir_path, dirs, files in os.walk(isis_dir):
+        current_depth = dir_path.count(os.sep) - start_depth
+        if current_depth > 3:
+            del dirs[:]  # Clear the dirs list in-place to prevent further recursion down this branch.
+            continue
+
+        if "grid.fits" in files:
+            grid_fits_dirs.append(dir_path)
+
+    grid_fits_dirs = [g.replace(isis_dir, "") for g in grid_fits_dirs]
+
+    if len(grid_fits_dirs) == 0:
+        return ["ISIS directory not properly configured"]
+    else:
+        return grid_fits_dirs
+
+
+def update_option_menu(opmenu, variable, options):
+    menu = opmenu['menu']
+    menu.delete(0, 'end')
+
+    for string in options:
+        menu.add_command(label=string,
+                         command=lambda value=string: variable.set(value))
 
 
 def fitsed(window, gaia_id):
+    prefs = load_preferences()
     fitsedwindow = tk.Toplevel(window)
     fitsedwindow.title(f"Fit SED for {gaia_id}")
     fitsedwindow.geometry("800x600+0+0")
@@ -283,47 +448,131 @@ def fitsed(window, gaia_id):
     fitinputframe = tk.Frame(fitsedframe)
     fitoutputframe = tk.Frame(fitsedframe)
 
+    convdict = {
+        "Effective Temperature": "teff",
+        "Surface Gravity": "logg",
+        "Helium Abundance": "HE",
+    }
+
+    star_two_frame = ttk.LabelFrame(fitinputframe, text="Star Two")
+    star_two_label_names = ["Effective Temperature", "Surface Gravity", "Helium Abundance"]
+    c2vars = [(tk.StringVar(star_two_frame, value="c2_" + convdict[l]), tk.StringVar(star_two_frame), tk.IntVar(star_two_frame)) for l in star_two_label_names]
+    star_two_inputs = [ttk.Entry(star_two_frame, textvariable=c2vars[i][1], state='disabled') for i, _ in enumerate(star_two_label_names)]
+    star_two_freezeboxes = [tk.Checkbutton(star_two_frame, variable=c2vars[i][2], state='disabled') for i, _ in enumerate(star_two_label_names)]
+
+    star_one_frame = ttk.LabelFrame(fitinputframe, text="Star One")
+    star_one_label_names = ["Effective Temperature", "Surface Gravity", "Helium Abundance"]
+    c1vars = [(tk.StringVar(star_one_frame, value="c1_" + convdict[l]), tk.StringVar(star_one_frame), tk.IntVar(star_one_frame)) for l in star_one_label_names]
+    star_one_inputs = [ttk.Entry(star_one_frame, textvariable=c1vars[i][1]) for i, _ in enumerate(star_one_label_names)]
+    star_one_freezeboxes = [tk.Checkbutton(star_one_frame, variable=c1vars[i][2]) for i, _ in enumerate(star_one_label_names)]
+
+    gridoptions = getgridoptions(prefs["isisdir"])
+    grid_one = tk.StringVar(star_one_frame, value="Select grid")
+    gridlabel_one = tk.Label(star_one_frame, text="Select grid")
+    grid_selector_one = tk.OptionMenu(star_one_frame, grid_one, *gridoptions)
+
+    grid_two = tk.StringVar(star_two_frame, value="Select grid")
+    grid_selector_two = tk.OptionMenu(star_two_frame, grid_two, *gridoptions)
+    grid_selector_two.configure(state="disabled")
+    gridlabel_two = tk.Label(star_two_frame, text="Select grid")
+
+    def browse_sed_dir(isisdir):
+        if isisdir is None:
+            return
+        fitsedwindow.wm_attributes('-topmost', 1)
+        folder_selected = filedialog.askdirectory(parent=fitsedwindow)
+        isisdir.set(folder_selected)
+        prefs["isisdir"] = folder_selected
+        save_preferences(prefs)
+        gridoptions = getgridoptions(folder_selected)
+        update_option_menu(grid_selector_one, grid_one, gridoptions)
+        update_option_menu(grid_selector_two, grid_two, gridoptions)
+        fitsedwindow.wm_attributes('-topmost', 0)
+
+    miniframe = tk.Frame(fitinputframe)
+    ttk.Label(miniframe, text="ISIS Model directory").pack(side=tk.LEFT, padx=10, pady=10)
+    isis_dir = tk.StringVar(value=prefs["isisdir"])
+    tk.Entry(miniframe, textvariable=isis_dir, state="disabled").pack(side=tk.LEFT, pady=10)
+    tk.Button(miniframe, text="Browse Directories", command=lambda: browse_sed_dir(isis_dir)).pack(side=tk.LEFT, pady=10)
+    miniframe.pack()
+
+    for i, (label_name, entry, freezebox) in enumerate(zip(star_one_label_names, star_one_inputs, star_one_freezeboxes)):
+        ttk.Label(star_one_frame, text=label_name).grid(row=i, column=0)
+        entry.grid(row=i, column=1)
+        ttk.Label(star_one_frame, text="Freeze?").grid(row=i, column=2)
+        freezebox.grid(row=i, column=3)
+
+    gridlabel_one.grid(row=i + 1, column=0)
+    grid_selector_one.grid(row=i + 1, column=1)
+
+    for i, (label_name, entry, freezebox) in enumerate(zip(star_two_label_names, star_two_inputs, star_two_freezeboxes)):
+        ttk.Label(star_two_frame, text=label_name).grid(row=i, column=0)
+        entry.grid(row=i, column=1)
+        ttk.Label(star_two_frame, text="Freeze?").grid(row=i, column=2)
+        freezebox.grid(row=i, column=3)
+
+    gridlabel_two.grid(row=i + 1, column=0)
+    grid_selector_two.grid(row=i + 1, column=1)
+
     def enable_star_two_inputs():
         if var.get():
             for input_box in star_two_inputs:
                 input_box.config(state='normal')
+            for freeze_box in star_two_freezeboxes:
+                freeze_box.config(state='normal')
+            grid_selector_two.config(state="normal")
         else:
             for input_box in star_two_inputs:
                 input_box.config(state='disabled')
-
-    star_one_frame = ttk.LabelFrame(fitinputframe, text="Star One")
-    star_one_label_names = ["Effective Temperature", "Surface Gravity", "Helium Abundance"]
-    star_one_inputs = [ttk.Entry(star_one_frame) for _ in star_one_label_names]
-
-    for i, (label_name, entry) in enumerate(zip(star_one_label_names, star_one_inputs)):
-        ttk.Label(star_one_frame, text=label_name).grid(row=i, column=0)
-        entry.grid(row=i, column=1)
-
-    star_two_frame = ttk.LabelFrame(fitinputframe, text="Star Two")
-    star_two_label_names = ["Effective Temperature", "Surface Gravity", "Helium Abundance"]
-    star_two_inputs = [ttk.Entry(star_two_frame, state='disabled') for _ in star_two_label_names]
-
-    for i, (label_name, entry) in enumerate(zip(star_two_label_names, star_two_inputs)):
-        ttk.Label(star_two_frame, text=label_name).grid(row=i, column=0)
-        entry.grid(row=i, column=1)
+            for freeze_box in star_two_freezeboxes:
+                freeze_box.config(state='disabled')
+            grid_selector_two.config(state="disabled")
 
     var = tk.IntVar()
-    checkbox = ttk.Checkbutton(fitinputframe, text='Fit an SED for two stars?', variable=var, command=enable_star_two_inputs)
+    checkbox = tk.Checkbutton(fitinputframe, text='Fit a composite SED?', variable=var, command=enable_star_two_inputs)
 
-    star_one_frame.pack(fill='x', padx=10, pady=10)
-    star_two_frame.pack(fill='x', padx=10, pady=10)
+    star_one_frame.pack(anchor="nw", padx=10, pady=10)
+    star_two_frame.pack(anchor="nw", padx=10, pady=10)
     checkbox.pack()
 
+    noresults = None
     if os.path.isdir(f"SEDs/{gaia_id}"):
-        pass
+        showimages(gaia_id, fitoutputframe, fitsedwindow)
     else:
-        pass
+        noresults = tk.Label(fitoutputframe,
+                             font=('Segoe UI', 25),
+                             fg='#ff0000',
+                             text="No results to show yet!\nGenerate some!")
+        noresults.pack(fill="both", expand=1)
 
-    fitinputframe.grid(row=1, column=1)
-    fitoutputframe.grid(row=1, column=2)
+    def calcsedwrapper(gaia_id, params, griddirs, isisdir):
+        proc = calcsed(gaia_id, params, griddirs, isisdir)
+
+        def execute_function_after_process():
+            for child in fitoutputframe.winfo_children():
+                child.destroy()
+            progress_bar = ttk.Progressbar(fitoutputframe, mode='indeterminate', length=300)
+            progress_bar.start()
+            prog_label = tk.Label(fitoutputframe, text="Generating SED...")
+            prog_label.pack()
+            progress_bar.pack(pady=10)
+            proc.communicate()  # Wait for the subprocess command to finish
+            progress_bar.destroy()
+            prog_label.destroy()
+            showimages(gaia_id, fitoutputframe, fitsedwindow)
+
+        # Create a thread to execute the function after process completion
+        thread = threading.Thread(target=execute_function_after_process)
+        thread.start()
+
+    dosedbtn = tk.Button(fitinputframe, text="Fit SED", command=lambda: calcsedwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars + c2vars], [grid_one.get()[1:]] if grid_two.get() == "Select grid" else [grid_one.get()[1:], grid_two.get()[1:]], isis_dir.get()+"/"))
+    dosedbtn.pack(anchor="se")
+
+    fitinputframe.pack(side=tk.LEFT, anchor="nw", padx=10, pady=10)
+    separator = ttk.Separator(fitsedframe, orient='vertical')
+    separator.pack(side=tk.LEFT, fill="y")
+    fitoutputframe.pack(side=tk.RIGHT, padx=10, pady=10, fill="both", expand=1)
     fitsedframe.pack(fill="both", expand=1)
-
-
 
 
 def fitmodel(window, gaia_id):
@@ -365,7 +614,6 @@ def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=Non
     if not os.path.isdir("master_spectra"):
         os.mkdir("master_spectra")
     rv_table = pd.read_csv(f"output/{gaia_id}/RV_variation.csv")
-
 
     mjddict = {}
     wls = []
@@ -929,10 +1177,9 @@ def analysis_tab(analysis):
             else:
                 create_master_spectrum(gaia_id, assoc_files, custom_name_val.get(), float(custom_rv_val.get()), custom_sel_val.get())
 
-        do_master_button = tk.Button(masspecframe,  text="Create Master Spectrum", command=do_master_thing)
+        do_master_button = tk.Button(masspecframe, text="Create Master Spectrum", command=do_master_thing)
         do_master_button.grid(row=4, column=2)
         masspecframe.pack()
-
 
     sheet.enable_bindings()
     sheet.headers(newheaders=interesting_dataframe.columns.tolist())
