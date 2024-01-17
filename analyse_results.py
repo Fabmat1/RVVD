@@ -526,17 +526,23 @@ def plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj
     plt.grid(color="lightgray", zorder=1)
     if date:
         plt.title(f"Visibility for {date}")
-    plt.plot(delta_midnight, sunaltazs_obsnight.alt, color='r', label='Sun', zorder=3)
-    plt.plot(delta_midnight, moonaltazs_obsnight.alt, color=[0.75] * 3, ls='--', label='Moon', zorder=3)
-    plt.plot(delta_midnight, obj_altazs_obsnight.alt, label='Target', color='lime', zorder=3)
-    plt.fill_between(delta_midnight, 0 * u.deg, 90 * u.deg,
-                     sunaltazs_obsnight.alt < -0 * u.deg, color='0.5', zorder=0)
-    plt.fill_between(delta_midnight, 0 * u.deg, 90 * u.deg,
-                     sunaltazs_obsnight.alt < -18 * u.deg, color='k', zorder=0)
+
+    delta_midnight = delta_midnight.to_value()
+    sunaltazs_obsnight = sunaltazs_obsnight.alt.to_value()
+    moonaltazs_obsnight = moonaltazs_obsnight.alt.to_value()
+    obj_altazs_obsnight = obj_altazs_obsnight.alt.to_value()
+
+    plt.plot(delta_midnight, sunaltazs_obsnight, color='r', label='Sun', zorder=3)
+    plt.plot(delta_midnight, moonaltazs_obsnight, color=[0.75] * 3, ls='--', label='Moon', zorder=3)
+    plt.plot(delta_midnight, obj_altazs_obsnight, label='Target', color='lime', zorder=3)
+    plt.fill_between(delta_midnight, 0, 90,
+                     sunaltazs_obsnight < -0, color='0.5', zorder=0)
+    plt.fill_between(delta_midnight, 0 * u.deg, 90,
+                     sunaltazs_obsnight < -18, color='k', zorder=0)
     plt.legend(loc='upper left')
-    plt.xlim(-8 * u.hour, 8 * u.hour)
-    plt.xticks((np.arange(9) * 2 - 8) * u.hour)
-    plt.ylim(0 * u.deg, 90 * u.deg)
+    plt.xlim(-8, 8)
+    plt.xticks((np.arange(9) * 2 - 8))
+    plt.ylim(0, 90)
     plt.xlabel('Hours from EDT Midnight')
     plt.ylabel('Altitude [deg]')
     plt.tight_layout()
@@ -550,18 +556,24 @@ def plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj
 def plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=None):
     plt.figure(figsize=(3, 3))
     plt.grid(color="lightgray", zorder=1)
+
+    delta_midnight = delta_midnight.to_value()
+    sunaltazs_obsnight = sunaltazs_obsnight.alt.to_value()
+    moonaltazs_obsnight = moonaltazs_obsnight.alt.to_value()
+    obj_altazs_obsnight = obj_altazs_obsnight.alt.to_value()
+
     # plt.plot(delta_midnight, sunaltazs_obsnight.alt, color='r', label='Sun', zorder=3)
     # plt.plot(delta_midnight, moonaltazs_obsnight.alt, color=[0.75] * 3, ls='--', label='Moon', zorder=3)
-    plt.plot(delta_midnight, obj_altazs_obsnight.alt, label='Target', color='lime', zorder=3)
-    plt.fill_between(delta_midnight, 0 * u.deg, 90 * u.deg,
-                     sunaltazs_obsnight.alt < -0 * u.deg, color='0.5', zorder=0)
-    plt.fill_between(delta_midnight, 0 * u.deg, 90 * u.deg,
-                     sunaltazs_obsnight.alt < -18 * u.deg, color='k', zorder=0)
+    plt.plot(delta_midnight, obj_altazs_obsnight, label='Target', color='lime', zorder=3)
+    plt.fill_between(delta_midnight, 0, 90,
+                     sunaltazs_obsnight < -0, color='0.5', zorder=0)
+    plt.fill_between(delta_midnight, 0, 90,
+                     sunaltazs_obsnight < -18, color='k', zorder=0)
     plt.xlabel("")
     plt.ylabel("")
 
-    plt.xlim(-8 * u.hour, 8 * u.hour)
-    plt.ylim(0 * u.deg, 90 * u.deg)
+    plt.xlim(-8, 8)
+    plt.ylim(0, 90)
 
     ax = plt.gca()
     # Hide X and Y axes label marks

@@ -16,7 +16,7 @@ from scipy.optimize import curve_fit
 import astropy.units as u
 from main import load_spectrum
 
-COADD_SIDS = []#[2806984745409075328]
+COADD_SIDS = []  # [2806984745409075328]
 N_COADD = 2
 SKYFLUXSEP = 100
 
@@ -123,7 +123,6 @@ def create_master_image(image_list, hdu_id, bounds, master_bias=None, master_con
 
 
 def create_master_flat(image_list, second_image_list, hdu_id, master_bias=None, bounds=None):
-
     if bounds is None:
         image_data = fits.open(image_list[0])[hdu_id].data
     else:
@@ -156,7 +155,7 @@ def create_master_flat(image_list, second_image_list, hdu_id, master_bias=None, 
 
     if bounds is not None:
         # Get rid of littrow ghost
-        center_diff = np.median(master)-np.median(master2)
+        center_diff = np.median(master) - np.median(master2)
         master2 += center_diff
 
     master = np.minimum(master, master2)
@@ -174,7 +173,7 @@ def create_master_flat(image_list, second_image_list, hdu_id, master_bias=None, 
 
 
 def gaussian(x, a, mean, std_dev, h):
-    return a / (std_dev * np.sqrt(2 * np.pi)) * np.exp(-0.5 * ((x - mean) / std_dev) ** 2)+h
+    return a / (std_dev * np.sqrt(2 * np.pi)) * np.exp(-0.5 * ((x - mean) / std_dev) ** 2) + h
 
 
 def line(x, w, v, u, m, n):
@@ -192,37 +191,12 @@ def get_flux(image, x_ind, y_ind, width):
     return fluxsum
 
 
-def get_lines_from_intensity(intensity):
-    # noirlist = pd.read_csv("FeAr_lines.csv")
-    # noirlist["original_wl"] = noirlist.wl
-    # noirlist.wl = noirlist.wl.round(2)
-    NISTlist = pd.read_csv("FeAr_NIST.csv")
-    NISTlist.wl = NISTlist.wl.str.replace('="', '')
-    NISTlist.wl = NISTlist.wl.str.replace('"', '')
-    NISTlist.wl = NISTlist.wl.astype(np.float64).round(2)
-    NISTlist.intens = NISTlist.intens.str.replace('="', '')
-    NISTlist.intens = NISTlist.intens.str.replace('"', '')
-    NISTlist.intens = pd.to_numeric(NISTlist["intens"], errors='coerce')
+def get_fluxfraction(image, x_ind, y_ind, width):
+    upperfraction = image[int(np.ceil(y_ind - width)) - 1, int(x_ind)] * (np.abs(np.ceil(y_ind - width) - (y_ind - width)))
+    lowerfraction = image[int(np.floor(y_ind + width)) + 1, int(x_ind)] * (np.abs(np.floor(y_ind + width) - (y_ind + width)))
+    lens = len(image[int(np.ceil(y_ind - width)):int(np.floor(y_ind + width)), int(x_ind)])
 
-    def makeident(elem, num):
-        if num == 1:
-            return elem.strip() + "I"
-        if num == 2:
-            return elem.strip() + "II"
-
-    NISTlist["ident"] = NISTlist.apply(lambda x: makeident(x.element, x.sp_num), axis=1)
-    # NISTlist["Aki(s^-1)"] = NISTlist["Aki(s^-1)"].str.replace('="', '')
-    # NISTlist["Aki(s^-1)"] = NISTlist["Aki(s^-1)"].str.replace('"', '')
-    # NISTlist["Aki(s^-1)"] = pd.to_numeric(NISTlist["Aki(s^-1)"], errors='coerce')
-    # NISTlist = NISTlist.drop(columns=['Type', 'Unnamed: 7'])
-    #
-    # merged_df = noirlist.merge(NISTlist, on='wl', how='left')
-    # merged_df = merged_df[merged_df['element'].notna()]
-    # merged_df = merged_df[merged_df['original_wl'].notna()]
-    # merged_df = merged_df[merged_df['Aki(s^-1)'].notna()]
-    NISTlist = NISTlist[NISTlist["intens"] >= intensity]
-
-    return NISTlist["wl"].to_numpy(), NISTlist
+    return upperfraction, lowerfraction, lens
 
 
 class WavelenthPixelTransform():
@@ -249,12 +223,12 @@ class WavelenthPixelTransform():
 def wlshift(wl, vel_corr):
     # wl_shift = vel_corr/speed_of_light * wl
     # return wl+wl_shift
-    return wl/(1-(vel_corr/(speed_of_light/1000)))
+    return wl / (1 - (vel_corr / (speed_of_light / 1000)))
 
 
 def fluxstatistics(wl, flux):
     med = median_filter(flux, 5)
-    flux_norm = flux/med-1
+    flux_norm = flux / med - 1
     std = pd.Series(flux_norm).rolling(min_periods=1, window=20, center=True).std().to_numpy()
 
     # plt.plot(flux_norm)
@@ -262,8 +236,8 @@ def fluxstatistics(wl, flux):
     # plt.tight_layout()
     # plt.show()
 
-    flux = flux[flux_norm < 3*std]
-    wl = wl[flux_norm < 3*std]
+    flux = flux[flux_norm < 3 * std]
+    wl = wl[flux_norm < 3 * std]
 
     med = median_filter(flux, 5)
     flux_norm = flux / med - 1
@@ -274,7 +248,7 @@ def fluxstatistics(wl, flux):
     # plt.tight_layout()
     # plt.show()
 
-    flx_std = flux*std
+    flx_std = flux * std
 
     # plt.plot(wl, flux)
     # plt.fill_between(wl, flux-flx_std, flux+flx_std, color="red", alpha=0.5)
@@ -334,13 +308,12 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
     xcenters = np.array(xcenters)
     ycenters = np.array(ycenters)
 
-    resids = np.abs(ycenters-line(xcenters, *params))
-    outsidestd = resids > 2*np.std(resids)
+    resids = np.abs(ycenters - line(xcenters, *params))
+    outsidestd = resids > 2 * np.std(resids)
     if np.sum(outsidestd.astype(int)) > 0:
         params, _ = curve_fit(line,
                               xcenters[~outsidestd],
                               ycenters[~outsidestd])
-
 
     # xspace = np.linspace(0, image.shape[1], 1000)
     # fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8))
@@ -361,8 +334,12 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
     pixel = np.arange(image.shape[1]).astype(np.float64)
     flux = np.array([get_flux(image64, p, line(p, *params), width) for p in pixel])
     compflux = np.array([get_flux(master_comp64, p, line(p, *params), width) for p in pixel])
-    uskyflx = np.array([get_flux(image64, p, line(p, *params)+SKYFLUXSEP, width) for p in pixel])
-    lskyflx = np.array([get_flux(image64, p, line(p, *params)-SKYFLUXSEP, width) for p in pixel])
+    uskyflx = np.array([get_flux(image64, p, line(p, *params) + SKYFLUXSEP, width) for p in pixel])
+    lskyflx = np.array([get_flux(image64, p, line(p, *params) - SKYFLUXSEP, width) for p in pixel])
+    fractions = np.array([get_fluxfraction(image64, p, line(p, *params), width) for p in pixel])
+    uf = fractions[:, 0]
+    lf = fractions[:, 1]
+    lens = fractions[:, 2]
 
     skyflx = np.minimum(uskyflx, lskyflx)
     flux -= skyflx
@@ -407,10 +384,13 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
 
     final_wl_arr = wpt.px_to_wl(pixel)
 
-    # plt.plot(realcwl, realcflux)
-    # plt.plot(final_wl_arr, compflux.min() - flux.max() + flux, linewidth=1, color="gray")
-    # plt.plot(final_wl_arr, compflux, color="darkred")
-    # plt.show()
+    plt.plot(realcwl, realcflux)
+    plt.plot(final_wl_arr, compflux.min() - flux.max() + flux, linewidth=1, color="gray")
+    plt.plot(final_wl_arr, compflux, color="darkred")
+    plt.plot(final_wl_arr, uf)
+    plt.plot(final_wl_arr, lf)
+    plt.plot(final_wl_arr, lens)
+    plt.show()
 
     sc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
     barycorr = sc.radial_velocity_correction(obstime=Time(mjd, format="mjd"), location=location)
@@ -428,7 +408,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
 
 def get_star_info(file, catalogue=None):
     if catalogue is None:
-        catalogue = pd.read_csv("all_objects_withlamost.csv")
+        catalogue = pd.read_csv("object_catalogue.csv")
 
     header = dict(fits.open(file)[0].header)
     try:
@@ -448,8 +428,8 @@ def get_star_info(file, catalogue=None):
 
 
 def save_to_ascii(wl, flx, flx_std, mjd, trow):
-    dir = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR"
-    outtablefile = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv"
+    dir = r"/home/fabian/PycharmProjects/auxillary/spectra_processed/SOAR"
+    outtablefile = r"/home/fabian/PycharmProjects/auxillary/spectra_processed/SOAR.csv"
     if os.path.isfile(outtablefile):
         outtable = pd.read_csv(outtablefile)
         outtable = pd.concat([outtable, pd.DataFrame([trow])])
@@ -476,22 +456,22 @@ def split_given_size(a, size):
 # You should only need to modify
 if __name__ == "__main__":
     print("Starting data reduction...")
-    catalogue = pd.read_csv("all_objects_withlamost.csv")
-    allfiles = sorted(os.listdir(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR"))
+    catalogue = pd.read_csv("object_catalogue.csv")
+    allfiles = sorted(os.listdir(r"/home/fabian/PycharmProjects/auxillary/spectra_raw/SOAR"))
 
     print("Searching files...")
-    flat_list = [] # Flats
-    shifted_flat_list = [] # Flats created with a small camera tilt to get rid of the Littrow ghost
+    flat_list = []  # Flats
+    shifted_flat_list = []  # Flats created with a small camera tilt to get rid of the Littrow ghost
     for file in allfiles:
         if "quartz" in file and "test" not in file and "bias" not in file and "shifted" not in file:
-            flat_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
+            flat_list.append(r"/home/fabian/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
         elif "quartz" in file and "test" not in file and "bias" not in file and "shifted" in file:
-            shifted_flat_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
+            shifted_flat_list.append(r"/home/fabian/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
 
     bias_list = []
     for file in allfiles:
         if "bias" in file and "test" not in file:
-            bias_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
+            bias_list.append(r"/home/fabian/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file)
 
     print("Cropping images...")
     master_flat = create_master_flat(flat_list, shifted_flat_list, 0)
@@ -529,12 +509,12 @@ if __name__ == "__main__":
     })
 
     print("Extracting Spectra...")
-    if os.path.isfile(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv"):
-        os.remove(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv")
+    if os.path.isfile(r"/home/fabian/PycharmProjects/auxillary/spectra_processed/SOAR.csv"):
+        os.remove(r"/home/fabian/PycharmProjects/auxillary/spectra_processed/SOAR.csv")
     for file in allfiles:
-        file = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file
+        file = r"/home/fabian/PycharmProjects/auxillary/spectra_raw/SOAR" + "/" + file
         if "bias" not in file and "quartz" not in file and "test" not in file and "FeAr" not in file and ".txt" not in file and "RED" not in file:
-            compfiles = [] # Complamp list for this file
+            compfiles = []  # Complamp list for this file
 
             if os.name == "nt":
                 int_file_index = int(file.split("\\")[-1][:4])
@@ -557,7 +537,7 @@ if __name__ == "__main__":
 
             master_comp = create_master_image(compfiles, 0, crop, master_bias)
 
-            trow, mjd = get_star_info(file, catalogue) # You probably need to write your own function. Trow needs to be a dict with "ra" and "dec" keys. Mjd is self-explanatory
+            trow, mjd = get_star_info(file, catalogue)  # You probably need to write your own function. Trow needs to be a dict with "ra" and "dec" keys. Mjd is self-explanatory
             print(f'Working on index {int_file_index}, GAIA DR3 {trow["source_id"]}...')
             soardf = pd.concat([soardf, trow])
 
@@ -574,14 +554,13 @@ if __name__ == "__main__":
                 trow["dec"])
             save_to_ascii(wl, flx, flx_std, mjd, trow)  # You probably need to write your own function for saving the wl and flx
 
-
     # You can ignore everything below, this is only for Coadding spectra.
     if len(COADD_SIDS) > 0:
-        directory = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR"
-        labeltable = pd.read_csv(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv")
+        directory = r"/home/fabian/PycharmProjects/auxillary/spectra_processed/SOAR"
+        labeltable = pd.read_csv(r"/home/fabian/PycharmProjects/auxillary/spectra_processed/SOAR.csv")
 
         notincoaddtable = labeltable[~labeltable["source_id"].isin(COADD_SIDS)]
-        notincoaddtable.to_csv(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR.csv", index=False)
+        notincoaddtable.to_csv(r"/home/fabian/PycharmProjects/auxillary/spectra_processed/SOAR.csv", index=False)
 
         for sid in COADD_SIDS:
             thissidlist = labeltable[labeltable["source_id"] == sid]
@@ -589,7 +568,7 @@ if __name__ == "__main__":
             for_coadd = split_given_size(filelist, N_COADD)
             for coadd_list in for_coadd:
                 n_file = coadd_list[0].replace(".fits", "_01.txt")
-                trow, _ = get_star_info(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/SOAR" + "/" + coadd_list[0])
+                trow, _ = get_star_info(r"/home/fabian/PycharmProjects/auxillary/spectra_processed/SOAR" + "/" + coadd_list[0])
                 mjds = []
                 for c in coadd_list:
                     with open(directory + "/" + c.replace(".fits", "_mjd.txt")) as mjdfile:

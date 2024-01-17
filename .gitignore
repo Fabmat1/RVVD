@@ -40,3 +40,4 @@ lightcurves/*
 /catalogues/sd_catalogue_v56_pub.csv
 !/catalogues/.gitkeep
 !/Arrow.png
+/.RVVDprefs

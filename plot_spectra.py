@@ -21,7 +21,7 @@ VET_RESULTS = True  # Whether to enable result verification features
 CUTLIM = 15
 CUTLINES = [6562.79, 4861.35, 4340.472, 4101.734, 3970.075, 3889.064, 3835.397, 4026.19, 4471.4802, 4921.9313, 5015.678, 5875.6, 6678.15, 4541.59, 4685.70, 5411.52]
 
-SEP = (.5, 10) # Separation value to add to each subseqent spectrum, if normalized at index 0, if not normalized at index 1
+SEP = (.5, 0) # Separation value to add to each subseqent spectrum, if normalized at index 0, if not normalized at index 1
 
 INDEX_TO_PLOT = 2  # Index of the system to be plotted in result_parameters.csv if not verifying results
 COLORMAP = cm.rainbow  # Optional matplotlib colormap
@@ -51,7 +51,7 @@ def get_params_from_filename(paramtable: pd.DataFrame, gaia_id, subspec_ind):
     return paramdict, gaia_id + "_" + subspec
 
 
-def normalize_spectrum(wl, flx):
+def normalize_spectrum(wl, flx, std=None):
     wl_step = np.abs(np.median(np.diff(wl)))
     true_med_size = int(np.floor(MED_WINDOW / wl_step))
     true_max_size = int(np.floor(MAX_WINDOW / wl_step))
@@ -76,7 +76,11 @@ def normalize_spectrum(wl, flx):
 
     n_flx = flx / norm_fit(wl)
 
-    return wl, n_flx, norm_fit
+    if std is None:
+        return wl, n_flx, norm_fit
+    else:
+        n_flx_std = std / norm_fit(wl)
+        return wl, n_flx, n_flx_std, norm_fit
 
 
 def comprehend_lstr(lstr):

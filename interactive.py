@@ -12,6 +12,8 @@ import pandas as pd
 from astroquery.vizier import Vizier
 from idlelib.tooltip import Hovertip
 from shutil import which
+
+from matplotlib import cm
 from scipy.interpolate import UnivariateSpline
 
 from analyse_results import vrad_pvalue
@@ -23,12 +25,12 @@ from preprocessing import *
 from PIL import Image, ImageTk
 
 from get_interesting_stars import quick_visibility
-from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis, open_spec_files, load_spectrum, lines_to_fit
+from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis, open_spec_files, load_spectrum, lines_to_fit, disturbing_lines
 import threading
 from queue import Empty
 from tksheet import Sheet
 
-from plot_spectra import plot_system_from_ind
+from plot_spectra import plot_system_from_ind, normalize_spectrum
 
 
 def callback(url):
@@ -122,7 +124,11 @@ def open_settings(window, queue):
     settings_window = tk.Toplevel(window)
     settings_window.protocol("WM_DELETE_WINDOW", save_settings)
     try:
-        settings_window.iconbitmap("favicon.ico")
+        if os.name == "nt":
+            settings_window.iconbitmap("favicon.ico")
+        else:
+            imgicon = ImageTk.PhotoImage(Image.open("favicon.ico"))
+            settings_window.tk.call('wm', 'iconphoto', settings_window._w, imgicon)
     except:
         pass
     settings_window.title("Settings")
@@ -309,7 +315,7 @@ def setCanvasSize(window, canvas):
     canvas.configure(width=window.winfo_width() * 0.75, height=window.winfo_height() * 0.9)
 
 
-def showimages(gaia_id, frame, window):
+def showimages_sed(gaia_id, frame, window):
     canvas = tk.Canvas(frame)
     scrollbar_y = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
     scrollbar_x = tk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
@@ -328,6 +334,142 @@ def showimages(gaia_id, frame, window):
     images = []
 
     for pdfpath in [f"SEDs/{gaia_id}/photometry_SED.pdf", f"SEDs/{gaia_id}/photometry_results.pdf"]:
+        try:
+            doc = fitz.open(pdfpath)
+            zoom = 2
+            mat = fitz.Matrix(zoom, zoom)
+            page = doc.load_page(0)
+            pix = page.get_pixmap(matrix=mat)
+            im = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            img_tk = ImageTk.PhotoImage(im)
+            image_label = tk.Label(scroll_frame, image=img_tk)
+            image_label.image = img_tk
+            image_label.pack()
+            images.append(image_label)
+        except fitz.fitz.FileNotFoundError:
+            noresults = tk.Label(scroll_frame,
+                                 font=('Segoe UI', 25),
+                                 fg='#ff0000',
+                                 text="No results to show yet!\nGenerate some!")
+            noresults.pack(fill="both", expand=1)
+            break
+
+    scrollbar_y.pack(side=tk.RIGHT, fill="y")
+    scrollbar_x.pack(side=tk.BOTTOM, fill="x")
+    canvas.pack(side=tk.LEFT, fill="both", expand=True)
+
+    def scrollHorizontally(event):
+        if os.name == 'nt':
+            canvas.xview_scroll(-1, "units")
+        elif os.name == "posix":
+            canvas.xview_scroll(-1, "units")
+
+    def scrollVertically(event):
+        if os.name == 'nt':
+            canvas.yview_scroll(-1, "units")
+        elif os.name == "posix":
+            canvas.yview_scroll(-1, "units")
+
+    def scrollHorizontallyInverse(event):
+        if os.name == 'nt':
+            canvas.xview_scroll(1, "units")
+        elif os.name == "posix":
+            canvas.xview_scroll(1, "units")
+
+    def scrollVerticallyInverse(event):
+        if os.name == 'nt':
+            canvas.yview_scroll(1, "units")
+        elif os.name == "posix":
+            canvas.yview_scroll(1, "units")
+
+    def bind_to_element(element):
+        element.bind('<Up>', scrollVertically)
+        element.bind('<Down>', scrollVerticallyInverse)
+        element.bind('<Left>', scrollHorizontally)
+        element.bind('<Right>', scrollHorizontallyInverse)
+        element.bind('<Button-4>', scrollVertically)
+        element.bind('<Button-5>', scrollVerticallyInverse)
+        element.bind('<Shift-Button-4>', scrollHorizontally)
+        element.bind('<Shift-Button-5>', scrollHorizontallyInverse)
+
+    for i in images:
+        bind_to_element(i)
+    bind_to_element(canvas)
+    setCanvasSize(frame, window)
+
+
+def master_spectrum_window(gaia_id, sheet=None):
+    if sheet is not None:
+        gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
+
+    object_list = pd.read_csv("result_parameters.csv")
+
+    assoc_files = object_list[object_list["source_id"] == gaia_id].iloc[0]["associated_files"].split(";")
+    assoc_files = [f.replace(".fits", "") for f in assoc_files]
+
+    create_master_window = tk.Toplevel()
+    try:
+        if os.name == "nt":
+            create_master_window.iconbitmap("favicon.ico")
+        else:
+            imgicon = ImageTk.PhotoImage(Image.open("favicon.ico"))
+            create_master_window.tk.call('wm', 'iconphoto', create_master_window._w, imgicon)
+    except:
+        pass
+    create_master_window.title(f"Create master spectrum for {gaia_id}")
+    create_master_window.update_idletasks()  # This forces tkinter to update the window calculations.
+    create_master_window.geometry("800x600+0+0")
+
+    masspecframe = tk.Frame(create_master_window)
+
+    custom_name_val = tk.StringVar(value="")
+    custom_name_entry = tk.Entry(masspecframe, textvariable=custom_name_val)
+    custom_name_l = tk.Label(masspecframe, text="Custom Name")
+    custom_name_l.grid(row=1, column=1)
+    custom_name_entry.grid(row=1, column=2)
+
+    custom_sel_val = tk.StringVar(value="")
+    custom_sel_entry = tk.Entry(masspecframe, textvariable=custom_sel_val)
+    custom_sel_l = tk.Label(masspecframe, text="Custom Selection")
+    custom_sel_l.grid(row=2, column=1)
+    custom_sel_entry.grid(row=2, column=2)
+
+    custom_rv_val = tk.StringVar(value="")
+    custom_rv_entry = tk.Entry(masspecframe, textvariable=custom_rv_val)
+    custom_rv_l = tk.Label(masspecframe, text="Custom RV val")
+    custom_rv_l.grid(row=3, column=1)
+    custom_rv_entry.grid(row=3, column=2)
+
+    def do_master_thing():
+        if custom_name_val.get() == "" and custom_sel_val.get() == "" and custom_rv_val.get() == "":
+            create_master_spectrum(gaia_id, assoc_files)
+        else:
+            create_master_spectrum(gaia_id, assoc_files, custom_name_val.get(), float(custom_rv_val.get()), custom_sel_val.get())
+
+    do_master_button = tk.Button(masspecframe, text="Create Master Spectrum", command=do_master_thing)
+    do_master_button.grid(row=4, column=2)
+    masspecframe.pack()
+
+
+def showimages_model(gaia_id, frame, window):
+    canvas = tk.Canvas(frame)
+    scrollbar_y = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+    scrollbar_x = tk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
+    scroll_frame = tk.Frame(canvas)
+
+    scroll_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")
+        )
+    )
+
+    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+
+    images = []
+
+    for pdfpath in [f"modelss/{gaia_id}/spectroscopy_results.pdf", f"models/{gaia_id}/spectroscopy_spectrum_1.pdf"]:
         try:
             doc = fitz.open(pdfpath)
             zoom = 2
@@ -537,7 +679,7 @@ def fitsed(window, gaia_id):
 
     noresults = None
     if os.path.isdir(f"SEDs/{gaia_id}"):
-        showimages(gaia_id, fitoutputframe, fitsedwindow)
+        showimages_sed(gaia_id, fitoutputframe, fitsedwindow)
     else:
         noresults = tk.Label(fitoutputframe,
                              font=('Segoe UI', 25),
@@ -559,13 +701,14 @@ def fitsed(window, gaia_id):
             proc.communicate()  # Wait for the subprocess command to finish
             progress_bar.destroy()
             prog_label.destroy()
-            showimages(gaia_id, fitoutputframe, fitsedwindow)
+            showimages_sed(gaia_id, fitoutputframe, fitsedwindow)
 
         # Create a thread to execute the function after process completion
         thread = threading.Thread(target=execute_function_after_process)
         thread.start()
 
-    dosedbtn = tk.Button(fitinputframe, text="Fit SED", command=lambda: calcsedwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars + c2vars], [grid_one.get()[1:]] if grid_two.get() == "Select grid" else [grid_one.get()[1:], grid_two.get()[1:]], isis_dir.get()+"/"))
+    dosedbtn = tk.Button(fitinputframe, text="Fit SED",
+                         command=lambda: calcsedwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars + c2vars], [grid_one.get()[1:]] if grid_two.get() == "Select grid" else [grid_one.get()[1:], grid_two.get()[1:]], isis_dir.get() + "/"))
     dosedbtn.pack(anchor="se")
 
     fitinputframe.pack(side=tk.LEFT, anchor="nw", padx=10, pady=10)
@@ -575,8 +718,152 @@ def fitsed(window, gaia_id):
     fitsedframe.pack(fill="both", expand=1)
 
 
+def calcmodel(gaia_id, parameter_list, griddirs, isisdir):
+    parameter_list = [("c*_xi", "0", 1), ("c*_z", "0", 1)] + parameter_list
+    n_list = []
+    for a, b, c in parameter_list:
+        if b != "":
+            n_list.append((a, b, c))
+    parameter_list = n_list
+    starline = f'variable star = "GAIA DR3 {gaia_id}";'
+    paramstring = f'''variable par = struct{{name = ["{'","'.join([p[0] for p in parameter_list])}"],
+    value = [{",".join([p[1] for p in parameter_list])}],
+    freeze = [{",".join([str(p[2]) for p in parameter_list])}]}};'''
+    double_quoted_list = ', '.join([f'"{item}"' for item in griddirs])
+    griddirectories = "variable griddirectories, bpaths;\ngriddirectories = [" + double_quoted_list + "];"
+    isispath = f'bpaths = ["{str(isisdir)}"];'
+
+    if not os.path.isdir(f"SEDs/{gaia_id}"):
+        os.mkdir(f"SEDs/{gaia_id}")
+    else:
+        os.remove(f"SEDs/{gaia_id}/photometry.sl")
+    with open(f"SEDs/{gaia_id}/photometry.sl", "w") as script:
+        script.write(starline + "\n")
+        script.write(paramstring + "\n")
+        script.write(griddirectories + "\n")
+        script.write(isispath + "\n")
+        with open(f"SEDs/sedscriptbase.sl", "r") as restofthefnowl:
+            script.write(restofthefnowl.read())
+
+    p = subprocess.Popen(f"isis photometry.sl", shell=True, cwd=f"SEDs/{gaia_id}")
+
+    return p
+
+
 def fitmodel(window, gaia_id):
-    print(gaia_id)
+    prefs = load_preferences()
+    fitmodelwindow = tk.Toplevel(window)
+    fitmodelwindow.title(f"Fit Model for {gaia_id}")
+    fitmodelwindow.geometry("800x600+0+0")
+
+    isisexists = which("isis") is not None
+
+    if not isisexists:
+        isisdoesnotexist = tk.Label(fitmodelwindow,
+                                    font=('Segoe UI', 25),
+                                    fg='#ff0000',
+                                    text="No ISIS installation found!")
+        isisdoesnotexist.pack()
+        return
+
+    if os.name == 'nt':
+        fitmodelwindow.state('zoomed')
+    elif os.name == "posix":
+        fitmodelwindow.attributes('-zoomed', True)
+    fitmodelframe = tk.Frame(fitmodelwindow)
+    fitinputframe = tk.Frame(fitmodelframe)
+    fitoutputframe = tk.Frame(fitmodelframe)
+
+    convdict = {
+        "Rotational Velocity": "vsini",
+        "Radial Velocity": "vrad",
+        "Effective Temperature": "teff",
+        "Surface Gravity": "logg",
+        "Helium Abundance": "HE",
+    }
+
+    star_one_frame = ttk.LabelFrame(fitinputframe, text="Stellar Parameters")
+    star_one_label_names = ["Radial Velocity", "Rotational Velocity", "Effective Temperature", "Surface Gravity", "Helium Abundance"]
+    c1vars = [(tk.StringVar(star_one_frame, value="c1_" + convdict[l]), tk.StringVar(star_one_frame), tk.IntVar(star_one_frame)) for l in star_one_label_names]
+    star_one_inputs = [ttk.Entry(star_one_frame, textvariable=c1vars[i][1]) for i, _ in enumerate(star_one_label_names)]
+    star_one_freezeboxes = [tk.Checkbutton(star_one_frame, variable=c1vars[i][2]) for i, _ in enumerate(star_one_label_names)]
+
+    gridoptions = getgridoptions(prefs["isisdir"])
+    grid_one = tk.StringVar(star_one_frame, value="Select grid")
+    gridlabel_one = tk.Label(star_one_frame, text="Select grid")
+    grid_selector_one = tk.OptionMenu(star_one_frame, grid_one, *gridoptions)
+
+    def browse_model_dir(isisdir):
+        if isisdir is None:
+            return
+        fitmodelwindow.wm_attributes('-topmost', 1)
+        folder_selected = filedialog.askdirectory(parent=fitmodelwindow)
+        isisdir.set(folder_selected)
+        prefs["isisdir"] = folder_selected
+        save_preferences(prefs)
+        gridoptions = getgridoptions(folder_selected)
+        update_option_menu(grid_selector_one, grid_one, gridoptions)
+        fitmodelwindow.wm_attributes('-topmost', 0)
+
+    miniframe = tk.Frame(fitinputframe)
+    ttk.Label(miniframe, text="ISIS Model directory").pack(side=tk.LEFT, padx=10, pady=10)
+    isis_dir = tk.StringVar(value=prefs["isisdir"])
+    tk.Entry(miniframe, textvariable=isis_dir, state="disabled").pack(side=tk.LEFT, pady=10)
+    tk.Button(miniframe, text="Browse Directories", command=lambda: browse_model_dir(isis_dir)).pack(side=tk.LEFT, pady=10)
+    miniframe.pack()
+
+    if not os.path.isfile(f"master_spectra/{gaia_id}_stacked.txt"):
+        create_master_spec_btn = tk.Button(fitinputframe, text="Create master spectrum", command=lambda: master_spectrum_window(gaia_id))
+        create_master_spec_btn.pack(anchor="se", padx=5, pady=5)
+
+    for i, (label_name, entry, freezebox) in enumerate(zip(star_one_label_names, star_one_inputs, star_one_freezeboxes)):
+        ttk.Label(star_one_frame, text=label_name).grid(row=i, column=0)
+        entry.grid(row=i, column=1)
+        ttk.Label(star_one_frame, text="Freeze?").grid(row=i, column=2)
+        freezebox.grid(row=i, column=3)
+
+    gridlabel_one.grid(row=i + 1, column=0)
+    grid_selector_one.grid(row=i + 1, column=1)
+
+    star_one_frame.pack(anchor="nw", padx=10, pady=10)
+
+    if os.path.isdir(f"models/{gaia_id}"):
+        showimages_sed(gaia_id, fitoutputframe, fitmodelwindow)
+    else:
+        noresults = tk.Label(fitoutputframe,
+                             font=('Segoe UI', 25),
+                             fg='#ff0000',
+                             text="No results to show yet!\nGenerate some!")
+        noresults.pack(fill="both", expand=1)
+
+    def calcmodelwrapper(gaia_id, params, griddir, isisdir):
+        proc = calcmodel(gaia_id, params, griddir, isisdir)
+
+        def execute_function_after_process():
+            for child in fitoutputframe.winfo_children():
+                child.destroy()
+            progress_bar = ttk.Progressbar(fitoutputframe, mode='indeterminate', length=300)
+            progress_bar.start()
+            prog_label = tk.Label(fitoutputframe, text="Fitting Model...")
+            prog_label.pack()
+            progress_bar.pack(pady=10)
+            proc.communicate()  # Wait for the subprocess command to finish
+            progress_bar.destroy()
+            prog_label.destroy()
+            showimages_sed(gaia_id, fitoutputframe, fitmodelwindow)
+
+        # Create a thread to execute the function after process completion
+        thread = threading.Thread(target=execute_function_after_process)
+        thread.start()
+
+    domodelbtn = tk.Button(fitinputframe, text="Fit Model", command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/"))
+    domodelbtn.pack(anchor="se")
+
+    fitinputframe.pack(side=tk.LEFT, anchor="nw", padx=10, pady=10)
+    separator = ttk.Separator(fitmodelframe, orient='vertical')
+    separator.pack(side=tk.LEFT, fill="y")
+    fitoutputframe.pack(side=tk.RIGHT, padx=10, pady=10, fill="both", expand=1)
+    fitmodelframe.pack(fill="both", expand=1)
 
 
 def viewlc(window, gaia_id):
@@ -608,16 +895,88 @@ def viewnote(window, gaia_id):
     savebtn.pack(side=tk.RIGHT)
 
 
+def polynomial(x, a, b, c, d):
+    return a + b * x + c * x ** 2 + d * x ** 3
+
+
+def potentialfctn(x, points):
+    return -np.sum(1 / (np.abs(x - points) ** 2 + 0.1))
+
+
+def pointpotentials(sample_arrays, min_val, max_val):
+    potentialsample = np.linspace(min_val, max_val, len(sample_arrays[0])*100)
+    potential = np.zeros(len(potentialsample))
+    for sample in sample_arrays:
+        potential += np.array([potentialfctn(x, sample) for x in potentialsample])
+
+    interpolated_potential = interp1d(potentialsample, potential, bounds_error=False, fill_value='extrapolate')
+    return potentialsample, potential, interpolated_potential
+
+
+def generate_bins(sample_arrays):
+    min_length = np.min([len(s) for s in sample_arrays])
+    min_point = np.min([np.min(s) for s in sample_arrays])
+    max_point = np.max([np.max(s) for s in sample_arrays])
+
+    sample_arrays = np.stack([s[:min_length] for s in sample_arrays])
+    bin_centers = np.median(sample_arrays, axis=0)
+
+    pot_x, pot_y, pot_fn = pointpotentials(sample_arrays, min_point, max_point)
+
+    def fitwrapper(bin_centers, a, b, c, d):
+        new_bin_centers = bin_centers + polynomial(bin_centers, a, b, c, d)
+        return pot_fn(new_bin_centers)
+
+    params, errs = curve_fit(fitwrapper, bin_centers, np.full(len(bin_centers), pot_y.min()), p0=[0, 0, 0, 0], maxfev=100000)
+
+    bin_centers += polynomial(bin_centers, *params)
+
+    return bin_centers, pot_x, pot_y
+
+
+def truncate_and_align_arrays(wls, flxs, flx_stds):
+    first_values = [s[0] for s in wls]
+    lowest_value = np.max(first_values)
+    arr_with_lowest_val = np.argmax(first_values)
+    arr_with_lowest_val_stepsize = wls[arr_with_lowest_val][1]-wls[arr_with_lowest_val][0]
+
+    new_wls = []
+    new_flxs = []
+    new_flx_stds = []
+    for f, w, fstd in zip(flxs, wls, flx_stds):
+        new_flxs.append(f[w > lowest_value-arr_with_lowest_val_stepsize/2])
+        new_wls.append(w[w > lowest_value-arr_with_lowest_val_stepsize/2])
+        new_flx_stds.append(fstd[w > lowest_value-arr_with_lowest_val_stepsize/2])
+
+    last_values = [s[-1] for s in wls]
+    highest_value = np.min(last_values)
+    arr_with_highest_val = np.argmin(last_values)
+    arr_with_highest_val_stepsize = wls[arr_with_highest_val][-1] - wls[arr_with_highest_val][-2]
+
+
+    out_wls = []
+    out_flx = []
+    out_flx_std = []
+    for f, w, fstd in zip(new_flxs, new_wls, new_flx_stds):
+        out_flx.append(f[w < highest_value-arr_with_highest_val_stepsize/2])
+        out_wls.append(w[w < highest_value-arr_with_highest_val_stepsize/2])
+        out_flx_std.append(fstd[w < highest_value-arr_with_highest_val_stepsize/2])
+
+    return out_wls, out_flx, out_flx_std
+
+
 def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=None, custom_select=None):
     if custom_select == "":
         custom_select = None
     if not os.path.isdir("master_spectra"):
         os.mkdir("master_spectra")
-    rv_table = pd.read_csv(f"output/{gaia_id}/RV_variation.csv")
+    rv_table = pd.read_csv(f"{general_config['OUTPUT_DIR']}/{gaia_id}/RV_variation.csv")
 
+    print("Loading spectra...")
     mjddict = {}
     wls = []
     flxs = []
+    flx_stds = []
 
     for f in assoc_files:
         with open(f"spectra_processed/{f}_mjd.txt", "r") as infile:
@@ -629,14 +988,16 @@ def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=Non
     if not custom_select:
         for ind, row in rv_table.iterrows():
             file = mjddict[round(row["mjd"], 4)]
-            wl, flx, _, _ = load_spectrum(file)
+            wl, flx, _, flx_std = load_spectrum(file)
             wl = wlshift(wl, -row["culum_fit_RV"])
             s = wl.argsort()
             wl = wl[s]
             flx = flx[s]
+            flx_std = flx_std[s]
 
             wls.append(wl)
             flxs.append(flx)
+            flx_stds.append(flx_std)
 
         # step 1: calculating wavelength ranges
         ranges = [np.ptp(x) for x in wls]
@@ -665,7 +1026,7 @@ def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=Non
     else:
         rv_table["mjd"] = rv_table["mjd"].round(4)
         for m, f in mjddict.items():
-            wl, flx, _, _ = load_spectrum(f)
+            wl, flx, _, flx_std = load_spectrum(f)
             if custom_rv is not None:
                 wl = wlshift(wl, -custom_rv)
             else:
@@ -678,61 +1039,81 @@ def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=Non
             s = wl.argsort()
             wl = wl[s]
             flx = flx[s]
+            flx_std = flx_std[s]
 
             wls.append(wl)
             flxs.append(flx)
+            flx_stds.append(flx_std)
         largest_group = [int(i) for i in custom_select.split(",")]
 
-    # step 3: reducing the arrays
+    print("Grouping spectra...")
     wls = [wls[i] for i in largest_group]
-
-    # step 4: remove the flux arrays not corresponding to the biggest group of wavelength arrays
     flxs = [flxs[i] for i in largest_group]
+    flx_stds = [flx_stds[i] for i in largest_group]
 
-    interpolated_diff = get_interpolation_function([h[:-1] for h in wls], [np.diff(w) for w in wls])
+    print("Truncating...")
+    wls, flxs, flx_stds = truncate_and_align_arrays(wls, flxs, flx_stds)
+    print("Generating bins...")
+    bins, px, py = generate_bins(wls)
 
-    # Compute the global min and max wavelengths and mean wavelength step
-    min_wl = np.min([np.min(wl) for wl in wls])
-    max_wl = np.max([np.max(wl) for wl in wls])
-
-    # Generate the new global wavelength array
-    global_wls = []
-
-    w = min_wl
-    while w < max_wl:
-        global_wls.append(w)
-        w += interpolated_diff(w)
-
-    global_wls = np.array(global_wls)
+    global_wls = np.concatenate([np.array([0]), bins[:-1] + np.diff(bins) / 2])
 
     # Initialize the global flux array
-    global_flxs = np.zeros_like(global_wls)
+    global_flxs = np.zeros(len(bins))
+    global_flx_stds = np.zeros(len(bins))
 
     n_in_bin = np.zeros(global_flxs.shape)
-    # Loop over the individual wls and flxs arrays
-    for wl, flx in zip(wls, flxs):
-        # Compute the indices of the 'left' wavelength bin limits of the original in the new array
-        ind = np.digitize(wl, global_wls) - 1
+    wls = np.concatenate(wls)
+    flxs = np.concatenate(flxs)
+    flx_stds = np.concatenate(flx_stds)
 
-        # Compute the fraction of each flux that belongs to the 'left' bin
-        frac = np.abs((global_wls[ind[ind + 1 < len(global_wls)]] - wl[ind + 1 < len(global_wls)])) / (np.abs(global_wls[ind[ind + 1 < len(global_wls)] + 1] - global_wls[ind[ind + 1 < len(global_wls)]]))
-        # Add the fluxes to the new array, distributing them proportionally
-        np.add.at(global_flxs, ind[ind + 1 < len(global_wls)], frac * flx[ind + 1 < len(global_wls)])
-        np.add.at(global_flxs, ind[ind + 1 < len(global_wls)] + 1, (1 - frac) * flx[ind + 1 < len(global_wls)])
-        np.add.at(n_in_bin, ind, 1)
-        np.add.at(n_in_bin, ind[ind + 1 < len(global_wls)] + 1, 1)
+    print("Binning...")
+    for i, bin in enumerate(bins):
+        if i == 0:
+            global_flxs[0] += np.sum(flxs[wls < bins[0]])
+            global_flx_stds[0] += np.sqrt(np.sum(flx_stds[wls < bins[0]]**2))
+        elif i == len(bins) - 1:
+            global_flxs[-1] += np.sum(flxs[wls > bins[-1]])
+            global_flx_stds[-1] += np.sqrt(np.sum(flx_stds[wls < bins[-1]] ** 2))
+        else:
+            mask = np.logical_and(wls >= bin, wls < bins[i + 1])
+            flx_between = flxs[mask]
+            flx_std_between = flx_stds[mask]
+            wls_between = wls[mask]
+            np.delete(flx_between, flx_std_between.argmax())
+            np.delete(wls_between, flx_std_between.argmax())
+            np.delete(flx_std_between, flx_std_between.argmax())
+            frac_to_next_bin = (wls_between - bin) / (bins[i + 1] - bin)
+            global_flxs[i] += np.sum(flx_between * (1 - frac_to_next_bin)) / len(flx_between)
+            global_flxs[i + 1] += np.sum(flx_between * frac_to_next_bin) / len(flx_between)
+            global_flx_stds[i] += np.sqrt(np.sum((flx_std_between * (1 - frac_to_next_bin)) ** 2))/ len(flx_std_between)
+            global_flx_stds[i + 1] += np.sqrt(np.sum((flx_std_between * frac_to_next_bin) ** 2)) / len(flx_std_between)
+            n_in_bin[i] += len(flx_between)
+            n_in_bin[i + 1] += len(flx_between)
 
-    global_flxs = global_flxs[n_in_bin != 0]
-    global_wls = global_wls[n_in_bin != 0]
-    n_in_bin = n_in_bin[n_in_bin != 0]
+    n_in_bin /= 2
+    normal_n_count = float(np.argmax(np.bincount(n_in_bin.astype(int))))
+
+    global_flxs = global_flxs[n_in_bin == normal_n_count]
+    global_flx_stds = global_flx_stds[n_in_bin == normal_n_count]
+    global_wls = global_wls[n_in_bin == normal_n_count]
+    n_in_bin = n_in_bin[n_in_bin == normal_n_count]
+
+    n_in_bin = n_in_bin[1:-1]
+    global_flxs = global_flxs[1:-1]
+    global_wls = global_wls[1:-1]
+    global_flx_stds = global_flx_stds[1:-1]
     global_flxs /= n_in_bin
+    global_flx_stds /= n_in_bin
 
     plt.plot(global_wls, global_flxs)
+    plt.scatter(global_wls, global_flxs, c=n_in_bin, cmap="rainbow")
+    plt.colorbar()
     plt.tight_layout()
     plt.show()
 
     outdata = np.stack((global_wls, global_flxs, np.zeros(global_wls.shape)), axis=-1)
-    if custom_name is None:
+    if custom_name is None or custom_name == "":
         np.savetxt(f"master_spectra/{gaia_id}_stacked.txt", outdata, fmt='%1.4f')
     else:
         np.savetxt(f"master_spectra/{custom_name}.txt", outdata, fmt='%1.4f')
@@ -1011,7 +1392,11 @@ def analysis_tab(analysis):
 
         detail_window = tk.Toplevel()
         try:
-            detail_window.iconbitmap("favicon.ico")
+            if os.name == "nt":
+                detail_window.iconbitmap("favicon.ico")
+            else:
+                imgicon = ImageTk.PhotoImage(Image.open("favicon.ico"))
+                detail_window.tk.call('wm', 'iconphoto', detail_window._w, imgicon)
         except:
             pass
         detail_window.title(f"Detail View for {gaia_id}")
@@ -1136,58 +1521,13 @@ def analysis_tab(analysis):
             buttonframe.grid_rowconfigure(i + 1, minsize=25)
         buttonframe.grid(row=1, column=3, sticky="news")
 
-    def master_spectrum_window():
-        gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
-        create_master_window = tk.Toplevel()
-        try:
-            create_master_window.iconbitmap("favicon.ico")
-        except:
-            pass
-        create_master_window.title(f"Create master spectrum for {gaia_id}")
-        create_master_window.update_idletasks()  # This forces tkinter to update the window calculations.
-        create_master_window.geometry("800x600+0+0")
-
-        masspecframe = tk.Frame(create_master_window)
-
-        custom_name_val = tk.StringVar(value="")
-        custom_name_entry = tk.Entry(masspecframe, textvariable=custom_name_val)
-        custom_name_l = tk.Label(masspecframe, text="Custom Name")
-        custom_name_l.grid(row=1, column=1)
-        custom_name_entry.grid(row=1, column=2)
-
-        custom_sel_val = tk.StringVar(value="")
-        custom_sel_entry = tk.Entry(masspecframe, textvariable=custom_sel_val)
-        custom_sel_l = tk.Label(masspecframe, text="Custom Selection")
-        custom_sel_l.grid(row=2, column=1)
-        custom_sel_entry.grid(row=2, column=2)
-
-        custom_rv_val = tk.StringVar(value="")
-        custom_rv_entry = tk.Entry(masspecframe, textvariable=custom_rv_val)
-        custom_rv_l = tk.Label(masspecframe, text="Custom RV val")
-        custom_rv_l.grid(row=3, column=1)
-        custom_rv_entry.grid(row=3, column=2)
-
-        gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
-        assoc_files = interesting_dataframe[interesting_dataframe["source_id"] == gaia_id].iloc[0]["associated_files"].split(";")
-        assoc_files = [f.replace(".fits", "") for f in assoc_files]
-
-        def do_master_thing():
-            if custom_name_val.get() == "" and custom_sel_val.get() == "" and custom_rv_val.get() == "":
-                create_master_spectrum(gaia_id, assoc_files)
-            else:
-                create_master_spectrum(gaia_id, assoc_files, custom_name_val.get(), float(custom_rv_val.get()), custom_sel_val.get())
-
-        do_master_button = tk.Button(masspecframe, text="Create Master Spectrum", command=do_master_thing)
-        do_master_button.grid(row=4, column=2)
-        masspecframe.pack()
-
     sheet.enable_bindings()
     sheet.headers(newheaders=interesting_dataframe.columns.tolist())
     sheet.disable_bindings("cut", "paste", "delete", "edit_cell", "edit_header", "edit_index")
     sheet.popup_menu_add_command("Add to observation list", add_to_observation_list)
     sheet.popup_menu_add_command("Remove from observation list", remove_from_observation_list)
     sheet.popup_menu_add_command("View detail window", view_detail_window)
-    sheet.popup_menu_add_command("Create master spectrum", master_spectrum_window)
+    sheet.popup_menu_add_command("Create master spectrum", lambda: master_spectrum_window(None, sheet=sheet))
     sheet.popup_menu_add_command("Reload System", reload_system)
 
     if "known_category" in interesting_dataframe.columns.tolist():
@@ -1439,9 +1779,13 @@ def gui_window(queue, p_queue):
     window = tk.Tk()
     window.title("RVVD")
     try:
-        window.iconbitmap("favicon.ico")
-    except:
-        pass
+        if os.name == "nt":
+            window.iconbitmap("favicon.ico")
+        else:
+            imgicon = ImageTk.PhotoImage(Image.open("favicon.ico"))
+            window.tk.call('wm', 'iconphoto', window._w, imgicon)
+    except Exception as e:
+        print(e)
     window.geometry("800x600+0+0")
     if os.name == 'nt':
         window.state('zoomed')

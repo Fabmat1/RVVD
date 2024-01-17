@@ -28,10 +28,10 @@ general_config = {
     "NO_NEGATIVE_FLUX": True,  # check for negative flux values
     "SORT_OUT_NEG_FLX": 0.1,  # filter out spectra files with significant portions of negative flux
     "SUBDWARF_SPECIFIC_ADJUSTMENTS": True,  # Apply some tweaks for the script to be optimized to hot subdwarfs
-    "GET_TICS": False,  # Get TIC IDs via query. This will be slow the first time it is run.
-    "GET_VISIBILITY": False,  # Whether to get the visibility of the objects for a certain night and location.
-    "FOR_DATE": "2023-12-10",  # Date for which to get the visibility
-    "TAG_KNOWN": False  # Tag systems where RV variability is known
+    "GET_TICS": True,  # Get TIC IDs via query. This will be slow the first time it is run.
+    "GET_VISIBILITY": True,  # Whether to get the visibility of the objects for a certain night and location.
+    "FOR_DATE": "2024-01-20",  # Date for which to get the visibility
+    "TAG_KNOWN": True  # Tag systems where RV variability is known
 }
 
 ### FIT SETTINGS
