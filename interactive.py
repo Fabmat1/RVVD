@@ -469,7 +469,7 @@ def showimages_model(gaia_id, frame, window):
 
     images = []
 
-    for pdfpath in [f"modelss/{gaia_id}/spectroscopy_results.pdf", f"models/{gaia_id}/spectroscopy_spectrum_1.pdf"]:
+    for pdfpath in [f"models/{gaia_id}/spectroscopy_results.pdf", f"models/{gaia_id}/spectroscopy_spectrum_1.pdf"]:
         try:
             doc = fitz.open(pdfpath)
             zoom = 2
@@ -718,34 +718,46 @@ def fitsed(window, gaia_id):
     fitsedframe.pack(fill="both", expand=1)
 
 
-def calcmodel(gaia_id, parameter_list, griddirs, isisdir):
+def calcmodel(gaia_id, parameter_list, griddirs, isisdir, fileloc, resolution=3.2):
     parameter_list = [("c*_xi", "0", 1), ("c*_z", "0", 1)] + parameter_list
     n_list = []
     for a, b, c in parameter_list:
         if b != "":
             n_list.append((a, b, c))
     parameter_list = n_list
-    starline = f'variable star = "GAIA DR3 {gaia_id}";'
-    paramstring = f'''variable par = struct{{name = ["{'","'.join([p[0] for p in parameter_list])}"],
+    firstline = 'require("stellar_isisscripts.sl");'
+    double_quoted_list = ', '.join([f'"{item}"' for item in griddirs])
+    modelline = f'variable modelgrid; modelgrid = [{double_quoted_list}];'
+    paramstring = f'''variable initial_guess_params_values =  struct{{name = ["{'","'.join([p[0] for p in parameter_list])}"],
     value = [{",".join([p[1] for p in parameter_list])}],
     freeze = [{",".join([str(p[2]) for p in parameter_list])}]}};'''
-    double_quoted_list = ', '.join([f'"{item}"' for item in griddirs])
-    griddirectories = "variable griddirectories, bpaths;\ngriddirectories = [" + double_quoted_list + "];"
-    isispath = f'bpaths = ["{str(isisdir)}"];'
+    master_spec_line = f"""variable input =
+  [
+   struct{{
+     filename = "{fileloc}",
+     spectype = "ASCII_with_2_columns",
+     ignore = [{{3932,3935}},{{3967,3970}},{{4610,4655}},{{5888,5892}},{{5894,5898}}],
+     cspline_anchorpoints = [[3000:3850:50],[3850:4050:100],[4050:4550:100],[4550:15050:200]],
+     res_offset = 0., % R = res_offset + res_slope*lambda
+     res_slope = 1/{resolution},
+   }}
+  ];"""
+    isispath = f'variable bpaths = ["{str(isisdir)}"];'
 
-    if not os.path.isdir(f"SEDs/{gaia_id}"):
-        os.mkdir(f"SEDs/{gaia_id}")
+    if not os.path.isdir(f"models/{gaia_id}"):
+        os.mkdir(f"models/{gaia_id}")
     else:
-        os.remove(f"SEDs/{gaia_id}/photometry.sl")
-    with open(f"SEDs/{gaia_id}/photometry.sl", "w") as script:
-        script.write(starline + "\n")
+        os.remove(f"models/{gaia_id}/spectroscopy.sl")
+    with open(f"models/{gaia_id}/spectroscopy.sl", "w") as script:
+        script.write(firstline + "\n")
+        script.write(modelline + "\n")
         script.write(paramstring + "\n")
-        script.write(griddirectories + "\n")
+        script.write(master_spec_line + "\n")
         script.write(isispath + "\n")
-        with open(f"SEDs/sedscriptbase.sl", "r") as restofthefnowl:
+        with open(f"models/modelscriptbase.sl", "r") as restofthefnowl:
             script.write(restofthefnowl.read())
 
-    p = subprocess.Popen(f"isis photometry.sl", shell=True, cwd=f"SEDs/{gaia_id}")
+    p = subprocess.Popen(f"isis spectroscopy.sl", shell=True, cwd=f"models/{gaia_id}")
 
     return p
 
@@ -812,6 +824,7 @@ def fitmodel(window, gaia_id):
     tk.Button(miniframe, text="Browse Directories", command=lambda: browse_model_dir(isis_dir)).pack(side=tk.LEFT, pady=10)
     miniframe.pack()
 
+    # TODO: enable selecting different master spectra
     if not os.path.isfile(f"master_spectra/{gaia_id}_stacked.txt"):
         create_master_spec_btn = tk.Button(fitinputframe, text="Create master spectrum", command=lambda: master_spectrum_window(gaia_id))
         create_master_spec_btn.pack(anchor="se", padx=5, pady=5)
@@ -828,7 +841,7 @@ def fitmodel(window, gaia_id):
     star_one_frame.pack(anchor="nw", padx=10, pady=10)
 
     if os.path.isdir(f"models/{gaia_id}"):
-        showimages_sed(gaia_id, fitoutputframe, fitmodelwindow)
+        showimages_model(gaia_id, fitoutputframe, fitmodelwindow)
     else:
         noresults = tk.Label(fitoutputframe,
                              font=('Segoe UI', 25),
@@ -836,8 +849,8 @@ def fitmodel(window, gaia_id):
                              text="No results to show yet!\nGenerate some!")
         noresults.pack(fill="both", expand=1)
 
-    def calcmodelwrapper(gaia_id, params, griddir, isisdir):
-        proc = calcmodel(gaia_id, params, griddir, isisdir)
+    def calcmodelwrapper(gaia_id, params, griddir, isisdir, fileloc, resolution):
+        proc = calcmodel(gaia_id, params, griddir, isisdir, fileloc, resolution)
 
         def execute_function_after_process():
             for child in fitoutputframe.winfo_children():
@@ -850,13 +863,14 @@ def fitmodel(window, gaia_id):
             proc.communicate()  # Wait for the subprocess command to finish
             progress_bar.destroy()
             prog_label.destroy()
-            showimages_sed(gaia_id, fitoutputframe, fitmodelwindow)
+            showimages_model(gaia_id, fitoutputframe, fitmodelwindow)
 
         # Create a thread to execute the function after process completion
         thread = threading.Thread(target=execute_function_after_process)
         thread.start()
 
-    domodelbtn = tk.Button(fitinputframe, text="Fit Model", command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/"))
+    # TODO: fix up these variable names
+    domodelbtn = tk.Button(fitinputframe, text="Fit Model", command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/", f"/home/fabian/PycharmProjects/RVVD_plus_LAMOST/master_spectra/{gaia_id}_stacked.txt", 3.2))
     domodelbtn.pack(anchor="se")
 
     fitinputframe.pack(side=tk.LEFT, anchor="nw", padx=10, pady=10)
