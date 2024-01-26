@@ -8,6 +8,8 @@ import time
 import tkinter as tk
 import matplotlib.pyplot as plt
 from tkinter import ttk, filedialog
+
+import numpy as np
 import pandas as pd
 from astroquery.vizier import Vizier
 from idlelib.tooltip import Hovertip
@@ -718,6 +720,61 @@ def fitsed(window, gaia_id):
     fitsedframe.pack(fill="both", expand=1)
 
 
+def abs_mag(m_app, plx):
+    d = 1 / (plx * 0.001)
+    return m_app - 2.5 * np.log((d / 10))
+
+
+def create_CMD_plot(gaia_id):
+    objects = pd.read_csv("result_parameters.csv")
+    target = objects[objects["source_id"] == gaia_id].iloc[0]
+    bp_rp_target = target["bp_rp"]
+    gmag_target = target["gmag"]
+    plx_target = target["parallax"]
+    plx_err_target = target["parallax_err"]
+
+    objects = objects[0.2 * objects['parallax'] > objects['parallax_err']]
+    bp_rps = objects["bp_rp"].to_numpy()
+    plx = objects["parallax"].to_numpy()
+    gmag = objects["gmag"].to_numpy()
+    abs_mags = abs_mag(gmag, plx)
+    plt.figure(figsize=(5, 5), dpi=200)
+    plt.title(f"GAIA DR3 {gaia_id} on the CMD")
+    plt.xlabel("BP-RP Color [mag]")
+    plt.ylabel("Absolute G magnitude [mag]")
+    plt.scatter(bp_rps, abs_mags, alpha=0.25, s=5, zorder=1, c="gray")
+    plt.gca().invert_yaxis()
+    if plx_target < 0:
+        absmag_target = np.nan
+        absmag_err_target = np.nan
+        plt.title("Bad Parallax!")
+    if plx_err_target < 0.2 * plx_target:
+        absmag_target = abs_mag(gmag_target, plx_target)
+        plt.scatter(bp_rp_target, absmag_target, zorder=5, c="darkred")
+    else:
+        absmag_target = abs_mag(gmag_target, plx_target + plx_err_target)
+        plt.scatter(bp_rp_target, absmag_target, zorder=5, c="darkred")
+        plt.errorbar(bp_rp_target, absmag_target, yerr=3, zorder=5, uplims=True, lolims=False, c="darkred")
+    plt.tight_layout()
+    plt.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}/CMD.png")
+
+
+def show_CMD_window(gaia_id):
+    cmd_window = tk.Toplevel()
+    cmd_window.title(f"CMD for {gaia_id}")
+    cmd_window.geometry("500x500+0+0")
+    cmd_frame = tk.Frame(cmd_window)
+    fpath = f"{general_config['OUTPUT_DIR']}/{gaia_id}/CMD.png"
+    if not os.path.isfile(fpath):
+        create_CMD_plot(gaia_id)
+    im = Image.open(fpath)
+    img_tk = ImageTk.PhotoImage(im.resize((500, 500)))
+    label = tk.Label(cmd_frame, image=img_tk)
+    label.image = img_tk  # Save reference to image
+    label.pack()
+    cmd_frame.pack(expand=1, fill="both")
+
+
 def calcmodel(gaia_id, parameter_list, griddirs, isisdir, fileloc, resolution=3.2):
     parameter_list = [("c*_xi", "0", 1), ("c*_z", "0", 1)] + parameter_list
     n_list = []
@@ -870,7 +927,8 @@ def fitmodel(window, gaia_id):
         thread.start()
 
     # TODO: fix up these variable names
-    domodelbtn = tk.Button(fitinputframe, text="Fit Model", command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/", f"/home/fabian/PycharmProjects/RVVD_plus_LAMOST/master_spectra/{gaia_id}_stacked.txt", 3.2))
+    domodelbtn = tk.Button(fitinputframe, text="Fit Model",
+                           command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/", f"/home/fabian/PycharmProjects/RVVD_plus_LAMOST/master_spectra/{gaia_id}_stacked.txt", 3.2))
     domodelbtn.pack(anchor="se")
 
     fitinputframe.pack(side=tk.LEFT, anchor="nw", padx=10, pady=10)
@@ -918,7 +976,7 @@ def potentialfctn(x, points):
 
 
 def pointpotentials(sample_arrays, min_val, max_val):
-    potentialsample = np.linspace(min_val, max_val, len(sample_arrays[0])*100)
+    potentialsample = np.linspace(min_val, max_val, len(sample_arrays[0]) * 100)
     potential = np.zeros(len(potentialsample))
     for sample in sample_arrays:
         potential += np.array([potentialfctn(x, sample) for x in potentialsample])
@@ -952,29 +1010,28 @@ def truncate_and_align_arrays(wls, flxs, flx_stds):
     first_values = [s[0] for s in wls]
     lowest_value = np.max(first_values)
     arr_with_lowest_val = np.argmax(first_values)
-    arr_with_lowest_val_stepsize = wls[arr_with_lowest_val][1]-wls[arr_with_lowest_val][0]
+    arr_with_lowest_val_stepsize = wls[arr_with_lowest_val][1] - wls[arr_with_lowest_val][0]
 
     new_wls = []
     new_flxs = []
     new_flx_stds = []
     for f, w, fstd in zip(flxs, wls, flx_stds):
-        new_flxs.append(f[w > lowest_value-arr_with_lowest_val_stepsize/2])
-        new_wls.append(w[w > lowest_value-arr_with_lowest_val_stepsize/2])
-        new_flx_stds.append(fstd[w > lowest_value-arr_with_lowest_val_stepsize/2])
+        new_flxs.append(f[w > lowest_value - arr_with_lowest_val_stepsize / 2])
+        new_wls.append(w[w > lowest_value - arr_with_lowest_val_stepsize / 2])
+        new_flx_stds.append(fstd[w > lowest_value - arr_with_lowest_val_stepsize / 2])
 
     last_values = [s[-1] for s in wls]
     highest_value = np.min(last_values)
     arr_with_highest_val = np.argmin(last_values)
     arr_with_highest_val_stepsize = wls[arr_with_highest_val][-1] - wls[arr_with_highest_val][-2]
 
-
     out_wls = []
     out_flx = []
     out_flx_std = []
     for f, w, fstd in zip(new_flxs, new_wls, new_flx_stds):
-        out_flx.append(f[w < highest_value-arr_with_highest_val_stepsize/2])
-        out_wls.append(w[w < highest_value-arr_with_highest_val_stepsize/2])
-        out_flx_std.append(fstd[w < highest_value-arr_with_highest_val_stepsize/2])
+        out_flx.append(f[w < highest_value - arr_with_highest_val_stepsize / 2])
+        out_wls.append(w[w < highest_value - arr_with_highest_val_stepsize / 2])
+        out_flx_std.append(fstd[w < highest_value - arr_with_highest_val_stepsize / 2])
 
     return out_wls, out_flx, out_flx_std
 
@@ -1085,7 +1142,7 @@ def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=Non
     for i, bin in enumerate(bins):
         if i == 0:
             global_flxs[0] += np.sum(flxs[wls < bins[0]])
-            global_flx_stds[0] += np.sqrt(np.sum(flx_stds[wls < bins[0]]**2))
+            global_flx_stds[0] += np.sqrt(np.sum(flx_stds[wls < bins[0]] ** 2))
         elif i == len(bins) - 1:
             global_flxs[-1] += np.sum(flxs[wls > bins[-1]])
             global_flx_stds[-1] += np.sqrt(np.sum(flx_stds[wls < bins[-1]] ** 2))
@@ -1100,7 +1157,7 @@ def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=Non
             frac_to_next_bin = (wls_between - bin) / (bins[i + 1] - bin)
             global_flxs[i] += np.sum(flx_between * (1 - frac_to_next_bin)) / len(flx_between)
             global_flxs[i + 1] += np.sum(flx_between * frac_to_next_bin) / len(flx_between)
-            global_flx_stds[i] += np.sqrt(np.sum((flx_std_between * (1 - frac_to_next_bin)) ** 2))/ len(flx_std_between)
+            global_flx_stds[i] += np.sqrt(np.sum((flx_std_between * (1 - frac_to_next_bin)) ** 2)) / len(flx_std_between)
             global_flx_stds[i + 1] += np.sqrt(np.sum((flx_std_between * frac_to_next_bin) ** 2)) / len(flx_std_between)
             n_in_bin[i] += len(flx_between)
             n_in_bin[i + 1] += len(flx_between)
@@ -1528,8 +1585,11 @@ def analysis_tab(analysis):
         viewplot = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id))
         viewplot.grid(row=12, column=1)
 
-        viewplot = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
+        viewplot = tk.Button(buttonframe, text="View CMD", command=lambda: show_CMD_window(gaia_id))
         viewplot.grid(row=13, column=1)
+
+        viewplot = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
+        viewplot.grid(row=14, column=1)
 
         for i in range(13):
             buttonframe.grid_rowconfigure(i + 1, minsize=25)
