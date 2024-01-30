@@ -41,3 +41,5 @@ lightcurves/*
 !/catalogues/.gitkeep
 !/Arrow.png
 /.RVVDprefs
+*.so
+lombscarglegpu.py

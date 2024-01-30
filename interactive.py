@@ -2,37 +2,33 @@ import ast
 import itertools
 import json
 import multiprocessing
-import os
+import pprint
 import subprocess
-import time
+import threading
 import tkinter as tk
-import matplotlib.pyplot as plt
+import webbrowser
+from idlelib.tooltip import Hovertip
+from queue import Empty
+from shutil import which
 from tkinter import ttk, filedialog
 
+import matplotlib.pyplot as plt
+from gatspy import periodic
+import fitz
 import numpy as np
 import pandas as pd
+from PIL import Image, ImageTk
 from astroquery.vizier import Vizier
-from idlelib.tooltip import Hovertip
-from shutil import which
-
-from matplotlib import cm
-from scipy.interpolate import UnivariateSpline
+from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,
+                                               NavigationToolbar2Tk)
+from tksheet import Sheet
 
 from analyse_results import vrad_pvalue
 from data_reduction import *
-import fitz
-import webbrowser
-from preprocessing import *
-
-from PIL import Image, ImageTk
-
 from get_interesting_stars import quick_visibility
-from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis, open_spec_files, load_spectrum, lines_to_fit, disturbing_lines
-import threading
-from queue import Empty
-from tksheet import Sheet
-
-from plot_spectra import plot_system_from_ind, normalize_spectrum
+from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis, open_spec_files, load_spectrum
+from plot_spectra import plot_system_from_ind
+from preprocessing import *
 
 
 def callback(url):
@@ -938,7 +934,164 @@ def fitmodel(window, gaia_id):
     fitmodelframe.pack(fill="both", expand=1)
 
 
+def plotlightcurve(time, g_flux, g_flux_error, bp_flux, bp_flux_error, rp_flux, rp_flux_error, frame):
+    # the figure that will contain the plot
+    fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8)
+
+    # adding the subplot
+    plot1 = axs[0]
+    periodogram = axs[1]
+
+    model = periodic.LombScargleMultibandFast()
+    model.fit(np.concatenate([time, time, time]),
+              np.concatenate([g_flux, bp_flux, rp_flux]),
+              np.concatenate([g_flux_error, bp_flux_error, rp_flux_error]),
+              np.concatenate(np.concatenate([np.full((len(g_flux), 1), "G"), np.full((len(bp_flux), 1), "BP"), np.full((len(rp_flux), 1), "RP")])))
+    freqs = np.linspace(1, 24, 50000)
+    ps = 1/freqs
+    pgram = model.periodogram(ps)
+    pgram = np.array(pgram)
+
+    periodogram.set_xlabel("Period [d]")
+    periodogram.set_ylabel("Relative Power [arb. Unit]")
+    periodogram.plot(ps, pgram, color="navy")
+
+    g_flux_error /= np.median(g_flux)
+    g_flux /= np.median(g_flux)
+    bp_flux_error /= np.median(bp_flux)
+    bp_flux /= np.median(bp_flux)
+    rp_flux_error /= np.median(rp_flux)
+    rp_flux /= np.median(rp_flux)
+
+    # plotting the graph
+    plot1.scatter(time, g_flux, color="darkgreen", zorder=5)
+    plot1.errorbar(time, g_flux, yerr=g_flux_error, linestyle='', color="darkgreen", capsize=3, zorder=4)
+    plot1.scatter(time, bp_flux, color="navy", zorder=5)
+    plot1.errorbar(time, bp_flux, yerr=bp_flux_error, linestyle='', color="navy", capsize=3, zorder=4)
+    plot1.scatter(time, rp_flux, color="darkred", zorder=5)
+    plot1.errorbar(time, rp_flux, yerr=rp_flux_error, linestyle='', color="darkred", capsize=3, zorder=4)
+
+    plot1.grid(color="lightgrey", linestyle='--')
+    plot1.set_xlabel("Time [d]")
+    plot1.set_ylabel("Relative Gaia G Flux [arb. Unit]")
+    plt.tight_layout()
+    # creating the Tkinter canvas
+    # containing the Matplotlib figure
+    canvas = FigureCanvasTkAgg(fig, master=frame)
+    canvas.draw()
+
+    # placing the canvas on the Tkinter window
+    canvas.get_tk_widget().pack()
+
+    # creating the Matplotlib toolbar
+    toolbar = NavigationToolbar2Tk(canvas, frame)
+    toolbar.update()
+
+    # placing the toolbar on the Tkinter window
+    canvas.get_tk_widget().pack()
+
+    return fig, plot1
+
+
+def getgaialc(gaia_id):
+    photquery = Vizier(columns=["Source", "TimeBP", "FG", "e_FG", "FBP", "e_FBP", "FRP", "e_FRP"]).query_region(SkyCoord.from_name(f'GAIA DR3 {gaia_id}'),
+                                                                                                                radius=1 * u.arcsec,
+                                                                                                                catalog='I/355/epphot')
+    if len(photquery) != 0:
+        table = photquery[0].to_pandas()
+        table = table[table["Source"] == gaia_id]
+
+        table.to_csv(f"output/{gaia_id}/gaia_lc.txt", index=False, columns=table.columns[1:], header=False)
+        return True
+    else:
+        with open(f"output/{gaia_id}/gaia_lc.txt", "w") as file:
+            file.write("NaN, NaN, NaN, NaN, NaN, NaN, NaN")
+            return False
+
+
 def viewlc(window, gaia_id):
+    lcwindow = tk.Toplevel(window)
+    lcwindow.title(f"View Lightcurve for {gaia_id}")
+    lcwindow.geometry("800x600+0+0")
+    if os.name == 'nt':
+        lcwindow.state('zoomed')
+    elif os.name == "posix":
+        lcwindow.attributes('-zoomed', True)
+    fitmodelframe = tk.Frame(lcwindow)
+    lc_tabs = ttk.Notebook(fitmodelframe)
+
+    tesslc = tk.Frame(lc_tabs)
+    lc_tabs.add(tesslc, text="TESS LC")
+
+    gaialc = tk.Frame(lc_tabs)
+    gaia_plotframe = tk.Frame(gaialc)
+    lc_tabs.add(gaialc, text="GAIA LC")
+    testlabel = tk.Label(tesslc, text="Use the button to look for a TESS lightcurve!")
+    testlabel.pack()
+
+    testlabel_gaia = tk.Label(gaialc, text="Use the button to look for a GAIA lightcurve!")
+    testlabel_gaia.pack()
+
+    if os.path.isfile(f"output/{gaia_id}/gaia_lc.txt"):
+        lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
+        if lcdata.ndim == 1:
+            testlabel_gaia.destroy()
+            notfoundlabel = tk.Label(gaialc, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel.pack()
+        else:
+            lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
+            t = lcdata[:, 0]
+            g_flx = lcdata[:, 1]
+            g_flx_err = lcdata[:, 2]
+            bp_flx = lcdata[:, 3]
+            bp_flx_err = lcdata[:, 4]
+            rp_flx = lcdata[:, 5]
+            rp_flx_err = lcdata[:, 6]
+            testlabel_gaia.destroy()
+            plotlightcurve(t, g_flx, g_flx_err, bp_flx, bp_flx_err, rp_flx, rp_flx_err, gaia_plotframe)
+
+    def getgaiawrapper(gaia_id):
+        def startgaiathread():
+            progress_bar = ttk.Progressbar(gaialc, mode='indeterminate', length=300)
+            progress_bar.pack()
+            progress_bar.start()
+            thread = threading.Thread(target=lambda: getgaialc(gaia_id))
+            thread.start()
+            lc_exists = thread.join()
+            print("Thread finished!")
+            progress_bar.destroy()
+            lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
+            if lc_exists == 1:
+                testlabel_gaia.destroy()
+                notfoundlabel = tk.Label(gaialc, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+                notfoundlabel.pack()
+            else:
+                if lcdata.ndim == 1:
+                    testlabel_gaia.destroy()
+                    notfoundlabel = tk.Label(gaialc, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+                    notfoundlabel.pack()
+                else:
+                    lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
+                    t = lcdata[:, 0]
+                    g_flx = lcdata[:, 1]
+                    g_flx_err = lcdata[:, 2]
+                    bp_flx = lcdata[:, 3]
+                    bp_flx_err = lcdata[:, 4]
+                    rp_flx = lcdata[:, 5]
+                    rp_flx_err = lcdata[:, 6]
+                    testlabel_gaia.destroy()
+                    plotlightcurve(t, g_flx, g_flx_err, bp_flx, bp_flx_err, rp_flx, rp_flx_err, gaia_plotframe)
+
+        outerthread = threading.Thread(target=startgaiathread)
+        outerthread.start()
+
+    getgaiabtn = tk.Button(gaialc, text="Get Gaia Data", command=lambda: getgaiawrapper(gaia_id))
+    getgaiabtn.pack(side=tk.BOTTOM, anchor="e", padx=10, pady=10)
+    gaia_plotframe.pack()
+
+    lc_tabs.pack(fill="both", expand=1)
+    fitmodelframe.pack(fill="both", expand=1)
+
     print(gaia_id)
 
 
