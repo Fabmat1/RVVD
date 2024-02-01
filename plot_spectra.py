@@ -1,5 +1,6 @@
 import os.path
 import sys
+import threading
 
 import numpy as np
 import pandas as pd
@@ -90,6 +91,8 @@ def comprehend_lstr(lstr):
 
 def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savepath=None, custom_xlim=None, use_ind_as_sid=False, normalized=NORMALIZE):
     global RES_PARAMETER_LIST
+
+    print(threading.current_thread() == threading.main_thread())
     if isinstance(RES_PARAMETER_LIST, str):
         try:
             RES_PARAMETER_LIST = pd.read_csv(RES_PARAMETER_LIST)

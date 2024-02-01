@@ -24,6 +24,8 @@ from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,
                                                NavigationToolbar2Tk)
 from tksheet import Sheet
 
+from galpy.orbit import Orbit
+from galpy.potential import MWPotential2014
 from analyse_results import vrad_pvalue
 from data_reduction import *
 from get_interesting_stars import quick_visibility
@@ -758,6 +760,7 @@ def create_CMD_plot(gaia_id):
         plt.errorbar(bp_rp_target, absmag_target, yerr=3, zorder=5, uplims=True, lolims=False, c="darkred")
     plt.tight_layout()
     plt.savefig(f"{general_config['OUTPUT_DIR']}/{gaia_id}/CMD.png")
+    plt.close()
 
 
 def show_CMD_window(gaia_id):
@@ -1555,7 +1558,55 @@ def create_master_spectrum(queue, gaia_id, assoc_files, custom_name=None, custom
 def viewplot(q, n, gaia_id):
     q.put(["execute_function",
            plot_system_from_ind,
-           {"ind" : str(gaia_id), "use_ind_as_sid" : True, "normalized" : n}])
+           {"ind": str(gaia_id), "use_ind_as_sid": True, "normalized": n}])
+
+
+def phasefold(analysis, gaia_id):
+    pass
+
+
+def galacticorbit(parameters, d):
+
+    ra = parameters["ra"]
+    dec = parameters["dec"]
+
+    pmra = parameters["pmra"]
+    pmdec = parameters["pmdec"]
+
+    rvavg = parameters["RVavg"]
+
+    c = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, distance=d * u.pc,
+                 pm_ra_cosdec=pmra * u.mas / u.yr, pm_dec=pmdec * u.mas / u.yr,
+                 radial_velocity=rvavg * u.km / u.s)
+
+    p = MWPotential2014
+    o = Orbit(c)
+    ts = np.linspace(0, 50, 5000)
+    o.integrate(ts, p)
+
+    plt.plot(o.R(ts), o.z(ts), color="darkgreen", zorder=5)
+    plt.plot([o.R()], [o.z()], 'rx', zorder=6)
+    plt.grid(True, linestyle="--", color="lightgray")
+    plt.ylabel("z [kpc]")
+    plt.xlabel("R [kpc]")
+    plt.tight_layout()
+    plt.show()
+
+
+def galacticorbit_wrapper(interesting_dataframe, w, gaia_id):
+    parameters = interesting_dataframe[interesting_dataframe["source_id"] == gaia_id].iloc[0]
+    plx = parameters["parallax"]
+    plx_err = parameters["parallax_err"]
+
+    if plx_err > 0.5*plx and not plx_err >= plx:
+        messagebox.showinfo("Uncertain Parralax", "The plot you are about to view was calculated with an unreliable parralax", parent=w)
+        d = 1 / (np.abs(plx) * 0.001)
+    elif plx_err >= plx:
+        messagebox.showwarning("Bad Parralax", "The plot you are about to view was calculated with a bad parralax", parent=w)
+        d = 1 / ((np.abs(plx)+plx_err) * 0.001)
+    else:
+        d = 1 / (plx * 0.001)
+    queue.put(["execute_function", galacticorbit, (parameters, d)])
 
 
 def analysis_tab(analysis, queue):
@@ -1943,14 +1994,20 @@ def analysis_tab(analysis, queue):
         fit_model = tk.Button(buttonframe, text="Fit Model", command=lambda: fitmodel(analysis, gaia_id))
         fit_model.grid(row=10, column=1)
 
+        fit_model = tk.Button(buttonframe, text="Calculate Galactic\nOrbit", command=lambda: galacticorbit_wrapper(interesting_dataframe, detail_window, gaia_id))
+        fit_model.grid(row=10, column=1)
+
         view_lc = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id))
         view_lc.grid(row=12, column=1)
 
-        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: show_CMD_window(gaia_id))
-        view_cmd.grid(row=13, column=1)
+        view_lc = tk.Button(buttonframe, text="Phasefold", command=lambda: phasefold(analysis, gaia_id))
+        view_lc.grid(row=13, column=1)
+
+        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (gaia_id,)]))
+        view_cmd.grid(row=17, column=1)
 
         view_note = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
-        view_note.grid(row=14, column=1)
+        view_note.grid(row=18, column=1)
 
         for i in range(13):
             buttonframe.grid_rowconfigure(i + 1, minsize=25)
