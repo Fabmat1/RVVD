@@ -9,7 +9,7 @@ import tkinter as tk
 import webbrowser
 from idlelib.tooltip import Hovertip
 from multiprocessing.pool import ThreadPool
-from queue import Empty
+from queue import Empty, Queue
 from shutil import which
 from tkinter import ttk, filedialog
 
@@ -32,7 +32,9 @@ from plot_spectra import plot_system_from_ind
 from preprocessing import *
 
 import matplotlib
-matplotlib.use('Qtagg')
+
+matplotlib.use('QtAgg')
+
 
 def callback(url):
     webbrowser.open_new(url)
@@ -399,7 +401,7 @@ def showimages_sed(gaia_id, frame, window):
     setCanvasSize(frame, window)
 
 
-def master_spectrum_window(gaia_id, sheet=None):
+def master_spectrum_window(queue, gaia_id, sheet=None):
     if sheet is not None:
         gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
 
@@ -443,9 +445,9 @@ def master_spectrum_window(gaia_id, sheet=None):
 
     def do_master_thing():
         if custom_name_val.get() == "" and custom_sel_val.get() == "" and custom_rv_val.get() == "":
-            create_master_spectrum(gaia_id, assoc_files)
+            create_master_spectrum(queue, gaia_id, assoc_files)
         else:
-            create_master_spectrum(gaia_id, assoc_files, custom_name_val.get(), float(custom_rv_val.get()), custom_sel_val.get())
+            create_master_spectrum(queue, gaia_id, assoc_files, custom_name_val.get(), float(custom_rv_val.get()), custom_sel_val.get())
 
     do_master_button = tk.Button(masspecframe, text="Create Master Spectrum", command=do_master_thing)
     do_master_button.grid(row=4, column=2)
@@ -882,7 +884,7 @@ def fitmodel(window, gaia_id):
 
     # TODO: enable selecting different master spectra
     if not os.path.isfile(f"master_spectra/{gaia_id}_stacked.txt"):
-        create_master_spec_btn = tk.Button(fitinputframe, text="Create master spectrum", command=lambda: master_spectrum_window(gaia_id))
+        create_master_spec_btn = tk.Button(fitinputframe, text="Create master spectrum", command=lambda: master_spectrum_window(queue, gaia_id))
         create_master_spec_btn.pack(anchor="se", padx=5, pady=5)
 
     for i, (label_name, entry, freezebox) in enumerate(zip(star_one_label_names, star_one_inputs, star_one_freezeboxes)):
@@ -948,8 +950,8 @@ def plotgaialightcurve(times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=
     normflxs = []
     normflxerrs = []
     for ind, [f, fe] in enumerate(zip(fluxes, flux_errors)):
-        nfe = fe/np.median(f)
-        nf = f/np.median(f)
+        nfe = fe / np.median(f)
+        nf = f / np.median(f)
         if noiseceil is not None:
             mask = nf < noiseceil
             times[ind] = times[ind][mask]
@@ -976,9 +978,9 @@ def plotgaialightcurve(times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=
         if min_p is None:
             min_p = np.min([np.min(np.diff(t)) for t in times])
         if min_p is None:
-            max_p = np.ptp(mashedtimes)/2
+            max_p = np.ptp(mashedtimes) / 2
 
-        freqs = np.linspace(1/max_p, 1/min_p, nsamp)
+        freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
     ps = 1 / freqs
     # pgram = model.periodogram_auto(100, 10)
     pgram = model.periodogram(ps)
@@ -987,10 +989,15 @@ def plotgaialightcurve(times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=
     periodogram.set_xlabel("Period [d]")
     periodogram.set_ylabel("Relative Power [arb. Unit]")
     periodogram.set_xscale("log")
-    periodogram.plot(ps, pgram, color="navy")
+    periodogram.plot(ps, pgram, color="navy", zorder=5)
+
+    maxp = ps[ps < 48][np.argmax(pgram[ps < 48])]
+    periodogram.axvline(maxp, color="darkred", linestyle="--", linewidth=1, zorder=4)
+    periodogram.annotate(f'Period peak: {round(maxp, 7)}d', xy=(1, 1), xytext=(-15, -15),
+                         xycoords='axes fraction', textcoords='offset points',
+                         ha='right', va='top', color='red')
 
     for f, fe, t, c, l in zip(normflxs, normflxerrs, times, ["darkgreen", "navy", "darkred"], ["G band Flux", "BP band Flux", "RP band Flux"]):
-
         # plotting the graph
         plot1.scatter(t, f, color=c, zorder=5, label=l)
         plot1.errorbar(t, f, yerr=fe, linestyle='', color=c, capsize=3, zorder=4, label="_nolabel_")
@@ -1003,6 +1010,7 @@ def plotgaialightcurve(times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=
 
     return fig, axs
 
+
 def plottesslightcurve(t, tess_flx, tess_flx_err, plotframe):
     pass
 
@@ -1012,7 +1020,7 @@ def plotlc_async(frame, *args, **kwargs):
     progress_bar.start()
     progress_bar.pack(pady=10)
 
-    #If gaia lc
+    # If gaia lc
     if isinstance(args[0], list):
         def plotlc():
             pool = ThreadPool(processes=1)
@@ -1043,7 +1051,6 @@ def plotlc_async(frame, *args, **kwargs):
 
     thread = threading.Thread(target=plotlc)
     thread.start()
-
 
 
 def getgaialc(gaia_id):
@@ -1228,6 +1235,7 @@ def getgaiawrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper):
                 notfoundlabel.pack()
             else:
                 drawlcplot(lcdata, lcframe, ctlframe, plotwrapper, tiplabel)
+
     outerthread = threading.Thread(target=startgaiathread)
     outerthread.start()
 
@@ -1388,7 +1396,13 @@ def truncate_and_align_arrays(wls, flxs, flx_stds):
     return out_wls, out_flx, out_flx_std
 
 
-def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=None, custom_select=None):
+def simpleplot(x, y):
+    plt.plot(x, y)
+    plt.tight_layout()
+    plt.show()
+
+
+def create_master_spectrum(queue, gaia_id, assoc_files, custom_name=None, custom_rv=None, custom_select=None):
     if custom_select == "":
         custom_select = None
     if not os.path.isdir("master_spectra"):
@@ -1529,11 +1543,7 @@ def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=Non
     global_flxs /= n_in_bin
     global_flx_stds /= n_in_bin
 
-    plt.plot(global_wls, global_flxs)
-    plt.scatter(global_wls, global_flxs, c=n_in_bin, cmap="rainbow")
-    plt.colorbar()
-    plt.tight_layout()
-    plt.show()
+    queue.put(["execute_function", simpleplot, (global_wls, global_flxs)])
 
     outdata = np.stack((global_wls, global_flxs, np.zeros(global_wls.shape)), axis=-1)
     if custom_name is None or custom_name == "":
@@ -1542,7 +1552,13 @@ def create_master_spectrum(gaia_id, assoc_files, custom_name=None, custom_rv=Non
         np.savetxt(f"master_spectra/{custom_name}.txt", outdata, fmt='%1.4f')
 
 
-def analysis_tab(analysis):
+def viewplot(q, n, gaia_id):
+    q.put(["execute_function",
+           plot_system_from_ind,
+           {"ind" : str(gaia_id), "use_ind_as_sid" : True, "normalized" : n}])
+
+
+def analysis_tab(analysis, queue):
     frame = tk.Frame(analysis)
     try:
         interesting_dataframe = pd.read_csv("result_parameters.csv")
@@ -1918,30 +1934,23 @@ def analysis_tab(analysis):
         normplot.select()
         normplot.grid(row=6, column=1)
 
-        def viewplot():
-            nonlocal normalize
-            return lambda: plot_system_from_ind(
-                ind=str(gaia_id),
-                use_ind_as_sid=True,
-                normalized=normalize.get())
+        view_plot = tk.Button(buttonframe, text="View Plot", command=lambda: viewplot(queue, normalize.get(), gaia_id))
+        view_plot.grid(row=7, column=1)
 
-        viewplot = tk.Button(buttonframe, text="View Plot", command=viewplot())
-        viewplot.grid(row=7, column=1)
+        fit_sed = tk.Button(buttonframe, text="Fit SED", command=lambda: fitsed(analysis, gaia_id))
+        fit_sed.grid(row=9, column=1)
 
-        viewplot = tk.Button(buttonframe, text="Fit SED", command=lambda: fitsed(analysis, gaia_id))
-        viewplot.grid(row=9, column=1)
+        fit_model = tk.Button(buttonframe, text="Fit Model", command=lambda: fitmodel(analysis, gaia_id))
+        fit_model.grid(row=10, column=1)
 
-        viewplot = tk.Button(buttonframe, text="Fit Model", command=lambda: fitmodel(analysis, gaia_id))
-        viewplot.grid(row=10, column=1)
+        view_lc = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id))
+        view_lc.grid(row=12, column=1)
 
-        viewplot = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id))
-        viewplot.grid(row=12, column=1)
+        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: show_CMD_window(gaia_id))
+        view_cmd.grid(row=13, column=1)
 
-        viewplot = tk.Button(buttonframe, text="View CMD", command=lambda: show_CMD_window(gaia_id))
-        viewplot.grid(row=13, column=1)
-
-        viewplot = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
-        viewplot.grid(row=14, column=1)
+        view_note = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
+        view_note.grid(row=14, column=1)
 
         for i in range(13):
             buttonframe.grid_rowconfigure(i + 1, minsize=25)
@@ -1953,7 +1962,7 @@ def analysis_tab(analysis):
     sheet.popup_menu_add_command("Add to observation list", add_to_observation_list)
     sheet.popup_menu_add_command("Remove from observation list", remove_from_observation_list)
     sheet.popup_menu_add_command("View detail window", view_detail_window)
-    sheet.popup_menu_add_command("Create master spectrum", lambda: master_spectrum_window(None, sheet=sheet))
+    sheet.popup_menu_add_command("Create master spectrum", lambda: master_spectrum_window(queue, None, sheet=sheet))
     sheet.popup_menu_add_command("Reload System", reload_system)
 
     if "known_category" in interesting_dataframe.columns.tolist():
@@ -1998,7 +2007,7 @@ def get_raw_files():
     return outlist
 
 
-def preprocess(prep_tab):
+def preprocess(prep_tab, queue):
     prep_settings = {}
     prep_frame = tk.Frame(prep_tab)
 
@@ -2243,9 +2252,9 @@ def gui_window(queue, p_queue):
     frame = tk.Frame(processing)
     frame.pack()
 
-    analysis_tab(analysis)
+    analysis_tab(analysis, queue)
 
-    preprocess(prep)
+    preprocess(prep, queue)
 
     # Calculate the number of rows needed to display the progress bars in a grid with two columns
     num_cores = multiprocessing.cpu_count()
@@ -2302,7 +2311,7 @@ def gui_window(queue, p_queue):
         elif upd[0] == "done":
             for widget in analysis.winfo_children():
                 widget.destroy()
-            analysis_tab(analysis)
+            analysis_tab(analysis, queue)
         window.update()
         window.after(10, lambda: update_progress(bars, labels))
 
@@ -2330,3 +2339,8 @@ if __name__ == "__main__":
         elif item[0] == "start_process":
             proc = threading.Thread(target=interactive_main, args=[configs, progress_queue])
             proc.start()
+        elif item[0] == "execute_function":
+            if isinstance(item[2], dict):
+                item[1](**item[2])
+            else:
+                item[1](*item[2])
