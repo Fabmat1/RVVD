@@ -1566,7 +1566,6 @@ def phasefold(analysis, gaia_id):
 
 
 def galacticorbit(parameters, d):
-
     ra = parameters["ra"]
     dec = parameters["dec"]
 
@@ -1598,12 +1597,12 @@ def galacticorbit_wrapper(interesting_dataframe, w, gaia_id):
     plx = parameters["parallax"]
     plx_err = parameters["parallax_err"]
 
-    if plx_err > 0.5*plx and not plx_err >= plx:
+    if plx_err > 0.5 * plx and not plx_err >= plx:
         messagebox.showinfo("Uncertain Parralax", "The plot you are about to view was calculated with an unreliable parralax", parent=w)
         d = 1 / (np.abs(plx) * 0.001)
     elif plx_err >= plx:
         messagebox.showwarning("Bad Parralax", "The plot you are about to view was calculated with a bad parralax", parent=w)
-        d = 1 / ((np.abs(plx)+plx_err) * 0.001)
+        d = 1 / ((np.abs(plx) + plx_err) * 0.001)
     else:
         d = 1 / (plx * 0.001)
     queue.put(["execute_function", galacticorbit, (parameters, d)])
@@ -1849,10 +1848,7 @@ def analysis_tab(analysis, queue):
 
         plot_rvcurve_brokenaxis(vels, verrs, times, gaia_id, custom_saveloc=f"output/{gaia_id}/RV_variation_broken_axis.pdf")
 
-        plot_system_from_ind(ind=str(gaia_id),
-                             savepath=f"output/{gaia_id}/spoverview.pdf",
-                             use_ind_as_sid=True,
-                             custom_xlim=(4000, 4500))
+        queue.put(["execute_function", plot_system_from_ind, {"ind": str(gaia_id), "savepath": f"output/{gaia_id}/spoverview.pdf", "use_ind_as_sid": True, "custom_xlim": (4000, 4500)}])
 
         update_sheet()
 
@@ -1996,6 +1992,8 @@ def analysis_tab(analysis, queue):
 
         fit_model = tk.Button(buttonframe, text="Calculate Galactic\nOrbit", command=lambda: galacticorbit_wrapper(interesting_dataframe, detail_window, gaia_id))
         fit_model.grid(row=10, column=1)
+        if np.isnan(rvavg) or np.isnan(parallax):
+            fit_model["state"] = "disabled"
 
         view_lc = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id))
         view_lc.grid(row=12, column=1)
@@ -2004,14 +2002,14 @@ def analysis_tab(analysis, queue):
         view_lc.grid(row=13, column=1)
 
         view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (gaia_id,)]))
-        view_cmd.grid(row=17, column=1)
+        view_cmd.grid(row=15, column=1)
 
         view_note = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
-        view_note.grid(row=18, column=1)
+        view_note.grid(row=16, column=1)
 
-        for i in range(13):
+        for i in range(16):
             buttonframe.grid_rowconfigure(i + 1, minsize=25)
-        buttonframe.grid(row=1, column=3, sticky="news")
+        buttonframe.grid(row=1, column=3, sticky="news", rowspan=2)
 
     sheet.enable_bindings()
     sheet.headers(newheaders=interesting_dataframe.columns.tolist())
