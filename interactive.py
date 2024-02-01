@@ -8,6 +8,7 @@ import threading
 import tkinter as tk
 import webbrowser
 from idlelib.tooltip import Hovertip
+from multiprocessing.pool import ThreadPool
 from queue import Empty
 from shutil import which
 from tkinter import ttk, filedialog
@@ -30,6 +31,8 @@ from main import general_config, fit_config, plot_config, interactive_main, plot
 from plot_spectra import plot_system_from_ind
 from preprocessing import *
 
+import matplotlib
+matplotlib.use('Qtagg')
 
 def callback(url):
     webbrowser.open_new(url)
@@ -934,7 +937,7 @@ def fitmodel(window, gaia_id):
     fitmodelframe.pack(fill="both", expand=1)
 
 
-def plotlightcurve(time, g_flux, g_flux_error, bp_flux, bp_flux_error, rp_flux, rp_flux_error, frame):
+def plotgaialightcurve(times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
     # the figure that will contain the plot
     fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8)
 
@@ -942,55 +945,105 @@ def plotlightcurve(time, g_flux, g_flux_error, bp_flux, bp_flux_error, rp_flux, 
     plot1 = axs[0]
     periodogram = axs[1]
 
-    model = periodic.LombScargleMultibandFast()
-    model.fit(np.concatenate([time, time, time]),
-              np.concatenate([g_flux, bp_flux, rp_flux]),
-              np.concatenate([g_flux_error, bp_flux_error, rp_flux_error]),
-              np.concatenate(np.concatenate([np.full((len(g_flux), 1), "G"), np.full((len(bp_flux), 1), "BP"), np.full((len(rp_flux), 1), "RP")])))
-    freqs = np.linspace(1, 24, 50000)
-    ps = 1/freqs
+    normflxs = []
+    normflxerrs = []
+    for ind, [f, fe] in enumerate(zip(fluxes, flux_errors)):
+        nfe = fe/np.median(f)
+        nf = f/np.median(f)
+        if noiseceil is not None:
+            mask = nf < noiseceil
+            times[ind] = times[ind][mask]
+            fluxes[ind] = fluxes[ind][mask]
+            flux_errors[ind] = flux_errors[ind][mask]
+            nfe = nfe[mask]
+            nf = nf[mask]
+
+        normflxs.append(nf)
+        normflxerrs.append(nfe)
+
+    mashedtimes = np.concatenate(times)
+
+    model = periodic.LombScargleMultibandFast(Nterms=nterms)
+    model.fit(mashedtimes,
+              np.concatenate(fluxes),
+              np.concatenate(flux_errors),
+              np.concatenate(np.concatenate([np.full((len(fluxes[0]), 1), "G"),
+                                             np.full((len(fluxes[1]), 1), "BP"),
+                                             np.full((len(fluxes[2]), 1), "RP")])))
+    if min_p is None and max_p is None:
+        freqs = np.linspace(2 / np.ptp(mashedtimes), 1 / np.min([np.min(np.diff(t)) for t in times]), nsamp)
+    else:
+        if min_p is None:
+            min_p = np.min([np.min(np.diff(t)) for t in times])
+        if min_p is None:
+            max_p = np.ptp(mashedtimes)/2
+
+        freqs = np.linspace(1/max_p, 1/min_p, nsamp)
+    ps = 1 / freqs
+    # pgram = model.periodogram_auto(100, 10)
     pgram = model.periodogram(ps)
-    pgram = np.array(pgram)
+    # pgram = np.array(pgram)
 
     periodogram.set_xlabel("Period [d]")
     periodogram.set_ylabel("Relative Power [arb. Unit]")
+    periodogram.set_xscale("log")
     periodogram.plot(ps, pgram, color="navy")
 
-    g_flux_error /= np.median(g_flux)
-    g_flux /= np.median(g_flux)
-    bp_flux_error /= np.median(bp_flux)
-    bp_flux /= np.median(bp_flux)
-    rp_flux_error /= np.median(rp_flux)
-    rp_flux /= np.median(rp_flux)
+    for f, fe, t, c, l in zip(normflxs, normflxerrs, times, ["darkgreen", "navy", "darkred"], ["G band Flux", "BP band Flux", "RP band Flux"]):
 
-    # plotting the graph
-    plot1.scatter(time, g_flux, color="darkgreen", zorder=5)
-    plot1.errorbar(time, g_flux, yerr=g_flux_error, linestyle='', color="darkgreen", capsize=3, zorder=4)
-    plot1.scatter(time, bp_flux, color="navy", zorder=5)
-    plot1.errorbar(time, bp_flux, yerr=bp_flux_error, linestyle='', color="navy", capsize=3, zorder=4)
-    plot1.scatter(time, rp_flux, color="darkred", zorder=5)
-    plot1.errorbar(time, rp_flux, yerr=rp_flux_error, linestyle='', color="darkred", capsize=3, zorder=4)
+        # plotting the graph
+        plot1.scatter(t, f, color=c, zorder=5, label=l)
+        plot1.errorbar(t, f, yerr=fe, linestyle='', color=c, capsize=3, zorder=4, label="_nolabel_")
 
+    plot1.legend(loc='upper right')
     plot1.grid(color="lightgrey", linestyle='--')
     plot1.set_xlabel("Time [d]")
-    plot1.set_ylabel("Relative Gaia G Flux [arb. Unit]")
+    plot1.set_ylabel("Relative Gaia G Flux\n [arb. Unit]")
     plt.tight_layout()
-    # creating the Tkinter canvas
-    # containing the Matplotlib figure
-    canvas = FigureCanvasTkAgg(fig, master=frame)
-    canvas.draw()
 
-    # placing the canvas on the Tkinter window
-    canvas.get_tk_widget().pack()
+    return fig, axs
 
-    # creating the Matplotlib toolbar
-    toolbar = NavigationToolbar2Tk(canvas, frame)
-    toolbar.update()
+def plottesslightcurve(t, tess_flx, tess_flx_err, plotframe):
+    pass
 
-    # placing the toolbar on the Tkinter window
-    canvas.get_tk_widget().pack()
 
-    return fig, plot1
+def plotlc_async(frame, *args, **kwargs):
+    progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=300)
+    progress_bar.start()
+    progress_bar.pack(pady=10)
+
+    #If gaia lc
+    if isinstance(args[0], list):
+        def plotlc():
+            pool = ThreadPool(processes=1)
+            async_result = pool.apply_async(plotgaialightcurve, args, kwargs)
+            fig, axs = async_result.get()
+            progress_bar.destroy()
+            canvas = FigureCanvasTkAgg(fig, master=frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack()
+            toolbar = NavigationToolbar2Tk(canvas, frame)
+            toolbar.update()
+            canvas.get_tk_widget().pack()
+            plt.close(fig)
+
+    else:
+        def plotlc():
+            pool = ThreadPool(processes=1)
+            async_result = pool.apply_async(plottesslightcurve, args=args, kwds=kwargs)
+            fig, axs = async_result.get()
+            progress_bar.destroy()
+            canvas = FigureCanvasTkAgg(fig, master=frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack()
+            toolbar = NavigationToolbar2Tk(canvas, frame)
+            toolbar.update()
+            canvas.get_tk_widget().pack()
+            plt.close(fig)
+
+    thread = threading.Thread(target=plotlc)
+    thread.start()
+
 
 
 def getgaialc(gaia_id):
@@ -1009,6 +1062,205 @@ def getgaialc(gaia_id):
             return False
 
 
+def drawlcplot(lcdata, plotframe, plotctl, plotwrapper, btntip):
+    if lcdata.shape[1] > 4:
+        lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
+        t = lcdata[:, 0]
+        g_flx = lcdata[:, 1]
+        g_flx_err = lcdata[:, 2]
+        bp_flx = lcdata[:, 3]
+        bp_flx_err = lcdata[:, 4]
+        rp_flx = lcdata[:, 5]
+        rp_flx_err = lcdata[:, 6]
+        btntip.destroy()
+        plotlc_async(plotframe, [t, t, t], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
+    else:
+        lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
+        t = lcdata[:, 0]
+        tess_flx = lcdata[:, 1]
+        tess_flx_err = lcdata[:, 2]
+        btntip.destroy()
+        plotlc_async(plotframe, t, tess_flx, tess_flx_err)
+
+    filterframe = tk.Frame(plotctl)
+    checknoisevar = tk.IntVar(value=0)
+    noiselvlvar = tk.StringVar(value="0")
+
+    filterlabel = tk.Label(filterframe, text="Ignore Noise above ", padx=5)
+    filtercheckbtn = tk.Checkbutton(filterframe, variable=checknoisevar)
+    filterentry = tk.Entry(filterframe, textvariable=noiselvlvar, width=4)
+    filterlabel.grid(row=0, column=0)
+    filterentry.grid(row=0, column=1)
+    filtercheckbtn.grid(row=0, column=2)
+
+    redofitframe = tk.Frame(plotctl)
+    checkredovar = tk.IntVar(value=0)
+    loperiodvar = tk.StringVar(value="0")
+    hiperiodvar = tk.StringVar(value="0")
+
+    periodlabel = tk.Label(redofitframe, text="Redraw periodogram from ", padx=5)
+    periodinterlabel = tk.Label(redofitframe, text=" to ", padx=5)
+    periodcheckbtn = tk.Checkbutton(redofitframe, variable=checkredovar)
+    periodloentry = tk.Entry(redofitframe, textvariable=loperiodvar, width=4)
+    periodhientry = tk.Entry(redofitframe, textvariable=hiperiodvar, width=4)
+    periodlabel.grid(row=0, column=0)
+    periodloentry.grid(row=0, column=1)
+    periodinterlabel.grid(row=0, column=2)
+    periodhientry.grid(row=0, column=3)
+    periodcheckbtn.grid(row=0, column=4)
+
+    nsamplesframe = tk.Frame(plotctl)
+    checknsamplesvar = tk.IntVar(value=0)
+    nsamplesvar = tk.StringVar(value="0")
+    nsampleslabel1 = tk.Label(nsamplesframe, text="Use ", padx=5)
+    nsampleslabel2 = tk.Label(nsamplesframe, text=" samples", padx=5)
+    nsamplescheckbtn = tk.Checkbutton(nsamplesframe, variable=checknsamplesvar)
+    nsampleshientry = tk.Entry(nsamplesframe, textvariable=nsamplesvar, width=4)
+    nsampleslabel1.grid(row=0, column=0)
+    nsampleshientry.grid(row=0, column=1)
+    nsampleslabel2.grid(row=0, column=2)
+    nsamplescheckbtn.grid(row=0, column=3)
+
+    ntermsframe = tk.Frame(plotctl)
+    checkntermsvar = tk.IntVar(value=0)
+    ntermsvar = tk.StringVar(value="0")
+    ntermslabel1 = tk.Label(ntermsframe, text="Use ", padx=5)
+    ntermslabel2 = tk.Label(ntermsframe, text=" terms", padx=5)
+    ntermscheckbtn = tk.Checkbutton(ntermsframe, variable=checkntermsvar)
+    ntermsentry = tk.Entry(ntermsframe, textvariable=ntermsvar, width=4)
+    ntermslabel1.grid(row=0, column=0)
+    ntermsentry.grid(row=0, column=1)
+    ntermslabel2.grid(row=0, column=2)
+    ntermscheckbtn.grid(row=0, column=3)
+
+    def drawplotwrapper():
+        for widget in plotframe.winfo_children():
+            widget.destroy()
+        nonlocal lcdata
+        if lcdata.shape[1] > 4:
+            lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
+            t = lcdata[:, 0]
+            g_flx = lcdata[:, 1]
+            g_flx_err = lcdata[:, 2]
+            bp_flx = lcdata[:, 3]
+            bp_flx_err = lcdata[:, 4]
+            rp_flx = lcdata[:, 5]
+            rp_flx_err = lcdata[:, 6]
+            if checkntermsvar.get() == 1:
+                nterms = ntermsvar.get()
+                try:
+                    nterms = int(nterms)
+                except ValueError:
+                    nterms = 1
+            else:
+                nterms = 1
+            if checknsamplesvar.get() == 1:
+                nsamp = nsamplesvar.get()
+                try:
+                    nsamp = int(nsamp)
+                except ValueError:
+                    nsamp = 50000
+            else:
+                nsamp = 50000
+            if checkredovar.get() == 1:
+                min_p = loperiodvar.get()
+                max_p = hiperiodvar.get()
+                try:
+                    min_p = float(min_p)
+                    max_p = float(max_p)
+                except ValueError:
+                    min_p = None
+                    max_p = None
+            else:
+                min_p = None
+                max_p = None
+            if checknoisevar.get() == 1:
+                noiseceil = noiselvlvar.get()
+                try:
+                    noiseceil = float(noiseceil)
+                except ValueError:
+                    noiseceil = None
+            else:
+                noiseceil = None
+            plotlc_async(plotframe, [t, t, t], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err], nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+        else:
+            lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
+            t = lcdata[:, 0]
+            tess_flx = lcdata[:, 1]
+            tess_flx_err = lcdata[:, 2]
+            nterms = 1
+            nsamp = 50000
+            min_p = None
+            max_p = None
+            plotlc_async(plotframe, t, tess_flx, tess_flx_err)
+
+    redoperiodogrambtn = tk.Button(plotctl, text="Redo Periodogram", command=drawplotwrapper)
+
+    filterframe.grid(row=0, column=0, sticky="w")
+    redofitframe.grid(row=1, column=0, sticky="w")
+    nsamplesframe.grid(row=2, column=0, sticky="w")
+    ntermsframe.grid(row=3, column=0, sticky="w")
+    redoperiodogrambtn.grid(row=4, column=0, sticky="se")
+    plotframe.grid(row=0, column=0, pady=10, padx=10)
+    plotctl.grid(row=0, column=1, sticky="n", pady=10, padx=10)
+    plotwrapper.pack()
+
+
+def getgaiawrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper):
+    def startgaiathread():
+        progress_bar = ttk.Progressbar(lcframe, mode='indeterminate', length=300)
+        progress_bar.pack()
+        progress_bar.start()
+        thread = threading.Thread(target=lambda: getgaialc(gaia_id))
+        thread.start()
+        lc_exists = thread.join()
+        print("Thread finished!")
+        progress_bar.destroy()
+        lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
+        if lc_exists == 1:
+            tiplabel.destroy()
+            notfoundlabel = tk.Label(lcframe, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel.pack()
+        else:
+            if lcdata.ndim == 1:
+                tiplabel.destroy()
+                notfoundlabel = tk.Label(lcframe, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+                notfoundlabel.pack()
+            else:
+                drawlcplot(lcdata, lcframe, ctlframe, plotwrapper, tiplabel)
+    outerthread = threading.Thread(target=startgaiathread)
+    outerthread.start()
+
+
+def gettesswrapper():
+    pass
+
+
+def lcplottab(lcdata, lcframe, name, gaia_id):
+    btntip = tk.Label(lcframe, text=f"Use the button to look for a {name} lightcurve!")
+    btntip.pack()
+
+    plotwrapper = tk.Frame(lcframe)
+    plotframe = tk.Frame(plotwrapper)
+    plotctl = tk.Frame(plotwrapper)
+
+    if lcdata is not None:
+        if lcdata.ndim == 1:
+            btntip.destroy()
+            notfoundlabel = tk.Label(lcframe, text=f"No {name} Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel.pack()
+        elif name == "GAIA":
+            drawlcplot(lcdata, plotframe, plotctl, plotwrapper, btntip)
+
+    else:
+        if name == "GAIA":
+            getgaiabtn = tk.Button(lcframe, text="Get Gaia Data", command=lambda: getgaiawrapper(gaia_id, btntip, plotframe, plotctl, plotwrapper))
+            getgaiabtn.pack(side=tk.BOTTOM, anchor="e", padx=10, pady=10)
+        elif name == "TESS":
+            getgaiabtn = tk.Button(lcframe, text="Get TESS Data", command=lambda: gettesswrapper())
+            getgaiabtn.pack(side=tk.BOTTOM, anchor="e", padx=10, pady=10)
+
+
 def viewlc(window, gaia_id):
     lcwindow = tk.Toplevel(window)
     lcwindow.title(f"View Lightcurve for {gaia_id}")
@@ -1024,75 +1276,22 @@ def viewlc(window, gaia_id):
     lc_tabs.add(tesslc, text="TESS LC")
 
     gaialc = tk.Frame(lc_tabs)
-    gaia_plotframe = tk.Frame(gaialc)
     lc_tabs.add(gaialc, text="GAIA LC")
-    testlabel = tk.Label(tesslc, text="Use the button to look for a TESS lightcurve!")
-    testlabel.pack()
 
-    testlabel_gaia = tk.Label(gaialc, text="Use the button to look for a GAIA lightcurve!")
-    testlabel_gaia.pack()
+    # if TESS_LC_EXISTS:
+    #     lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
+    #     dolcplot(lcdata, gaialc, "GAIA", gaia_id)
+    # else:
+    #     dolcplot(None, gaialc, "GAIA", gaia_id)
 
     if os.path.isfile(f"output/{gaia_id}/gaia_lc.txt"):
         lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
-        if lcdata.ndim == 1:
-            testlabel_gaia.destroy()
-            notfoundlabel = tk.Label(gaialc, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
-            notfoundlabel.pack()
-        else:
-            lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
-            t = lcdata[:, 0]
-            g_flx = lcdata[:, 1]
-            g_flx_err = lcdata[:, 2]
-            bp_flx = lcdata[:, 3]
-            bp_flx_err = lcdata[:, 4]
-            rp_flx = lcdata[:, 5]
-            rp_flx_err = lcdata[:, 6]
-            testlabel_gaia.destroy()
-            plotlightcurve(t, g_flx, g_flx_err, bp_flx, bp_flx_err, rp_flx, rp_flx_err, gaia_plotframe)
-
-    def getgaiawrapper(gaia_id):
-        def startgaiathread():
-            progress_bar = ttk.Progressbar(gaialc, mode='indeterminate', length=300)
-            progress_bar.pack()
-            progress_bar.start()
-            thread = threading.Thread(target=lambda: getgaialc(gaia_id))
-            thread.start()
-            lc_exists = thread.join()
-            print("Thread finished!")
-            progress_bar.destroy()
-            lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
-            if lc_exists == 1:
-                testlabel_gaia.destroy()
-                notfoundlabel = tk.Label(gaialc, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
-                notfoundlabel.pack()
-            else:
-                if lcdata.ndim == 1:
-                    testlabel_gaia.destroy()
-                    notfoundlabel = tk.Label(gaialc, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
-                    notfoundlabel.pack()
-                else:
-                    lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
-                    t = lcdata[:, 0]
-                    g_flx = lcdata[:, 1]
-                    g_flx_err = lcdata[:, 2]
-                    bp_flx = lcdata[:, 3]
-                    bp_flx_err = lcdata[:, 4]
-                    rp_flx = lcdata[:, 5]
-                    rp_flx_err = lcdata[:, 6]
-                    testlabel_gaia.destroy()
-                    plotlightcurve(t, g_flx, g_flx_err, bp_flx, bp_flx_err, rp_flx, rp_flx_err, gaia_plotframe)
-
-        outerthread = threading.Thread(target=startgaiathread)
-        outerthread.start()
-
-    getgaiabtn = tk.Button(gaialc, text="Get Gaia Data", command=lambda: getgaiawrapper(gaia_id))
-    getgaiabtn.pack(side=tk.BOTTOM, anchor="e", padx=10, pady=10)
-    gaia_plotframe.pack()
+        lcplottab(lcdata, gaialc, "GAIA", gaia_id)
+    else:
+        lcplottab(None, gaialc, "GAIA", gaia_id)
 
     lc_tabs.pack(fill="both", expand=1)
     fitmodelframe.pack(fill="both", expand=1)
-
-    print(gaia_id)
 
 
 def savenote(gaia_id, text, window=None):
