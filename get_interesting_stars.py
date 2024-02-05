@@ -517,7 +517,7 @@ def individual_visibility(stuff, delta_midnight, frame_obsnight, sunaltazs_obsni
     ra, dec, sid = stuff
     obj_altazs_obsnight = get_visibility(frame_obsnight, ra, dec)
     try:
-        observability = np.ptp(delta_midnight[np.logical_and(obj_altazs_obsnight.alt > 30 * u.deg, sunaltazs_obsnight.alt < 0 * u.deg)])
+        observability = np.ptp(delta_midnight[np.logical_and(obj_altazs_obsnight.alt > 20 * u.deg, sunaltazs_obsnight.alt < 0 * u.deg)])
         if observability != 0:
             plot_visibility(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/visibility.pdf", date=date)
             plot_visibility_tiny(delta_midnight, sunaltazs_obsnight, moonaltazs_obsnight, obj_altazs_obsnight, saveloc=f"./output/{sid}/tiny_visibility.pdf")
