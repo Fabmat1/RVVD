@@ -297,8 +297,8 @@ def do_tess_stuff(TIC, source_id, folder="lightcurves", plotit=False):
     flux_fit2 = slow_lc.flux_fit
     amp2 = slow_lc.amp
 
-    if (flag_ph == 1):
-        if (flag_p2 == 1):
+    if flag_ph == 1:
+        if flag_p2 == 1:
             ascii.write([phase2, flux_phased2, flux_err_phased2], f'output/{source_id}/phase.dat',
                         names=['Phase', 'RelativeFlux', 'Error'], overwrite=True)
         else:
