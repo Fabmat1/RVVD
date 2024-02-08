@@ -1,4 +1,5 @@
 import ast
+import shutil
 
 import astroquery.exceptions
 import itertools
@@ -94,9 +95,6 @@ plot_tooltips = {
 
 # from terminedia import ColorGradient
 
-
-def close_window():
-    os._exit(1)
 
 
 def save_preferences(pref_dict):
@@ -946,7 +944,7 @@ def fitmodel(window, gaia_id):
     fitmodelframe.pack(fill="both", expand=1)
 
 
-def plotgaialightcurve(resultqueue, gaia_id, times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
+def plotgaialightcurve(resultqueue, gaia_id, pgramdata, times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
     # the figure that will contain the plot
     fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8)
 
@@ -972,28 +970,34 @@ def plotgaialightcurve(resultqueue, gaia_id, times, fluxes, flux_errors, nterms=
 
     mashedtimes = np.concatenate(times)
 
-    model = periodic.LombScargleMultibandFast(Nterms=nterms)
-    model.fit(mashedtimes,
-              np.concatenate(fluxes),
-              np.concatenate(flux_errors),
-              np.concatenate(np.concatenate([np.full((len(fluxes[0]), 1), "G"),
-                                             np.full((len(fluxes[1]), 1), "BP"),
-                                             np.full((len(fluxes[2]), 1), "RP")])))
-    tdiffs = np.diff(times)
+    if pgramdata is None:
+        model = periodic.LombScargleMultibandFast(Nterms=nterms)
+        model.fit(mashedtimes,
+                  np.concatenate(fluxes),
+                  np.concatenate(flux_errors),
+                  np.concatenate(np.concatenate([np.full((len(fluxes[0]), 1), "G"),
+                                                 np.full((len(fluxes[1]), 1), "BP"),
+                                                 np.full((len(fluxes[2]), 1), "RP")])))
+        tdiffs = np.diff(mashedtimes)
 
-    if min_p is None and max_p is None:
-        freqs = np.linspace(2 / np.ptp(times), 1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])), nsamp)
+        if min_p is None and max_p is None:
+            freqs = np.linspace(2 / np.ptp(mashedtimes), 1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])), nsamp)
+        else:
+            if min_p is None:
+                min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
+            if max_p is None:
+                max_p = np.ptp(mashedtimes) / 2
+
+            freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
+        ps = 1 / freqs
+        # pgram = model.periodogram_auto(100, 10)
+        pgram = model.periodogram(ps)
+        # pgram = np.array(pgram)
+        np.savetxt(f"output/{gaia_id}/gaia_lc_periodogram.txt", np.vstack([ps, pgram]).T, delimiter=",")
     else:
-        if min_p is None:
-            min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
-        if min_p is None:
-            max_p = np.ptp(times) / 2
+        ps = pgramdata[:, 0]
+        pgram = pgramdata[:, 1]
 
-        freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
-    ps = 1 / freqs
-    # pgram = model.periodogram_auto(100, 10)
-    pgram = model.periodogram(ps)
-    # pgram = np.array(pgram)
 
     periodogram.set_xlabel("Period [d]")
     periodogram.set_ylabel("Relative Power [arb. Unit]")
@@ -1020,19 +1024,20 @@ def plotgaialightcurve(resultqueue, gaia_id, times, fluxes, flux_errors, nterms=
     resultqueue.put([fig, axs])
 
 
-def plottesslightcurve(resultqueue, gaia_id, times, flux, flux_error, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
+def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
     # the figure that will contain the plot
     fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8)
 
     mask = np.logical_and(np.logical_and(~np.isnan(times), ~np.isnan(flux)), ~np.isnan(flux_error))
-    times = times[mask][::10]
-    flux = flux[mask][::10]
-    flux_error = flux_error[mask][::10]
+    times = times[mask]
+    flux = flux[mask]
+    flux_error = flux_error[mask]
 
     sorted_indices = np.argsort(times)
     times = times[sorted_indices]
     flux = flux[sorted_indices]
     flux_error = flux_error[sorted_indices]
+    np.savetxt(f"output/{gaia_id}/tess_lc.txt", np.vstack((times, flux, flux_error)).T, delimiter=",")
 
     # adding the subplot
     plot1 = axs[0]
@@ -1048,28 +1053,31 @@ def plottesslightcurve(resultqueue, gaia_id, times, flux, flux_error, nterms=1, 
         nfe = nfe[mask]
         nf = nf[mask]
 
-    model = periodic.LombScargle(Nterms=nterms)
-    model.fit(times,
-              flux,
-              flux_error)
+    if pgramdata is None:
+        model = periodic.LombScargle(Nterms=nterms)
+        model.fit(times,
+                  flux,
+                  flux_error)
 
-    tdiffs = np.diff(times)
+        tdiffs = np.diff(times)
 
-    if min_p is None and max_p is None:
-        freqs = np.linspace(2 / np.ptp(times), 1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])), nsamp)
+        if min_p is None and max_p is None:
+            freqs = np.linspace(2 / np.ptp(times), 1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])), nsamp)
+        else:
+            if min_p is None:
+                min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
+            if min_p is None:
+                max_p = np.ptp(times) / 2
+
+            freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
+        ps = 1 / freqs
+        # pgram = model.periodogram_auto(100, 10)
+        pgram = model.periodogram(ps)
+        # pgram = np.array(pgram)
+        np.savetxt(f"output/{gaia_id}/tess_lc_periodogram.txt", np.vstack([ps, pgram]).T, delimiter=",")
     else:
-        if min_p is None:
-            min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
-        if min_p is None:
-            max_p = np.ptp(times) / 2
-
-        freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
-    ps = 1 / freqs
-    # pgram = model.periodogram_auto(100, 10)
-    pgram = model.periodogram(ps)
-    # pgram = np.array(pgram)
-
-    np.savetxt(f"output/{gaia_id}/tesslc.txt", np.vstack([ps, pgram]).T)
+        ps = pgramdata[:, 0]
+        pgram = pgramdata[:, 1]
 
     periodogram.set_xlabel("Period [d]")
     periodogram.set_ylabel("Relative Power [arb. Unit]")
@@ -1082,8 +1090,8 @@ def plottesslightcurve(resultqueue, gaia_id, times, flux, flux_error, nterms=1, 
                          xycoords='axes fraction', textcoords='offset points',
                          ha='right', va='top', color='red')
 
-    plot1.scatter(times, nf, color="darkgreen", zorder=5, label="TESS Flux")
-    plot1.errorbar(times, nf, yerr=nfe, linestyle='', color="darkgreen", capsize=3, zorder=4, label="_nolabel_")
+    plot1.scatter(times, nf, color="darkred", zorder=5, s=5, label="TESS Flux")
+    plot1.errorbar(times, nf, yerr=nfe, linestyle='', color="darkred", capsize=3, zorder=4, label="_nolabel_")
     plot1.legend(loc='upper right')
     plot1.grid(color="lightgrey", linestyle='--')
     plot1.set_xlabel("Time [d]")
@@ -1093,7 +1101,7 @@ def plottesslightcurve(resultqueue, gaia_id, times, flux, flux_error, nterms=1, 
     resultqueue.put([fig, axs])
 
 
-def plotlc_async(queue, gaia_id, frame, *args, **kwargs):
+def plotlc_async(queue, gaia_id, frame, pgramdata, *args, **kwargs):
     progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=300)
     progress_bar.start()
     progress_bar.pack(pady=10)
@@ -1102,7 +1110,7 @@ def plotlc_async(queue, gaia_id, frame, *args, **kwargs):
     if isinstance(args[0], list):
         def plotlc():
             resultqueue = man.Queue()
-            queue.put(["execute_function", plotgaialightcurve, (resultqueue, gaia_id, *args), kwargs])
+            queue.put(["execute_function", plotgaialightcurve, (resultqueue, gaia_id, pgramdata, *args), kwargs])
             fig, axs = resultqueue.get()
             progress_bar.destroy()
             canvas = FigureCanvasTkAgg(fig, master=frame)
@@ -1116,7 +1124,7 @@ def plotlc_async(queue, gaia_id, frame, *args, **kwargs):
     else:
         def plotlc():
             resultqueue = man.Queue()
-            queue.put(["execute_function", plottesslightcurve, (resultqueue, gaia_id, *args), kwargs])
+            queue.put(["execute_function", plottesslightcurve, (resultqueue, gaia_id, pgramdata, *args), kwargs])
             fig, axs = resultqueue.get()
             progress_bar.destroy()
             canvas = FigureCanvasTkAgg(fig, master=frame)
@@ -1147,7 +1155,7 @@ def getgaialc(gaia_id):
             return False
 
 
-def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, lctype):
+def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, lctype, pgramdata):
     if lctype == "GAIA":
         lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
         t = lcdata[:, 0]
@@ -1158,14 +1166,14 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
         rp_flx = lcdata[:, 5]
         rp_flx_err = lcdata[:, 6]
         btntip.destroy()
-        plotlc_async(queue, gaia_id, plotframe, [t, t, t], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
+        plotlc_async(queue, gaia_id, plotframe, pgramdata, [t, t, t], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
     else:
         t = lcdata[0]
         tess_flx = lcdata[1]
         tess_flx_err = lcdata[2]
-        crowdsap = lcdata[3]
+#        crowdsap = lcdata[3]
         btntip.destroy()
-        plotlc_async(queue, gaia_id, plotframe, t, tess_flx, tess_flx_err)
+        plotlc_async(queue, gaia_id, plotframe, pgramdata, t, tess_flx, tess_flx_err)
 
     filterframe = tk.Frame(plotctl)
     checknoisevar = tk.IntVar(value=0)
@@ -1267,14 +1275,14 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
             bp_flx_err = lcdata[:, 4]
             rp_flx = lcdata[:, 5]
             rp_flx_err = lcdata[:, 6]
-            plotlc_async(queue, gaia_id, plotframe, [t, t, t], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err], nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+            plotlc_async(queue, gaia_id, plotframe, None, [t, t, t], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err], nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
         else:
             t = lcdata[0]
             tess_flx = lcdata[1]
             tess_flx_err = lcdata[2]
             crowdsap = lcdata[3]
             btntip.destroy()
-            plotlc_async(queue, gaia_id, plotframe, t, tess_flx, tess_flx_err, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+            plotlc_async(queue, gaia_id, plotframe, None, t, tess_flx, tess_flx_err, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
 
     redoperiodogrambtn = tk.Button(plotctl, text="Redo Periodogram", command=drawplotwrapper)
 
@@ -1309,7 +1317,7 @@ def getgaiawrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper, queue):
                 notfoundlabel = tk.Label(lcframe, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
                 notfoundlabel.pack()
             else:
-                drawlcplot(lcdata, gaia_id, lcframe, ctlframe, plotwrapper, tiplabel, queue, "GAIA")
+                drawlcplot(lcdata, gaia_id, lcframe, ctlframe, plotwrapper, tiplabel, queue, "GAIA", None)
 
     outerthread = threading.Thread(target=startgaiathread)
     outerthread.start()
@@ -1361,7 +1369,7 @@ def gettesslc(tic):
     try:
         data = Observations.get_product_list(obsTable)
     except InvalidQueryError:
-        return [], [], [], None
+        return None
     times = []
     fluxes = []
     flux_errors = []
@@ -1390,10 +1398,10 @@ def gettesslc(tic):
     if len(times) > 0:
         return np.concatenate(times), np.concatenate(fluxes), np.concatenate(flux_errors), np.mean(np.concatenate(crowdsaps))
     else:
-        return [], [], [], None
+        return None
 
 
-def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, queue):
+def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, lcframe, queue):
     def starttessthread():
         progress_bar = ttk.Progressbar(plotframe, mode='indeterminate', length=300)
         progress_bar.pack()
@@ -1403,18 +1411,19 @@ def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, queue)
         lc_data = async_result.get()
         
         progress_bar.destroy()
-        if len(lc_data[0]) != 0:
-            drawlcplot(lc_data, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, "TESS")
+        if lc_data is not None:
+            print(lc_data)
+            drawlcplot(lc_data, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, "TESS", None)
         else:
             btntip.destroy()
-            notfoundlabel = tk.Label(plotframe, text="No TESS Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel = tk.Label(lcframe, text="No TESS Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
             notfoundlabel.pack()
 
     outerthread = threading.Thread(target=starttessthread)
     outerthread.start()
 
 
-def lcplottab(lcdata, lcframe, name, gaia_id, tic, queue):
+def lcplottab(lcdata, lcframe, name, gaia_id, tic, queue, pgramdata):
     btntip = tk.Label(lcframe, text=f"Use the button to look for a {name} lightcurve!")
     btntip.pack()
 
@@ -1423,19 +1432,22 @@ def lcplottab(lcdata, lcframe, name, gaia_id, tic, queue):
     plotctl = tk.Frame(plotwrapper)
 
     if lcdata is not None:
-        if lcdata.ndim == 1:
-            btntip.destroy()
-            notfoundlabel = tk.Label(lcframe, text=f"No {name} Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
-            notfoundlabel.pack()
+        if not isinstance(lcdata, list):
+            if lcdata.ndim == 1:
+                btntip.destroy()
+                notfoundlabel = tk.Label(lcframe, text=f"No {name} Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+                notfoundlabel.pack()
+            else:
+                drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, name, pgramdata)
         else:
-            drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, name)
+            drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, name, pgramdata)
 
     else:
         if name == "GAIA":
             getgaiabtn = tk.Button(lcframe, text="Get Gaia Data", command=lambda: getgaiawrapper(gaia_id, btntip, plotframe, plotctl, plotwrapper, queue))
             getgaiabtn.pack(side=tk.BOTTOM, anchor="e", padx=10, pady=10)
         elif name == "TESS":
-            gettessbtn = tk.Button(lcframe, text="Get TESS Data", command=lambda: gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, queue))
+            gettessbtn = tk.Button(lcframe, text="Get TESS Data", command=lambda: gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, lcframe, queue))
             gettessbtn.pack(side=tk.BOTTOM, anchor="e", padx=10, pady=10)
             if tic is None:
                 gettessbtn["state"] = "disabled"
@@ -1462,16 +1474,31 @@ def viewlc(window, gaia_id, tic, queue):
     lc_tabs.add(gaialc, text="GAIA LC")
 
     if os.path.isfile(f"output/{gaia_id}/tess_lc.txt"):
-        lcdata = np.genfromtxt(f"output/{gaia_id}/tess_lc.txt", delimiter=",")
-        lcplottab(lcdata, tesslc, "TESS", gaia_id, tic, queue)
+        try:
+            lcdata = np.genfromtxt(f"output/{gaia_id}/tess_lc.txt", delimiter=",")
+            if lcdata.ndim == 2:
+                lcdata = [lcdata[:, 0], lcdata[:, 1], lcdata[:, 2]]
+                pgramdata = np.genfromtxt(f"output/{gaia_id}/tess_lc_periodogram.txt", delimiter=",")
+            else:
+                pgramdata = None
+            lcplottab(lcdata, tesslc, "TESS", gaia_id, tic, queue, pgramdata)
+        except FileNotFoundError:
+            lcplottab(None, tesslc, "TESS", gaia_id, tic, queue, None)
     else:
-        lcplottab(None, tesslc, "TESS", gaia_id, tic, queue)
+        lcplottab(None, tesslc, "TESS", gaia_id, tic, queue, None)
 
     if os.path.isfile(f"output/{gaia_id}/gaia_lc.txt"):
-        lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
-        lcplottab(lcdata, gaialc, "GAIA", gaia_id, tic, queue)
+        try:
+            lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
+            if lcdata.ndim == 2:
+                pgramdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc_periodogram.txt", delimiter=",")
+            else:
+                pgramdata = None
+            lcplottab(lcdata, gaialc, "GAIA", gaia_id, tic, queue, pgramdata)
+        except FileNotFoundError:
+            lcplottab(None, gaialc, "GAIA", gaia_id, tic, queue, None)
     else:
-        lcplottab(None, gaialc, "GAIA", gaia_id, tic, queue)
+        lcplottab(None, gaialc, "GAIA", gaia_id, tic, queue, None)
 
     lc_tabs.pack(fill="both", expand=1)
     fitmodelframe.pack(fill="both", expand=1)
@@ -1734,6 +1761,10 @@ def viewplot(q, n, gaia_id):
 
 
 def phasefold(analysis, gaia_id):
+    # Open new window
+    # Load RV, Gaia and TESS LC, if available.
+    # Plot phasefolded LCs and RV curve on top of each other
+    # Plot RV curve periodogram somewhere??
     pass
 
 
@@ -2550,6 +2581,8 @@ def gui_window(queue, p_queue):
         window.after(10, lambda: update_progress(bars, labels))
 
     def on_closing():
+        if os.path.isdir("./mastDownload/TESS"):
+            shutil.rmtree("./mastDownload/TESS")
         os._exit(0)
 
     window.protocol("WM_DELETE_WINDOW", on_closing)
