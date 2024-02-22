@@ -150,6 +150,7 @@ def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, 
     """
 
     times = np.array(times)
+    mint = np.min(times)
     times_normalized = (times - np.min(times)) % period / period
 
     plt.close()
@@ -238,6 +239,8 @@ def phasefold(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, 
             plt.savefig(custom_saveloc, dpi=300)
     else:
         plt.plot()
+
+    return params, mint
 
 def phasefold_tiny(vels, verrs, times, period, gaia_id, p0=None, predetermined=True, custom_saveloc=None, plot_fit=True, custom_title=None):
     """

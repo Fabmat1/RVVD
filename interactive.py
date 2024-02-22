@@ -1,4 +1,5 @@
 import ast
+import os.path
 import shutil
 
 import astroquery.exceptions
@@ -15,6 +16,7 @@ from multiprocessing.pool import ThreadPool
 from queue import Empty, Queue
 from shutil import which
 from tkinter import ttk, filedialog
+from mpl_scatter_density import ScatterDensityArtist
 
 import matplotlib.pyplot as plt
 from astroquery.mast import Observations
@@ -94,7 +96,6 @@ plot_tooltips = {
 
 
 # from terminedia import ColorGradient
-
 
 
 def save_preferences(pref_dict):
@@ -423,7 +424,7 @@ def master_spectrum_window(queue, gaia_id, sheet=None):
             create_master_window.tk.call('wm', 'iconphoto', create_master_window._w, imgicon)
     except:
         pass
-    create_master_window.title(f"Create master spectrum for {gaia_id}")
+    create_master_window.title(f"Create master spectrum for Gaia DR3 {gaia_id}")
     create_master_window.update_idletasks()  # This forces tkinter to update the window calculations.
     create_master_window.geometry("800x600+0+0")
 
@@ -576,7 +577,7 @@ def update_option_menu(opmenu, variable, options):
 def fitsed(window, gaia_id):
     prefs = load_preferences()
     fitsedwindow = tk.Toplevel(window)
-    fitsedwindow.title(f"Fit SED for {gaia_id}")
+    fitsedwindow.title(f"Fit SED for Gaia DR3 {gaia_id}")
     fitsedwindow.geometry("800x600+0+0")
 
     isisexists = which("isis") is not None
@@ -767,7 +768,7 @@ def create_CMD_plot(gaia_id):
 
 def show_CMD_window(gaia_id):
     cmd_window = tk.Toplevel()
-    cmd_window.title(f"CMD for {gaia_id}")
+    cmd_window.title(f"CMD for Gaia DR3 {gaia_id}")
     cmd_window.geometry("500x500+0+0")
     cmd_frame = tk.Frame(cmd_window)
     fpath = f"{general_config['OUTPUT_DIR']}/{gaia_id}/CMD.png"
@@ -828,7 +829,7 @@ def calcmodel(gaia_id, parameter_list, griddirs, isisdir, fileloc, resolution=3.
 def fitmodel(window, gaia_id):
     prefs = load_preferences()
     fitmodelwindow = tk.Toplevel(window)
-    fitmodelwindow.title(f"Fit Model for {gaia_id}")
+    fitmodelwindow.title(f"Fit Model for Gaia DR3 {gaia_id}")
     fitmodelwindow.geometry("800x600+0+0")
 
     isisexists = which("isis") is not None
@@ -998,7 +999,6 @@ def plotgaialightcurve(resultqueue, gaia_id, pgramdata, times, fluxes, flux_erro
         ps = pgramdata[:, 0]
         pgram = pgramdata[:, 1]
 
-
     periodogram.set_xlabel("Period [d]")
     periodogram.set_ylabel("Relative Power [arb. Unit]")
     periodogram.set_xscale("log")
@@ -1084,7 +1084,10 @@ def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error,
     periodogram.set_xscale("log")
     periodogram.plot(ps, pgram, color="navy", zorder=5)
 
-    maxp = ps[ps < 2][np.argmax(pgram[ps < 2])]
+    if np.any(ps < 2):
+        maxp = ps[ps < 2][np.argmax(pgram[ps < 2])]
+    else:
+        maxp = ps[np.argmax(pgram)]
     periodogram.axvline(maxp, color="darkred", linestyle="--", linewidth=1, zorder=4)
     periodogram.annotate(f'Period peak: {round(maxp, 7)}d', xy=(1, 1), xytext=(-15, -15),
                          xycoords='axes fraction', textcoords='offset points',
@@ -1109,6 +1112,7 @@ def plotlc_async(queue, gaia_id, frame, pgramdata, *args, **kwargs):
     # If gaia lc
     if isinstance(args[0], list):
         def plotlc():
+            plt.close('all')
             resultqueue = man.Queue()
             queue.put(["execute_function", plotgaialightcurve, (resultqueue, gaia_id, pgramdata, *args), kwargs])
             fig, axs = resultqueue.get()
@@ -1123,6 +1127,7 @@ def plotlc_async(queue, gaia_id, frame, pgramdata, *args, **kwargs):
 
     else:
         def plotlc():
+            plt.close('all')
             resultqueue = man.Queue()
             queue.put(["execute_function", plottesslightcurve, (resultqueue, gaia_id, pgramdata, *args), kwargs])
             fig, axs = resultqueue.get()
@@ -1171,7 +1176,7 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
         t = lcdata[0]
         tess_flx = lcdata[1]
         tess_flx_err = lcdata[2]
-#        crowdsap = lcdata[3]
+        #        crowdsap = lcdata[3]
         btntip.destroy()
         plotlc_async(queue, gaia_id, plotframe, pgramdata, t, tess_flx, tess_flx_err)
 
@@ -1280,7 +1285,7 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
             t = lcdata[0]
             tess_flx = lcdata[1]
             tess_flx_err = lcdata[2]
-            crowdsap = lcdata[3]
+            #            crowdsap = lcdata[3]
             btntip.destroy()
             plotlc_async(queue, gaia_id, plotframe, None, t, tess_flx, tess_flx_err, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
 
@@ -1304,7 +1309,7 @@ def getgaiawrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper, queue):
         thread = threading.Thread(target=lambda: getgaialc(gaia_id))
         thread.start()
         lc_exists = thread.join()
-        
+
         progress_bar.destroy()
         lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
         if lc_exists == 1:
@@ -1360,7 +1365,6 @@ def opentessfile(flist):
         return np.array([]), np.array([]), np.array([]), np.nan
 
 
-
 def gettesslc(tic):
     obsTable = Observations.query_criteria(dataproduct_type="timeseries",
                                            project="TESS",
@@ -1409,10 +1413,9 @@ def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, lcfram
         pool = ThreadPool(processes=1)
         async_result = pool.apply_async(gettesslc, (tic,))
         lc_data = async_result.get()
-        
+
         progress_bar.destroy()
         if lc_data is not None:
-            print(lc_data)
             drawlcplot(lc_data, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, "TESS", None)
         else:
             btntip.destroy()
@@ -1458,7 +1461,7 @@ def lcplottab(lcdata, lcframe, name, gaia_id, tic, queue, pgramdata):
 
 def viewlc(window, gaia_id, tic, queue):
     lcwindow = tk.Toplevel(window)
-    lcwindow.title(f"View Lightcurve for {gaia_id}")
+    lcwindow.title(f"View Lightcurve for Gaia DR3 {gaia_id}")
     lcwindow.geometry("800x600+0+0")
     if os.name == 'nt':
         lcwindow.state('zoomed')
@@ -1513,7 +1516,7 @@ def savenote(gaia_id, text, window=None):
 
 def viewnote(window, gaia_id):
     notewindow = tk.Toplevel(window)
-    notewindow.title(f"Note for {gaia_id}")
+    notewindow.title(f"Note for Gaia DR3 {gaia_id}")
     notewindow.geometry("800x600+0+0")
 
     noteframe = tk.Frame(notewindow)
@@ -1599,6 +1602,7 @@ def truncate_and_align_arrays(wls, flxs, flx_stds):
 
 
 def simpleplot(x, y):
+    plt.close('all')
     plt.plot(x, y)
     plt.tight_layout()
     plt.show()
@@ -1760,15 +1764,227 @@ def viewplot(q, n, gaia_id):
            {"ind": str(gaia_id), "use_ind_as_sid": True, "normalized": n}])
 
 
+def phasefoldplot(resultqueue, offset, amplitude, nplot, data, tessbin=100):
+    fig, axs = plt.subplots(nrows=nplot, ncols=1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8, sharex=True)
+
+    for ind, [d, a] in enumerate(zip(data, axs)):
+        if d["name"] == "RV":
+            a.set_ylabel("Radial Velocity [km/s]")
+            sinspace = np.linspace(-1, 1, 1000)
+            a.plot(sinspace, offset + amplitude * np.sin(sinspace * 2 * np.pi), color="darkred", zorder=3)
+        else:
+            a.set_ylabel("Relative Flux [arb. unit]")
+        if ind == len(axs) - 1:
+            a.set_xlabel("Period")
+        else:
+            a.set_xticklabels([])
+        if d["name"] == "TESS":
+            a.scatter(d["time"], d["flux"], color="lightgray", zorder=5, alpha=0.1)
+            a.errorbar(d["time"], d["flux"], yerr=d["flux_error"], linestyle='', color="lightgray", capsize=3, zorder=4, alpha=0.01)
+            mask = np.argsort(d["time"])
+
+            d["time"] = d["time"][mask]
+            d["flux"] = d["flux"][mask]
+            d["flux_error"] = d["flux_error"][mask]
+
+            if tessbin % 2 != 0:
+                tessbin += 1
+            a.plot(d["time"][int(tessbin/2):-int(tessbin/2-1)], np.convolve(d["flux"], np.ones(tessbin) / tessbin, mode='valid'), color="darkred", zorder=5)
+        elif d["name"] == "RV":
+            a.scatter(d["time"], d["flux"], color="navy", zorder=5)
+            a.errorbar(d["time"], d["flux"], yerr=d["flux_error"], linestyle='', color="navy", capsize=3, zorder=4)
+        else:
+            for c, i in zip(["darkgreen", "navy", "darkred"], range(3)):
+                a.scatter(d["time"], d[f"flux{i}"], color=c, zorder=5)
+                a.errorbar(d["time"], d[f"flux{i}"], yerr=d[f"flux_error{i}"], linestyle='', color=c, capsize=3, zorder=4)
+        a.legend([d["name"]], loc="upper right")
+    fig.subplots_adjust(wspace=0)
+    resultqueue.put(fig)
+
+
+def phasefoldplot_wrapper(plotframe,
+                          period, shift, offset, amplitude,
+                          vtimes, vels, verrs,
+                          gtimes, ggflux, ggerr, gbpflux, gbperr, grpflux, grperr,
+                          ttimes, tflux, terr, *args, **kwargs):
+    if period is None:
+        period = 1
+    for widget in plotframe.winfo_children():
+        widget.destroy()
+    datalist = []
+    vtimes = (((vtimes - np.min(vtimes)) % period) / period) + shift
+    vtimes[vtimes > 1] -= 1
+    datalist.append({
+        "name": "RV",
+        "time": np.concatenate([vtimes - 1, vtimes]),
+        "flux": np.concatenate([vels, vels]),
+        "flux_error": np.concatenate([verrs, verrs]),
+
+    })
+
+    if gtimes is not None:
+        gtimes = (((gtimes - np.nanmin(gtimes)) % period) / period) + shift
+        gtimes[gtimes > 1] -= 1
+        datalist.append({
+            "name": "GAIA",
+            "time": np.concatenate([gtimes - 1, gtimes]),
+            "flux0": np.concatenate([ggflux, ggflux]),
+            "flux_error0": np.concatenate([ggerr, ggerr]),
+            "flux1": np.concatenate([gbpflux, gbpflux]),
+            "flux_error1": np.concatenate([gbperr, gbperr]),
+            "flux2": np.concatenate([grpflux, grpflux]),
+            "flux_error2": np.concatenate([grperr, grperr]),
+        })
+
+    if ttimes is not None:
+        ttimes = (((ttimes - np.min(ttimes)) % period) / period) + shift
+        ttimes[ttimes > 1] -= 1
+        datalist.append({
+            "name": "TESS",
+            "time": np.concatenate([ttimes - 1, ttimes]),
+            "flux": np.concatenate([tflux, tflux]),
+            "flux_error": np.concatenate([terr, terr]),
+        })
+
+    def plotpffold():
+        plt.close('all')
+        resultqueue = man.Queue()
+        queue.put(["execute_function", phasefoldplot, (resultqueue, offset, amplitude, len(datalist), datalist), kwargs])
+        fig = resultqueue.get()
+        canvas = FigureCanvasTkAgg(fig, master=plotframe)
+        canvas.draw()
+        canvas.get_tk_widget().pack()
+        toolbar = NavigationToolbar2Tk(canvas, plotframe)
+        toolbar.update()
+        canvas.get_tk_widget().pack()
+        plt.close(fig)
+
+    thread = threading.Thread(target=plotpffold)
+    thread.start()
+
+
 def phasefold(analysis, gaia_id):
-    # Open new window
+    pf_window = tk.Toplevel()
+    try:
+        if os.name == "nt":
+            pf_window.iconbitmap("favicon.ico")
+        else:
+            imgicon = ImageTk.PhotoImage(Image.open("favicon.ico"))
+            pf_window.tk.call('wm', 'iconphoto', pf_window._w, imgicon)
+    except:
+        pass
+    pf_window.title(f"Phasefolding for Gaia DR3 {gaia_id}")
+    pf_window.update_idletasks()  # This forces tkinter to update the window calculations.
+    pf_window.geometry("800x600+0+0")
+    if os.name == 'nt':
+        pf_window.state('zoomed')
+    elif os.name == "posix":
+        pf_window.attributes('-zoomed', True)
+
+    plotwrapper = tk.Frame(pf_window)
+    plotframe = tk.Frame(plotwrapper)
+    plotctl = tk.Frame(plotwrapper)
+
     # Load RV, Gaia and TESS LC, if available.
-    # Plot phasefolded LCs and RV curve on top of each other
-    # Plot RV curve periodogram somewhere??
-    pass
+    rvdata = pd.read_csv(f"output/{gaia_id}/RV_variation.csv")
+    vels = rvdata["culum_fit_RV"].to_numpy()
+    verrs = rvdata["u_culum_fit_RV"].to_numpy()
+    mjd = rvdata["mjd"].to_numpy()
+
+    if os.path.isfile(f"output/{gaia_id}/gaia_lc.txt") and os.path.isfile(f"output/{gaia_id}/gaia_lc_periodogram.txt"):
+        gaia_lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
+        # "TimeBP", "FG", "e_FG", "FBP", "e_FBP", "FRP", "e_FRP"
+        gaia_t = gaia_lcdata[:, 0]
+        gaia_g_flx = gaia_lcdata[:, 1]
+        gaia_g_flx_err = gaia_lcdata[:, 2]
+        gaia_bp_flx = gaia_lcdata[:, 3]
+        gaia_bp_flx_err = gaia_lcdata[:, 4]
+        gaia_rp_flx = gaia_lcdata[:, 5]
+        gaia_rp_flx_err = gaia_lcdata[:, 6]
+
+        gaia_g_flx_err /= np.nanmedian(gaia_g_flx)
+        gaia_g_flx /= np.nanmedian(gaia_g_flx)
+        gaia_bp_flx_err /= np.nanmedian(gaia_bp_flx)
+        gaia_bp_flx /= np.nanmedian(gaia_bp_flx)
+        gaia_rp_flx_err /= np.nanmedian(gaia_rp_flx)
+        gaia_rp_flx /= np.nanmedian(gaia_rp_flx)
+
+        gaia_pgram_data = np.genfromtxt(f"output/{gaia_id}/gaia_lc_periodogram.txt", delimiter=",")
+        gaia_periods = gaia_pgram_data[:, 0]
+        gaia_power = gaia_pgram_data[:, 1]
+
+        gaia_maxp = gaia_periods[np.argmax(gaia_power)]
+        del gaia_lcdata, gaia_pgram_data
+    else:
+        gaia_t = None
+        gaia_g_flx = None
+        gaia_g_flx_err = None
+        gaia_bp_flx = None
+        gaia_bp_flx_err = None
+        gaia_rp_flx = None
+        gaia_rp_flx_err = None
+
+        gaia_periods = None
+        gaia_power = None
+        gaia_maxp = None
+
+    if os.path.isfile(f"output/{gaia_id}/tess_lc.txt") and os.path.isfile(f"output/{gaia_id}/tess_lc_periodogram.txt"):
+        tess_lcdata = np.genfromtxt(f"output/{gaia_id}/tess_lc.txt", delimiter=",")
+        tess_t = tess_lcdata[:, 0]
+        tess_flx = tess_lcdata[:, 1]
+        tess_flx_err = tess_lcdata[:, 2]
+
+        tess_pgram_data = np.genfromtxt(f"output/{gaia_id}/tess_lc_periodogram.txt", delimiter=",")
+        tess_periods = tess_pgram_data[:, 0]
+        tess_power = tess_pgram_data[:, 1]
+        tess_maxp = tess_periods[np.argmax(tess_power)]
+
+        del tess_lcdata, tess_pgram_data
+    else:
+        tess_t = None
+        tess_flx = None
+        tess_flx_err = None
+        tess_periods = None
+        tess_power = None
+        tess_maxp = None
+
+    startperiod = tess_maxp if tess_maxp is not None else 1
+    phasefoldplot_wrapper(plotframe, startperiod, 0, np.mean(vels), np.ptp(vels) / 2,
+                          mjd, vels, verrs,
+                          gaia_t, gaia_g_flx, gaia_g_flx_err,
+                          gaia_bp_flx, gaia_bp_flx_err, gaia_rp_flx, gaia_rp_flx_err,
+                          tess_t, tess_flx, tess_flx_err)
+
+    peaksource_selector_frame = tk.Frame(plotctl)
+    peaksource_label = tk.Label(peaksource_selector_frame, text="Get Period from ")
+    peaksource_var = tk.StringVar(value="TESS")
+    peaksource_selector = tk.OptionMenu(peaksource_selector_frame, peaksource_var, "RV", "TESS", "GAIA", "Slider")
+    peaksource_label.pack(side=tk.LEFT)
+    peaksource_selector.pack(side=tk.LEFT)
+    peaksource_selector_frame.grid(column=0, row=0, sticky="w")
+
+    tessbin_frame = tk.Frame(plotctl)
+    tessbin_label = tk.Label(tessbin_frame, text="TESS binning ")
+    tessbin_var = tk.StringVar(value="100")
+    tessbin = tk.Entry(tessbin_frame, textvariable=tessbin_var)
+    tessbin_label.pack(side=tk.LEFT)
+    tessbin.pack(side=tk.LEFT)
+    tessbin_frame.grid(column=0, row=1, sticky="w")
+
+    refold = tk.Button(plotctl, text="Redo Phasefold", command=lambda: phasefoldplot_wrapper(plotframe, {"RV": None, "GAIA": gaia_maxp, "TESS": tess_maxp, "Slider": None}[peaksource_var.get()], 0, np.mean(vels), np.ptp(vels) / 2,
+                                                                                             mjd, vels, verrs,
+                                                                                             gaia_t, gaia_g_flx, gaia_g_flx_err,
+                                                                                             gaia_bp_flx, gaia_bp_flx_err, gaia_rp_flx, gaia_rp_flx_err,
+                                                                                             tess_t, tess_flx, tess_flx_err, tessbin=int(tessbin_var.get())))
+    refold.grid(column=0, row=2, sticky="se")
+
+    plotframe.grid(row=0, column=0, pady=10, padx=10)
+    plotctl.grid(row=0, column=1, sticky="n", pady=10, padx=10)
+    plotwrapper.pack()
 
 
 def galacticorbit(parameters, d):
+    plt.close('all')
     ra = parameters["ra"]
     dec = parameters["dec"]
 
@@ -1791,6 +2007,8 @@ def galacticorbit(parameters, d):
     plt.grid(True, linestyle="--", color="lightgray")
     plt.ylabel("z [kpc]")
     plt.xlabel("R [kpc]")
+    plt.xlim(0, 15)
+    plt.ylim(-5, 5)
     plt.tight_layout()
     plt.show()
 
@@ -1897,7 +2115,6 @@ def analysis_tab(analysis, queue):
                 sp[1] = int(sp[1])
         except:
             pass
-        print(sp)
         return sp
 
     def update_sheet(*args):
@@ -2095,7 +2312,7 @@ def analysis_tab(analysis, queue):
                 detail_window.tk.call('wm', 'iconphoto', detail_window._w, imgicon)
         except:
             pass
-        detail_window.title(f"Detail View for {gaia_id}")
+        detail_window.title(f"Detail View for Gaia DR3 {gaia_id}")
         detail_window.update_idletasks()  # This forces tkinter to update the window calculations.
         detail_window.geometry("800x600+0+0")
         if os.name == 'nt':
@@ -2613,4 +2830,3 @@ if __name__ == "__main__":
                 item[1](*item[2])
             else:
                 item[1](*item[2], **item[3])
-
