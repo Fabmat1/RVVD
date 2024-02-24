@@ -1,7 +1,9 @@
 import ast
 import os.path
 import shutil
+import sys
 
+from ztfquery import lightcurve
 import astroquery.exceptions
 import itertools
 import json
@@ -18,6 +20,7 @@ from shutil import which
 from tkinter import ttk, filedialog
 from mpl_scatter_density import ScatterDensityArtist
 
+import _thread
 import matplotlib.pyplot as plt
 from astroquery.mast import Observations
 from astroquery.exceptions import InvalidQueryError
@@ -1144,6 +1147,39 @@ def plotlc_async(queue, gaia_id, frame, pgramdata, *args, **kwargs):
     thread.start()
 
 
+# def getzwickylc(gaia_id):
+#     def magtoflux(mag):
+#         return 1 / (2.5 ** mag)
+#
+#     def magerr_to_fluxerr(mag, magerr):
+#         return np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag - magerr))), np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag + magerr)))
+#
+#     gaia_id = 3155626997678101248
+#
+#     coord = SkyCoord.from_name(f'GAIA DR3 {gaia_id}')
+#
+#     lcq = lightcurve.LCQuery().from_position((coord.ra * u.deg).value, (coord.dec * u.deg).value, 0.5)
+#
+#     gdata = lcq.data[lcq.data["filtercode"] == "zg"]
+#     idata = lcq.data[lcq.data["filtercode"] == "zi"]
+#     rdata = lcq.data[lcq.data["filtercode"] == "zr"]
+#
+#     for data, color in zip([gdata, idata, rdata], ["green", "darkred", "red"]):
+#         dates = data["mjd"].to_numpy()
+#         mags = data["mag"].to_numpy()
+#         mag_err = data["magerr"].to_numpy()
+#
+#         flx = magtoflux(mags)
+#         flx_err = magerr_to_fluxerr(mags, mag_err)
+#
+#         flxmean = flx.mean()
+#         flx /= flxmean
+#         flx_err /= flxmean
+#
+#         plt.scatter(dates, flx, color=color)
+#         plt.errorbar(dates, flx, yerr=(flx_err[0], flx_err[1]), capsize=3, color=color, linestyle='')
+
+
 def getgaialc(gaia_id):
     photquery = Vizier(columns=["Source", "TimeBP", "FG", "e_FG", "FBP", "e_FBP", "FRP", "e_FRP"]).query_region(SkyCoord.from_name(f'GAIA DR3 {gaia_id}'),
                                                                                                                 radius=1 * u.arcsec,
@@ -1764,14 +1800,19 @@ def viewplot(q, n, gaia_id):
            {"ind": str(gaia_id), "use_ind_as_sid": True, "normalized": n}])
 
 
-def phasefoldplot(resultqueue, offset, amplitude, nplot, data, tessbin=100):
+def phsin(x, period, offset, amplitude, shift):
+    return offset + amplitude * np.sin((x-shift) * 2 * np.pi / period)
+
+
+def phasefoldplot(resultqueue, offset, amplitude, shift, nplot, data, tessbin=100, **kwargs):
     fig, axs = plt.subplots(nrows=nplot, ncols=1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8, sharex=True)
 
     for ind, [d, a] in enumerate(zip(data, axs)):
         if d["name"] == "RV":
             a.set_ylabel("Radial Velocity [km/s]")
             sinspace = np.linspace(-1, 1, 1000)
-            a.plot(sinspace, offset + amplitude * np.sin(sinspace * 2 * np.pi), color="darkred", zorder=3)
+            a.grid(True)
+            a.plot(sinspace, phsin(sinspace, 1, offset, amplitude, shift), color="darkred", zorder=3)
         else:
             a.set_ylabel("Relative Flux [arb. unit]")
         if ind == len(axs) - 1:
@@ -1779,8 +1820,8 @@ def phasefoldplot(resultqueue, offset, amplitude, nplot, data, tessbin=100):
         else:
             a.set_xticklabels([])
         if d["name"] == "TESS":
-            a.scatter(d["time"], d["flux"], color="lightgray", zorder=5, alpha=0.1)
-            a.errorbar(d["time"], d["flux"], yerr=d["flux_error"], linestyle='', color="lightgray", capsize=3, zorder=4, alpha=0.01)
+            a.scatter(d["time"][::100], d["flux"][::100], color="lightgray", zorder=5, alpha=0.1)
+            a.errorbar(d["time"][::100], d["flux"][::100], yerr=d["flux_error"][::100], linestyle='', color="lightgray", capsize=3, zorder=4, alpha=0.01)
             mask = np.argsort(d["time"])
 
             d["time"] = d["time"][mask]
@@ -1789,7 +1830,9 @@ def phasefoldplot(resultqueue, offset, amplitude, nplot, data, tessbin=100):
 
             if tessbin % 2 != 0:
                 tessbin += 1
-            a.plot(d["time"][int(tessbin/2):-int(tessbin/2-1)], np.convolve(d["flux"], np.ones(tessbin) / tessbin, mode='valid'), color="darkred", zorder=5)
+            meanfilter = np.convolve(d["flux"], np.ones(tessbin) / tessbin, mode='valid')
+            a.plot(d["time"][int(tessbin / 2):-int(tessbin / 2 - 1)], meanfilter, color="darkred", zorder=5)
+            a.set_ylim(meanfilter.min() - 0.05 * np.ptp(meanfilter), meanfilter.max() + 0.05 * np.ptp(meanfilter))
         elif d["name"] == "RV":
             a.scatter(d["time"], d["flux"], color="navy", zorder=5)
             a.errorbar(d["time"], d["flux"], yerr=d["flux_error"], linestyle='', color="navy", capsize=3, zorder=4)
@@ -1809,21 +1852,41 @@ def phasefoldplot_wrapper(plotframe,
                           ttimes, tflux, terr, *args, **kwargs):
     if period is None:
         period = 1
+    elif not isinstance(period, float):
+        period = period.get()
     for widget in plotframe.winfo_children():
         widget.destroy()
+
+    if kwargs["finetune"]:
+        try:
+            p_amt_whole_phase = 1 / (2 * np.max(np.diff(vtimes)))
+            params, errs = curve_fit(phsin, vtimes, vels,
+                                     [period, offset, amplitude, shift],
+                                     verrs, maxfev=100000,
+                                     bounds=[
+                                         [period - p_amt_whole_phase, offset*.5, amplitude*.5, -1],
+                                         [period + p_amt_whole_phase, offset*2, amplitude*2, 2]
+                                     ])
+            period, offset, amplitude, shift = params
+            if shift > 1:
+                shift -= 1
+            elif shift < 0:
+                shift += 1
+        except RuntimeError as e:
+            pass
+
     datalist = []
-    vtimes = (((vtimes - np.min(vtimes)) % period) / period) + shift
+    vtimes = (((vtimes - np.min(vtimes)) % period) / period)
     vtimes[vtimes > 1] -= 1
     datalist.append({
         "name": "RV",
         "time": np.concatenate([vtimes - 1, vtimes]),
         "flux": np.concatenate([vels, vels]),
         "flux_error": np.concatenate([verrs, verrs]),
-
     })
 
     if gtimes is not None:
-        gtimes = (((gtimes - np.nanmin(gtimes)) % period) / period) + shift
+        gtimes = (((gtimes - np.nanmin(gtimes)) % period) / period)
         gtimes[gtimes > 1] -= 1
         datalist.append({
             "name": "GAIA",
@@ -1837,7 +1900,7 @@ def phasefoldplot_wrapper(plotframe,
         })
 
     if ttimes is not None:
-        ttimes = (((ttimes - np.min(ttimes)) % period) / period) + shift
+        ttimes = (((ttimes - np.min(ttimes)) % period) / period)
         ttimes[ttimes > 1] -= 1
         datalist.append({
             "name": "TESS",
@@ -1849,7 +1912,7 @@ def phasefoldplot_wrapper(plotframe,
     def plotpffold():
         plt.close('all')
         resultqueue = man.Queue()
-        queue.put(["execute_function", phasefoldplot, (resultqueue, offset, amplitude, len(datalist), datalist), kwargs])
+        queue.put(["execute_function", phasefoldplot, (resultqueue, offset, amplitude, shift, len(datalist), datalist), kwargs])
         fig = resultqueue.get()
         canvas = FigureCanvasTkAgg(fig, master=plotframe)
         canvas.draw()
@@ -1946,14 +2009,16 @@ def phasefold(analysis, gaia_id):
         tess_flx_err = None
         tess_periods = None
         tess_power = None
-        tess_maxp = None
+        tess_maxp = 1
 
     startperiod = tess_maxp if tess_maxp is not None else 1
     phasefoldplot_wrapper(plotframe, startperiod, 0, np.mean(vels), np.ptp(vels) / 2,
                           mjd, vels, verrs,
                           gaia_t, gaia_g_flx, gaia_g_flx_err,
                           gaia_bp_flx, gaia_bp_flx_err, gaia_rp_flx, gaia_rp_flx_err,
-                          tess_t, tess_flx, tess_flx_err)
+                          tess_t, tess_flx, tess_flx_err, finetune=False)
+
+    periods_dict = {"RV": None, "GAIA": gaia_maxp, "TESS": tess_maxp}
 
     peaksource_selector_frame = tk.Frame(plotctl)
     peaksource_label = tk.Label(peaksource_selector_frame, text="Get Period from ")
@@ -1971,13 +2036,100 @@ def phasefold(analysis, gaia_id):
     tessbin.pack(side=tk.LEFT)
     tessbin_frame.grid(column=0, row=1, sticky="w")
 
-    refold = tk.Button(plotctl, text="Redo Phasefold", command=lambda: phasefoldplot_wrapper(plotframe, {"RV": None, "GAIA": gaia_maxp, "TESS": tess_maxp, "Slider": None}[peaksource_var.get()], 0, np.mean(vels), np.ptp(vels) / 2,
+    p_amt_whole_phase = 5 / (2 * np.max(np.diff(mjd)))
+    pslider_frame = tk.Frame(plotctl)
+    pslider_label = tk.Label(pslider_frame, text="Modify Period:")
+    pslider_slider = tk.Scale(pslider_frame,
+                              from_=tess_maxp + p_amt_whole_phase,
+                              to=tess_maxp - p_amt_whole_phase,
+                              resolution=p_amt_whole_phase / 10000,
+                              tickinterval=p_amt_whole_phase / 2,
+                              length=300,
+                              orient=tk.HORIZONTAL)
+    pslider_slider.set(periods_dict[peaksource_var.get()])
+    pslider_label.grid(column=0, row=0)
+    pslider_slider.grid(column=0, row=1)
+    pslider_frame.grid(column=0, row=4, sticky="w")
+
+    ampslider_frame = tk.Frame(plotctl)
+    ampslider_label = tk.Label(ampslider_frame, text="Modify Half-Amplitude:")
+    ampslider_slider = tk.Scale(ampslider_frame,
+                                from_=10,
+                                to=250,
+                                resolution=1,
+                                tickinterval=100,
+                                length=300,
+                                orient=tk.HORIZONTAL)
+    ampslider_slider.set(np.ptp(vels)/2)
+    ampslider_label.grid(column=0, row=0)
+    ampslider_slider.grid(column=0, row=1)
+    ampslider_frame.grid(column=0, row=5, sticky="w")
+
+    offslider_frame = tk.Frame(plotctl)
+    offslider_label = tk.Label(offslider_frame, text="Modify Offset:")
+    offslider_slider = tk.Scale(offslider_frame,
+                                from_=-250,
+                                to=250,
+                                resolution=1,
+                                tickinterval=100,
+                                length=300,
+                                orient=tk.HORIZONTAL)
+    offslider_slider.set(np.mean(vels))
+    offslider_label.grid(column=0, row=0)
+    offslider_slider.grid(column=0, row=1)
+    offslider_frame.grid(column=0, row=6, sticky="w")
+
+    shiftslider_frame = tk.Frame(plotctl)
+    shiftslider_label = tk.Label(shiftslider_frame, text="Modify Shift:")
+    shiftslider_slider = tk.Scale(shiftslider_frame,
+                                  from_=0,
+                                  to=1,
+                                  resolution=1/100,
+                                  tickinterval=0.25,
+                                  length=300,
+                                  orient=tk.HORIZONTAL)
+    shiftslider_label.grid(column=0, row=0)
+    shiftslider_slider.grid(column=0, row=1)
+    shiftslider_frame.grid(column=0, row=7, sticky="w")
+
+    periods_dict["Slider"] = pslider_slider
+
+    ftvar = tk.IntVar(value=0)
+    finetune = tk.Checkbutton(plotctl, variable=ftvar, text="Finetune RV fit")
+    finetune.grid(column=0, row=8)
+
+    refold = tk.Button(plotctl, text="Redo Phasefold", command=lambda: phasefoldplot_wrapper(plotframe, periods_dict[peaksource_var.get()], shiftslider_slider.get(), offslider_slider.get(), ampslider_slider.get(),
                                                                                              mjd, vels, verrs,
                                                                                              gaia_t, gaia_g_flx, gaia_g_flx_err,
                                                                                              gaia_bp_flx, gaia_bp_flx_err, gaia_rp_flx, gaia_rp_flx_err,
-                                                                                             tess_t, tess_flx, tess_flx_err, tessbin=int(tessbin_var.get())))
-    refold.grid(column=0, row=2, sticky="se")
+                                                                                             tess_t, tess_flx, tess_flx_err, tessbin=int(tessbin_var.get()),
+                                                                                             finetune=bool(ftvar.get())))
+    refold.grid(column=0, row=10, sticky="se")
 
+    def loadsave(isisdir):
+        if isisdir is None:
+            return
+        pf_window.wm_attributes('-topmost', 1)
+        folder_selected = filedialog.askdirectory(initialdir=f"./output/{gaia_id}", parent=pf_window, title="Load Save")
+
+        phasefoldplot_wrapper(plotframe, periods_dict[peaksource_var.get()], shiftslider_slider.get(), offslider_slider.get(), ampslider_slider.get(),
+                              mjd, vels, verrs,
+                              gaia_t, gaia_g_flx, gaia_g_flx_err,
+                              gaia_bp_flx, gaia_bp_flx_err, gaia_rp_flx, gaia_rp_flx_err,
+                              tess_t, tess_flx, tess_flx_err, tessbin=int(tessbin_var.get()),
+                              finetune=bool(ftvar.get()))
+
+    # def savesave(savename):
+    #     savearr = np.array([period])
+
+    saveloadframe = tk.Frame(plotctl)
+    loadlabel = tk.Button(text="Load previous fit:")
+    savelabel = tk.Label(text="Save name:")
+
+    saveloadframe.grid(column=0, row=12)
+
+
+    plotctl.grid_configure(rowspan=2)
     plotframe.grid(row=0, column=0, pady=10, padx=10)
     plotctl.grid(row=0, column=1, sticky="n", pady=10, padx=10)
     plotwrapper.pack()
