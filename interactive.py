@@ -1147,46 +1147,53 @@ def plotlc_async(queue, gaia_id, frame, pgramdata, *args, **kwargs):
     thread.start()
 
 
-# def getzwickylc(gaia_id):
-#     def magtoflux(mag):
-#         return 1 / (2.5 ** mag)
-#
-#     def magerr_to_fluxerr(mag, magerr):
-#         return np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag - magerr))), np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag + magerr)))
-#
-#     gaia_id = 3155626997678101248
-#
-#     coord = SkyCoord.from_name(f'GAIA DR3 {gaia_id}')
-#
-#     lcq = lightcurve.LCQuery().from_position((coord.ra * u.deg).value, (coord.dec * u.deg).value, 0.5)
-#
-#     gdata = lcq.data[lcq.data["filtercode"] == "zg"]
-#     idata = lcq.data[lcq.data["filtercode"] == "zi"]
-#     rdata = lcq.data[lcq.data["filtercode"] == "zr"]
-#
-#     for data, color in zip([gdata, idata, rdata], ["green", "darkred", "red"]):
-#         dates = data["mjd"].to_numpy()
-#         mags = data["mag"].to_numpy()
-#         mag_err = data["magerr"].to_numpy()
-#
-#         flx = magtoflux(mags)
-#         flx_err = magerr_to_fluxerr(mags, mag_err)
-#
-#         flxmean = flx.mean()
-#         flx /= flxmean
-#         flx_err /= flxmean
-#
-#         plt.scatter(dates, flx, color=color)
-#         plt.errorbar(dates, flx, yerr=(flx_err[0], flx_err[1]), capsize=3, color=color, linestyle='')
+def getzwickylc(gaia_id):
+    def magtoflux(mag):
+        return 1 / (2.5 ** mag)
+
+    def magerr_to_fluxerr(mag, magerr):
+        return np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag - magerr))), np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag + magerr)))
+
+    gaia_id = 3155626997678101248
+
+    coord = SkyCoord.from_name(f'GAIA DR3 {gaia_id}')
+
+    lcq = lightcurve.LCQuery().from_position((coord.ra * u.deg).value, (coord.dec * u.deg).value, 0.5)
+
+    gdata = lcq.data[lcq.data["filtercode"] == "zg"]
+    idata = lcq.data[lcq.data["filtercode"] == "zi"]
+    rdata = lcq.data[lcq.data["filtercode"] == "zr"]
+
+    for data, color in zip([gdata, idata, rdata], ["green", "darkred", "red"]):
+        dates = data["mjd"].to_numpy()
+        mags = data["mag"].to_numpy()
+        mag_err = data["magerr"].to_numpy()
+
+        flx = magtoflux(mags)
+        flx_err = magerr_to_fluxerr(mags, mag_err)
+
+        flxmean = flx.mean()
+        flx /= flxmean
+        flx_err /= flxmean
+
+        plt.scatter(dates, flx, color=color)
+        plt.errorbar(dates, flx, yerr=(flx_err[0], flx_err[1]), capsize=3, color=color, linestyle='')
 
 
 def getgaialc(gaia_id):
-    photquery = Vizier(columns=["Source", "TimeBP", "FG", "e_FG", "FBP", "e_FBP", "FRP", "e_FRP"]).query_region(SkyCoord.from_name(f'GAIA DR3 {gaia_id}'),
-                                                                                                                radius=1 * u.arcsec,
-                                                                                                                catalog='I/355/epphot')
+    photquery = Vizier(
+        columns=["Source", "TimeG", "TimeBP", "TimeRP", "FG", "FBP", "FRP", "e_FG", "e_FBP", "e_FRP"]
+    ).query_region(
+        SkyCoord.from_name(f'GAIA DR3 {gaia_id}'),
+        radius=1 * u.arcsec,
+        catalog='I/355/epphot'  # I/355/epphot is the designation for the Gaia photometric catalogue on Vizier
+    )
+
     if len(photquery) != 0:
         table = photquery[0].to_pandas()
+        table.columns = ["Source", "TimeG", "TimeBP", "TimeRP", "FG", "FBP", "FRP", "e_FG", "e_FBP", "e_FRP"]
         table = table[table["Source"] == gaia_id]
+        table = table.drop(columns=["Source"])
 
         table.to_csv(f"output/{gaia_id}/gaia_lc.txt", index=False, columns=table.columns[1:], header=False)
         return True
@@ -1199,16 +1206,18 @@ def getgaialc(gaia_id):
 def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, lctype, pgramdata):
     if lctype == "GAIA":
         lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
-        t = lcdata[:, 0]
-        g_flx = lcdata[:, 1]
-        g_flx_err = lcdata[:, 2]
-        bp_flx = lcdata[:, 3]
-        bp_flx_err = lcdata[:, 4]
+        tg = lcdata[:, 0]
+        g_flx = lcdata[:, 3]
+        g_flx_err = lcdata[:, 6]
+        bpt = lcdata[:, 1]
+        bp_flx = lcdata[:, 4]
+        bp_flx_err = lcdata[:, 7]
+        rpt = lcdata[:, 1]
         rp_flx = lcdata[:, 5]
-        rp_flx_err = lcdata[:, 6]
+        rp_flx_err = lcdata[:, 8]
         btntip.destroy()
-        plotlc_async(queue, gaia_id, plotframe, pgramdata, [t, t, t], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
-    else:
+        plotlc_async(queue, gaia_id, plotframe, pgramdata, [tg, bpt, rpt], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
+    elif lctype == "TESS":
         t = lcdata[0]
         tess_flx = lcdata[1]
         tess_flx_err = lcdata[2]
@@ -1348,7 +1357,7 @@ def getgaiawrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper, queue):
 
         progress_bar.destroy()
         lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
-        if lc_exists == 1:
+        if not lc_exists:
             tiplabel.destroy()
             notfoundlabel = tk.Label(lcframe, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
             notfoundlabel.pack()
