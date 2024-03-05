@@ -422,6 +422,7 @@ def overview(restable, catalogue):
             catrow = catalogue.loc[catalogue["source_id"] == row["source_id"]]
             name = catrow["name"].iloc[0]
             name = "" if name == "-" else name
+            name = "" if name is None else name
             n += 1
 
             minusstring = ""

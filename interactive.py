@@ -1,6 +1,8 @@
 import ast
 import os.path
 import shutil
+import traceback
+
 import sys
 
 from ztfquery import lightcurve
@@ -409,7 +411,7 @@ def showimages_sed(gaia_id, frame, window):
     setCanvasSize(frame, window)
 
 
-def master_spectrum_window(queue, gaia_id, sheet=None):
+def master_spectrum_window(window, queue, gaia_id, sheet=None):
     if sheet is not None:
         gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
 
@@ -418,7 +420,7 @@ def master_spectrum_window(queue, gaia_id, sheet=None):
     assoc_files = object_list[object_list["source_id"] == gaia_id].iloc[0]["associated_files"].split(";")
     assoc_files = [f.replace(".fits", "") for f in assoc_files]
 
-    create_master_window = tk.Toplevel()
+    create_master_window = tk.Toplevel(window)
     try:
         if os.name == "nt":
             create_master_window.iconbitmap("favicon.ico")
@@ -769,8 +771,8 @@ def create_CMD_plot(gaia_id):
     plt.close()
 
 
-def show_CMD_window(gaia_id):
-    cmd_window = tk.Toplevel()
+def show_CMD_window(analysis, gaia_id):
+    cmd_window = tk.Toplevel(analysis)
     cmd_window.title(f"CMD for Gaia DR3 {gaia_id}")
     cmd_window.geometry("500x500+0+0")
     cmd_frame = tk.Frame(cmd_window)
@@ -893,7 +895,7 @@ def fitmodel(window, gaia_id):
 
     # TODO: enable selecting different master spectra
     if not os.path.isfile(f"master_spectra/{gaia_id}_stacked.txt"):
-        create_master_spec_btn = tk.Button(fitinputframe, text="Create master spectrum", command=lambda: master_spectrum_window(queue, gaia_id))
+        create_master_spec_btn = tk.Button(fitinputframe, text="Create master spectrum", command=lambda: master_spectrum_window(window, queue, gaia_id))
         create_master_spec_btn.pack(anchor="se", padx=5, pady=5)
 
     for i, (label_name, entry, freezebox) in enumerate(zip(star_one_label_names, star_one_inputs, star_one_freezeboxes)):
@@ -948,9 +950,12 @@ def fitmodel(window, gaia_id):
     fitmodelframe.pack(fill="both", expand=1)
 
 
-def plotgaialightcurve(resultqueue, gaia_id, pgramdata, times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
+def plotgzflightcurve(resultqueue, gaia_id, pgramdata, lctype, bandnames, bandcolors, times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
     # the figure that will contain the plot
     fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8)
+
+    if nsamp <= 5:
+        nsamp = 5
 
     # adding the subplot
     plot1 = axs[0]
@@ -979,25 +984,28 @@ def plotgaialightcurve(resultqueue, gaia_id, pgramdata, times, fluxes, flux_erro
         model.fit(mashedtimes,
                   np.concatenate(fluxes),
                   np.concatenate(flux_errors),
-                  np.concatenate(np.concatenate([np.full((len(fluxes[0]), 1), "G"),
-                                                 np.full((len(fluxes[1]), 1), "BP"),
-                                                 np.full((len(fluxes[2]), 1), "RP")])))
+                  np.concatenate([np.full((len(fluxes[0]), 1), bandnames[0]),
+                                  np.full((len(fluxes[1]), 1), bandnames[1]),
+                                  np.full((len(fluxes[2]), 1), bandnames[2])]))
         tdiffs = np.diff(mashedtimes)
 
         if min_p is None and max_p is None:
             freqs = np.linspace(2 / np.ptp(mashedtimes), 1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])), nsamp)
+            pgram = model.score_frequency_grid(2 / np.ptp(mashedtimes), (1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])) - 2 / np.ptp(mashedtimes)) / nsamp, nsamp)
         else:
             if min_p is None:
                 min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
-            if max_p is None:
+                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
+            elif max_p is None:
                 max_p = np.ptp(mashedtimes) / 2
+                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
+            else:
+                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
 
             freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
         ps = 1 / freqs
-        # pgram = model.periodogram_auto(100, 10)
-        pgram = model.periodogram(ps)
-        # pgram = np.array(pgram)
-        np.savetxt(f"output/{gaia_id}/gaia_lc_periodogram.txt", np.vstack([ps, pgram]).T, delimiter=",")
+
+        np.savetxt(f"output/{gaia_id}/{lctype.lower()}_lc_periodogram.txt", np.vstack([ps, pgram]).T, delimiter=",")
     else:
         ps = pgramdata[:, 0]
         pgram = pgramdata[:, 1]
@@ -1013,7 +1021,7 @@ def plotgaialightcurve(resultqueue, gaia_id, pgramdata, times, fluxes, flux_erro
                          xycoords='axes fraction', textcoords='offset points',
                          ha='right', va='top', color='red')
 
-    for f, fe, t, c, l in zip(normflxs, normflxerrs, times, ["darkgreen", "navy", "darkred"], ["G band Flux", "BP band Flux", "RP band Flux"]):
+    for f, fe, t, c, l in zip(normflxs, normflxerrs, times, bandcolors, [f"{bandnames[0]} band Flux", f"{bandnames[1]} band Flux", f"{bandnames[2]} band Flux"]):
         # plotting the graph
         plot1.scatter(t, f, color=c, zorder=5, label=l)
         plot1.errorbar(t, f, yerr=fe, linestyle='', color=c, capsize=3, zorder=4, label="_nolabel_")
@@ -1021,7 +1029,7 @@ def plotgaialightcurve(resultqueue, gaia_id, pgramdata, times, fluxes, flux_erro
     plot1.legend(loc='upper right')
     plot1.grid(color="lightgrey", linestyle='--')
     plot1.set_xlabel("Time [d]")
-    plot1.set_ylabel("Relative Gaia G Flux\n [arb. Unit]")
+    plot1.set_ylabel(f"Relative {lctype} G Flux\n [arb. Unit]")
     plt.tight_layout()
 
     resultqueue.put([fig, axs])
@@ -1030,6 +1038,8 @@ def plotgaialightcurve(resultqueue, gaia_id, pgramdata, times, fluxes, flux_erro
 def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
     # the figure that will contain the plot
     fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8)
+    if nsamp <= 5:
+        nsamp = 5
 
     mask = np.logical_and(np.logical_and(~np.isnan(times), ~np.isnan(flux)), ~np.isnan(flux_error))
     times = times[mask]
@@ -1057,7 +1067,7 @@ def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error,
         nf = nf[mask]
 
     if pgramdata is None:
-        model = periodic.LombScargle(Nterms=nterms)
+        model = periodic.LombScargleFast(Nterms=nterms)
         model.fit(times,
                   flux,
                   flux_error)
@@ -1066,17 +1076,20 @@ def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error,
 
         if min_p is None and max_p is None:
             freqs = np.linspace(2 / np.ptp(times), 1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])), nsamp)
+            pgram = model.score_frequency_grid(2 / np.ptp(times), (1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])) - 2 / np.ptp(times)) / nsamp, nsamp)
         else:
             if min_p is None:
                 min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
-            if min_p is None:
+                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
+            elif max_p is None:
                 max_p = np.ptp(times) / 2
+                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
+            else:
+                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
 
             freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
         ps = 1 / freqs
-        # pgram = model.periodogram_auto(100, 10)
-        pgram = model.periodogram(ps)
-        # pgram = np.array(pgram)
+
         np.savetxt(f"output/{gaia_id}/tess_lc_periodogram.txt", np.vstack([ps, pgram]).T, delimiter=",")
     else:
         ps = pgramdata[:, 0]
@@ -1107,17 +1120,17 @@ def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error,
     resultqueue.put([fig, axs])
 
 
-def plotlc_async(queue, gaia_id, frame, pgramdata, *args, **kwargs):
+def plotlc_async(queue, gaia_id, frame, pgramdata, lctype, *args, **kwargs):
     progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=300)
     progress_bar.start()
     progress_bar.pack(pady=10)
 
     # If gaia lc
-    if isinstance(args[0], list):
+    if lctype == "GAIA":
         def plotlc():
             plt.close('all')
             resultqueue = man.Queue()
-            queue.put(["execute_function", plotgaialightcurve, (resultqueue, gaia_id, pgramdata, *args), kwargs])
+            queue.put(["execute_function", plotgzflightcurve, (resultqueue, gaia_id, pgramdata, lctype, ["G", "BP", "RP"], ["green", "navy", "darkred"], *args), kwargs])
             fig, axs = resultqueue.get()
             progress_bar.destroy()
             canvas = FigureCanvasTkAgg(fig, master=frame)
@@ -1128,7 +1141,22 @@ def plotlc_async(queue, gaia_id, frame, pgramdata, *args, **kwargs):
             canvas.get_tk_widget().pack()
             plt.close(fig)
 
-    else:
+    elif lctype == "ZTF":
+        def plotlc():
+            plt.close('all')
+            resultqueue = man.Queue()
+            queue.put(["execute_function", plotgzflightcurve, (resultqueue, gaia_id, pgramdata, lctype, ["G", "I", "R"], ["green", "darkred", "red"], *args), kwargs])
+            fig, axs = resultqueue.get()
+            progress_bar.destroy()
+            canvas = FigureCanvasTkAgg(fig, master=frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack()
+            toolbar = NavigationToolbar2Tk(canvas, frame)
+            toolbar.update()
+            canvas.get_tk_widget().pack()
+            plt.close(fig)
+
+    elif lctype == "TESS":
         def plotlc():
             plt.close('all')
             resultqueue = man.Queue()
@@ -1145,39 +1173,7 @@ def plotlc_async(queue, gaia_id, frame, pgramdata, *args, **kwargs):
 
     thread = threading.Thread(target=plotlc)
     thread.start()
-
-
-def getzwickylc(gaia_id):
-    def magtoflux(mag):
-        return 1 / (2.5 ** mag)
-
-    def magerr_to_fluxerr(mag, magerr):
-        return np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag - magerr))), np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag + magerr)))
-
-    gaia_id = 3155626997678101248
-
-    coord = SkyCoord.from_name(f'GAIA DR3 {gaia_id}')
-
-    lcq = lightcurve.LCQuery().from_position((coord.ra * u.deg).value, (coord.dec * u.deg).value, 0.5)
-
-    gdata = lcq.data[lcq.data["filtercode"] == "zg"]
-    idata = lcq.data[lcq.data["filtercode"] == "zi"]
-    rdata = lcq.data[lcq.data["filtercode"] == "zr"]
-
-    for data, color in zip([gdata, idata, rdata], ["green", "darkred", "red"]):
-        dates = data["mjd"].to_numpy()
-        mags = data["mag"].to_numpy()
-        mag_err = data["magerr"].to_numpy()
-
-        flx = magtoflux(mags)
-        flx_err = magerr_to_fluxerr(mags, mag_err)
-
-        flxmean = flx.mean()
-        flx /= flxmean
-        flx_err /= flxmean
-
-        plt.scatter(dates, flx, color=color)
-        plt.errorbar(dates, flx, yerr=(flx_err[0], flx_err[1]), capsize=3, color=color, linestyle='')
+    return thread
 
 
 def getgaialc(gaia_id):
@@ -1195,7 +1191,7 @@ def getgaialc(gaia_id):
         table = table[table["Source"] == gaia_id]
         table = table.drop(columns=["Source"])
 
-        table.to_csv(f"output/{gaia_id}/gaia_lc.txt", index=False, columns=table.columns[1:], header=False)
+        table.to_csv(f"output/{gaia_id}/gaia_lc.txt", index=False, header=False)
         return True
     else:
         with open(f"output/{gaia_id}/gaia_lc.txt", "w") as file:
@@ -1209,21 +1205,35 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
         tg = lcdata[:, 0]
         g_flx = lcdata[:, 3]
         g_flx_err = lcdata[:, 6]
-        bpt = lcdata[:, 1]
+        tbp = lcdata[:, 1]
         bp_flx = lcdata[:, 4]
         bp_flx_err = lcdata[:, 7]
-        rpt = lcdata[:, 1]
+        trp = lcdata[:, 1]
         rp_flx = lcdata[:, 5]
         rp_flx_err = lcdata[:, 8]
         btntip.destroy()
-        plotlc_async(queue, gaia_id, plotframe, pgramdata, [tg, bpt, rpt], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
+        thread = plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, [tg, tbp, trp], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
     elif lctype == "TESS":
         t = lcdata[0]
         tess_flx = lcdata[1]
         tess_flx_err = lcdata[2]
         #        crowdsap = lcdata[3]
         btntip.destroy()
-        plotlc_async(queue, gaia_id, plotframe, pgramdata, t, tess_flx, tess_flx_err)
+        thread = plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, t, tess_flx, tess_flx_err)
+    elif lctype == "ZTF":
+        gmask = lcdata[:, -1] == 1.
+        imask = lcdata[:, -1] == 2.
+        rmask = lcdata[:, -1] == 3.
+
+        times = []
+        flxs = []
+        flx_errs = []
+        for mask in [gmask, imask, rmask]:
+            times.append(lcdata[:, 0][mask])
+            flxs.append(lcdata[:, 1][mask])
+            flx_errs.append(lcdata[:, 2][mask])
+
+        thread = plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, times, flxs, flx_errs)
 
     filterframe = tk.Frame(plotctl)
     checknoisevar = tk.IntVar(value=0)
@@ -1318,21 +1328,37 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
             noiseceil = None
         if lctype == "GAIA":
             lcdata = lcdata[~np.isnan(lcdata).any(axis=-1), :]
-            t = lcdata[:, 0]
-            g_flx = lcdata[:, 1]
-            g_flx_err = lcdata[:, 2]
-            bp_flx = lcdata[:, 3]
-            bp_flx_err = lcdata[:, 4]
+            tg = lcdata[:, 0]
+            g_flx = lcdata[:, 3]
+            g_flx_err = lcdata[:, 6]
+            tbp = lcdata[:, 1]
+            bp_flx = lcdata[:, 4]
+            bp_flx_err = lcdata[:, 7]
+            trp = lcdata[:, 1]
             rp_flx = lcdata[:, 5]
-            rp_flx_err = lcdata[:, 6]
-            plotlc_async(queue, gaia_id, plotframe, None, [t, t, t], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err], nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
-        else:
+            rp_flx_err = lcdata[:, 8]
+            thread = plotlc_async(queue, gaia_id, plotframe, None, lctype, [tg, tbp, trp], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err], nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+        elif lctype == "TESS":
             t = lcdata[0]
             tess_flx = lcdata[1]
             tess_flx_err = lcdata[2]
             #            crowdsap = lcdata[3]
             btntip.destroy()
-            plotlc_async(queue, gaia_id, plotframe, None, t, tess_flx, tess_flx_err, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+            thread = plotlc_async(queue, gaia_id, plotframe, None, lctype, t, tess_flx, tess_flx_err, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+        elif lctype == "ZTF":
+            gmask = lcdata[:, -1] == 1.
+            imask = lcdata[:, -1] == 2.
+            rmask = lcdata[:, -1] == 3.
+
+            times = []
+            flxs = []
+            flx_errs = []
+            for mask in [gmask, imask, rmask]:
+                times.append(lcdata[:, 0][mask])
+                flxs.append(lcdata[:, 1][mask])
+                flx_errs.append(lcdata[:, 2][mask])
+            print("Redoing ztf")
+            thread = plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, times, flxs, flx_errs, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
 
     redoperiodogrambtn = tk.Button(plotctl, text="Redo Periodogram", command=drawplotwrapper)
 
@@ -1347,27 +1373,25 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
 
 
 def getgaiawrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper, queue):
+    print("gaia button press")
+    progress_bar = ttk.Progressbar(lcframe, mode='indeterminate', length=300)
+    progress_bar.pack()
+    progress_bar.start()
+
     def startgaiathread():
-        progress_bar = ttk.Progressbar(lcframe, mode='indeterminate', length=300)
-        progress_bar.pack()
-        progress_bar.start()
         thread = threading.Thread(target=lambda: getgaialc(gaia_id))
         thread.start()
-        lc_exists = thread.join()
+        thread.join()
 
-        progress_bar.destroy()
         lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
-        if not lc_exists:
+
+        if lcdata.ndim == 1:
             tiplabel.destroy()
             notfoundlabel = tk.Label(lcframe, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
             notfoundlabel.pack()
         else:
-            if lcdata.ndim == 1:
-                tiplabel.destroy()
-                notfoundlabel = tk.Label(lcframe, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
-                notfoundlabel.pack()
-            else:
-                drawlcplot(lcdata, gaia_id, lcframe, ctlframe, plotwrapper, tiplabel, queue, "GAIA", None)
+            progress_bar.destroy()
+            drawlcplot(lcdata, gaia_id, lcframe, ctlframe, plotwrapper, tiplabel, queue, "GAIA", None)
 
     outerthread = threading.Thread(target=startgaiathread)
     outerthread.start()
@@ -1451,10 +1475,11 @@ def gettesslc(tic):
 
 
 def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, lcframe, queue):
+    progress_bar = ttk.Progressbar(lcframe, mode='indeterminate', length=300)
+    progress_bar.pack()
+    progress_bar.start()
+
     def starttessthread():
-        progress_bar = ttk.Progressbar(plotframe, mode='indeterminate', length=300)
-        progress_bar.pack()
-        progress_bar.start()
         pool = ThreadPool(processes=1)
         async_result = pool.apply_async(gettesslc, (tic,))
         lc_data = async_result.get()
@@ -1471,6 +1496,80 @@ def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, lcfram
     outerthread.start()
 
 
+def magtoflux(mag):
+    return 1 / (2.5 ** mag)
+
+
+def magerr_to_fluxerr(mag, magerr):
+    return (np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag - magerr))) + np.abs(1 / (2.5 ** mag) - 1 / (2.5 ** (mag + magerr)))) / 2
+
+
+def getztflc(gaia_id):
+    coord = SkyCoord.from_name(f'GAIA DR3 {gaia_id}')
+
+    # try:
+    lcq = lightcurve.LCQuery().from_position((coord.ra * u.deg).value, (coord.dec * u.deg).value, 1)
+
+    dates = lcq.data["mjd"].to_numpy()
+
+    if len(dates) == 0:
+        with open(f"output/{gaia_id}/ztf_lc.txt", "w") as file:
+            file.write("NaN, NaN, NaN, NaN, NaN, NaN, NaN")
+        return False
+
+    mags = lcq.data["mag"].to_numpy()
+    mag_err = lcq.data["magerr"].to_numpy()
+    filters = lcq.data["filtercode"].to_numpy()
+
+    flx = magtoflux(mags)
+    flx_err = magerr_to_fluxerr(mags, mag_err)
+
+    table = pd.DataFrame({"mjd": dates, "flx": flx, "flx_err": flx_err, "filter": filters})
+
+    print(dates, flx, flx_err, filters)
+
+    table.to_csv(f"output/{gaia_id}/ztf_lc.txt", index=False, header=False)
+
+    return True
+
+
+def getztfwrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper, queue):
+    progress_bar = ttk.Progressbar(lcframe, mode='indeterminate', length=300)
+    progress_bar.pack()
+    progress_bar.start()
+
+    def startztfthread():
+        thread = threading.Thread(target=lambda: getztflc(gaia_id))
+        thread.start()
+        thread.join()
+
+        try:
+            lcdata = pd.read_csv(f"output/{gaia_id}/ztf_lc.txt", delimiter=",")
+            numdata = lcdata[lcdata.columns[:3]].to_numpy()
+            filter = lcdata[lcdata.columns[-1]].to_numpy()
+            filter[filter == "zg"] = 1
+            filter[filter == "zi"] = 2
+            filter[filter == "zr"] = 3
+            lcdata = np.column_stack([numdata, filter]).astype(float)
+        except pd.errors.EmptyDataError:
+            tiplabel.destroy()
+            notfoundlabel = tk.Label(lcframe, text="No ZTF Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel.pack()
+            lcdata = np.zeros(5)
+
+        if lcdata.ndim == 1:
+            tiplabel.destroy()
+            notfoundlabel = tk.Label(lcframe, text="No ZTF Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel.pack()
+        else:
+            tiplabel.destroy()
+            progress_bar.destroy()
+            drawlcplot(lcdata, gaia_id, lcframe, ctlframe, plotwrapper, tiplabel, queue, "ZTF", None)
+
+    outerthread = threading.Thread(target=startztfthread)
+    outerthread.start()
+
+
 def lcplottab(lcdata, lcframe, name, gaia_id, tic, queue, pgramdata):
     btntip = tk.Label(lcframe, text=f"Use the button to look for a {name} lightcurve!")
     btntip.pack()
@@ -1480,13 +1579,15 @@ def lcplottab(lcdata, lcframe, name, gaia_id, tic, queue, pgramdata):
     plotctl = tk.Frame(plotwrapper)
 
     if lcdata is not None:
-        if not isinstance(lcdata, list):
+        if name == "GAIA":
             if lcdata.ndim == 1:
                 btntip.destroy()
                 notfoundlabel = tk.Label(lcframe, text=f"No {name} Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
                 notfoundlabel.pack()
             else:
                 drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, name, pgramdata)
+        elif name == "ZTF":
+            drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, name, pgramdata)
         else:
             drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, name, pgramdata)
 
@@ -1502,6 +1603,9 @@ def lcplottab(lcdata, lcframe, name, gaia_id, tic, queue, pgramdata):
                 btntip.destroy()
                 btntip = tk.Label(lcframe, text="No TIC ID was found for this Star!", fg="red", font=('Segoe UI', 25))
                 btntip.pack()
+        elif name == "ZTF":
+            getgaiabtn = tk.Button(lcframe, text="Get ZTF Data", command=lambda: getztfwrapper(gaia_id, btntip, plotframe, plotctl, plotwrapper, queue))
+            getgaiabtn.pack(side=tk.BOTTOM, anchor="e", padx=10, pady=10)
 
 
 def viewlc(window, gaia_id, tic, queue):
@@ -1520,6 +1624,9 @@ def viewlc(window, gaia_id, tic, queue):
 
     gaialc = tk.Frame(lc_tabs)
     lc_tabs.add(gaialc, text="GAIA LC")
+
+    ztflc = tk.Frame(lc_tabs)
+    lc_tabs.add(ztflc, text="ZTF LC")
 
     if os.path.isfile(f"output/{gaia_id}/tess_lc.txt"):
         try:
@@ -1547,6 +1654,30 @@ def viewlc(window, gaia_id, tic, queue):
             lcplottab(None, gaialc, "GAIA", gaia_id, tic, queue, None)
     else:
         lcplottab(None, gaialc, "GAIA", gaia_id, tic, queue, None)
+
+    if os.path.isfile(f"output/{gaia_id}/ztf_lc.txt"):
+        try:
+            lcdata = pd.read_csv(f"output/{gaia_id}/ztf_lc.txt", delimiter=",")
+            numdata = lcdata[lcdata.columns[:3]].to_numpy()
+            filter = lcdata[lcdata.columns[-1]].to_numpy()
+            filter[filter == "zg"] = 1
+            filter[filter == "zi"] = 2
+            filter[filter == "zr"] = 3
+            lcdata = np.column_stack([numdata, filter]).astype(float)
+            if lcdata.ndim == 2:
+                try:
+                    pgramdata = np.genfromtxt(f"output/{gaia_id}/ztf_lc_periodogram.txt", delimiter=",")
+                except FileNotFoundError:
+                    pgramdata = None
+            else:
+                pgramdata = None
+            lcplottab(lcdata, ztflc, "ZTF", gaia_id, tic, queue, pgramdata)
+        except FileNotFoundError:
+            lcplottab(None, ztflc, "ZTF", gaia_id, tic, queue, None)
+        except pd.errors.EmptyDataError:
+            lcplottab(None, ztflc, "ZTF", gaia_id, tic, queue, None)
+    else:
+        lcplottab(None, ztflc, "ZTF", gaia_id, tic, queue, None)
 
     lc_tabs.pack(fill="both", expand=1)
     fitmodelframe.pack(fill="both", expand=1)
@@ -1810,18 +1941,18 @@ def viewplot(q, n, gaia_id):
 
 
 def phsin(x, period, offset, amplitude, shift):
-    return offset + amplitude * np.sin((x-shift) * 2 * np.pi / period)
+    return offset + amplitude * np.sin((x - shift) * 2 * np.pi / period)
 
 
 def phasefoldplot(resultqueue, offset, amplitude, shift, nplot, data, tessbin=100, **kwargs):
     fig, axs = plt.subplots(nrows=nplot, ncols=1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8, sharex=True)
 
     for ind, [d, a] in enumerate(zip(data, axs)):
+        a.grid(True)
         if d["name"] == "RV":
             a.set_ylabel("Radial Velocity [km/s]")
             sinspace = np.linspace(-1, 1, 1000)
-            a.grid(True)
-            a.plot(sinspace, phsin(sinspace, 1, offset, amplitude, shift), color="darkred", zorder=3)
+            a.plot(sinspace, phsin(sinspace, 1, offset, amplitude, 0), color="darkred", zorder=3)
         else:
             a.set_ylabel("Relative Flux [arb. unit]")
         if ind == len(axs) - 1:
@@ -1839,42 +1970,49 @@ def phasefoldplot(resultqueue, offset, amplitude, shift, nplot, data, tessbin=10
 
             if tessbin % 2 != 0:
                 tessbin += 1
+
             meanfilter = np.convolve(d["flux"], np.ones(tessbin) / tessbin, mode='valid')
             a.plot(d["time"][int(tessbin / 2):-int(tessbin / 2 - 1)], meanfilter, color="darkred", zorder=5)
             a.set_ylim(meanfilter.min() - 0.05 * np.ptp(meanfilter), meanfilter.max() + 0.05 * np.ptp(meanfilter))
         elif d["name"] == "RV":
             a.scatter(d["time"], d["flux"], color="navy", zorder=5)
             a.errorbar(d["time"], d["flux"], yerr=d["flux_error"], linestyle='', color="navy", capsize=3, zorder=4)
-        else:
+        elif d["name"] == "GAIA":
             for c, i in zip(["darkgreen", "navy", "darkred"], range(3)):
-                a.scatter(d["time"], d[f"flux{i}"], color=c, zorder=5)
-                a.errorbar(d["time"], d[f"flux{i}"], yerr=d[f"flux_error{i}"], linestyle='', color=c, capsize=3, zorder=4)
+                a.scatter(d[f"time{i}"], d[f"flux{i}"], color=c, zorder=5)
+                a.errorbar(d[f"time{i}"], d[f"flux{i}"], yerr=d[f"flux_error{i}"], linestyle='', color=c, capsize=3, zorder=4)
+        elif d["name"] == "ZTF":
+            for c, i in zip(["darkgreen", "red", "darkred"], range(3)):
+                a.scatter(d[f"time{i}"], d[f"flux{i}"], color=c, zorder=5)
+                a.errorbar(d[f"time{i}"], d[f"flux{i}"], yerr=d[f"flux_error{i}"], linestyle='', color=c, capsize=3, zorder=4)
         a.legend([d["name"]], loc="upper right")
     fig.subplots_adjust(wspace=0)
     resultqueue.put(fig)
 
 
-def phasefoldplot_wrapper(plotframe,
-                          period, shift, offset, amplitude,
-                          vtimes, vels, verrs,
-                          gtimes, ggflux, ggerr, gbpflux, gbperr, grpflux, grperr,
-                          ttimes, tflux, terr, *args, **kwargs):
+def phasefoldplot_wrapper(plotframe, period, multiplier, shift, offset, amplitude, dataarray, *args, **kwargs):
     if period is None:
         period = 1
+    elif isinstance(period, int):
+        period = float(period) * multiplier
     elif not isinstance(period, float):
-        period = period.get()
+        period = period.get() * multiplier
+    else:
+        period *= multiplier
+
     for widget in plotframe.winfo_children():
         widget.destroy()
 
+    datalist = []
     if kwargs["finetune"]:
         try:
-            p_amt_whole_phase = 1 / (2 * np.max(np.diff(vtimes)))
-            params, errs = curve_fit(phsin, vtimes, vels,
+            p_amt_whole_phase = 1 / (2 * np.max(np.diff(dataarray["RV"][0])))
+            params, errs = curve_fit(phsin, dataarray["RV"][0], dataarray["RV"][1],
                                      [period, offset, amplitude, shift],
-                                     verrs, maxfev=100000,
+                                     dataarray["RV"][2], maxfev=100000,
                                      bounds=[
-                                         [period - p_amt_whole_phase, offset*.5, amplitude*.5, -1],
-                                         [period + p_amt_whole_phase, offset*2, amplitude*2, 2]
+                                         [period - p_amt_whole_phase, offset * .5, amplitude * .5, -1],
+                                         [period + p_amt_whole_phase, offset * 2, amplitude * 2, 2]
                                      ])
             period, offset, amplitude, shift = params
             if shift > 1:
@@ -1884,38 +2022,68 @@ def phasefoldplot_wrapper(plotframe,
         except RuntimeError as e:
             pass
 
-    datalist = []
-    vtimes = (((vtimes - np.min(vtimes)) % period) / period)
+    vtimes = (((dataarray["RV"][0] + (shift * period)) % period) / period)
     vtimes[vtimes > 1] -= 1
     datalist.append({
         "name": "RV",
         "time": np.concatenate([vtimes - 1, vtimes]),
-        "flux": np.concatenate([vels, vels]),
-        "flux_error": np.concatenate([verrs, verrs]),
+        "flux": np.concatenate([dataarray["RV"][1], dataarray["RV"][1]]),
+        "flux_error": np.concatenate([dataarray["RV"][2], dataarray["RV"][2]]),
     })
 
-    if gtimes is not None:
-        gtimes = (((gtimes - np.nanmin(gtimes)) % period) / period)
+    if dataarray["GAIA"] is not None:
+        gtimes = (((dataarray["GAIA"][0][0] + (shift * period)) % period) / period)
         gtimes[gtimes > 1] -= 1
+
+        rptimes = (((dataarray["GAIA"][1][0] + (shift * period)) % period) / period)
+        rptimes[rptimes > 1] -= 1
+
+        bptimes = (((dataarray["GAIA"][2][0] + (shift * period)) % period) / period)
+        bptimes[bptimes > 1] -= 1
         datalist.append({
             "name": "GAIA",
-            "time": np.concatenate([gtimes - 1, gtimes]),
-            "flux0": np.concatenate([ggflux, ggflux]),
-            "flux_error0": np.concatenate([ggerr, ggerr]),
-            "flux1": np.concatenate([gbpflux, gbpflux]),
-            "flux_error1": np.concatenate([gbperr, gbperr]),
-            "flux2": np.concatenate([grpflux, grpflux]),
-            "flux_error2": np.concatenate([grperr, grperr]),
+            "time0": np.concatenate([gtimes - 1, gtimes]),
+            "flux0": np.concatenate([dataarray["GAIA"][0][1], dataarray["GAIA"][0][1]]),
+            "flux_error0": np.concatenate([dataarray["GAIA"][0][2], dataarray["GAIA"][0][2]]),
+            "time1": np.concatenate([bptimes - 1, bptimes]),
+            "flux1": np.concatenate([dataarray["GAIA"][1][1], dataarray["GAIA"][1][1]]),
+            "flux_error1": np.concatenate([dataarray["GAIA"][1][2], dataarray["GAIA"][1][2]]),
+            "time2": np.concatenate([rptimes - 1, rptimes]),
+            "flux2": np.concatenate([dataarray["GAIA"][2][1], dataarray["GAIA"][2][1]]),
+            "flux_error2": np.concatenate([dataarray["GAIA"][2][2], dataarray["GAIA"][2][2]]),
         })
 
-    if ttimes is not None:
-        ttimes = (((ttimes - np.min(ttimes)) % period) / period)
+    if dataarray["ZTF"] is not None:
+        gtimes = (((dataarray["ZTF"][0][0] + (shift * period)) % period) / period)
+        gtimes[gtimes > 1] -= 1
+
+        rtimes = (((dataarray["ZTF"][1][0] + (shift * period)) % period) / period)
+        rtimes[rtimes > 1] -= 1
+
+        itimes = (((dataarray["ZTF"][2][0] + (shift * period)) % period) / period)
+        itimes[itimes > 1] -= 1
+        datalist.append({
+            "name": "ZTF",
+            "time0": np.concatenate([gtimes - 1, gtimes]),
+            "flux0": np.concatenate([dataarray["ZTF"][0][1], dataarray["ZTF"][0][1]]),
+            "flux_error0": np.concatenate([dataarray["ZTF"][0][2], dataarray["ZTF"][0][2]]),
+            "time1": np.concatenate([rtimes - 1, rtimes]),
+            "flux1": np.concatenate([dataarray["ZTF"][1][1], dataarray["ZTF"][1][1]]),
+            "flux_error1": np.concatenate([dataarray["ZTF"][1][2], dataarray["ZTF"][1][2]]),
+            "time2": np.concatenate([itimes - 1, itimes]),
+            "flux2": np.concatenate([dataarray["ZTF"][2][1], dataarray["ZTF"][2][1]]),
+            "flux_error2": np.concatenate([dataarray["ZTF"][2][2], dataarray["ZTF"][2][2]]),
+        })
+
+    if dataarray["TESS"] is not None:
+        ttimes = (((dataarray["TESS"][0] + (shift * period)) % period) / period)
         ttimes[ttimes > 1] -= 1
+
         datalist.append({
             "name": "TESS",
             "time": np.concatenate([ttimes - 1, ttimes]),
-            "flux": np.concatenate([tflux, tflux]),
-            "flux_error": np.concatenate([terr, terr]),
+            "flux": np.concatenate([dataarray["TESS"][1], dataarray["TESS"][1]]),
+            "flux_error": np.concatenate([dataarray["TESS"][2], dataarray["TESS"][2]]),
         })
 
     def plotpffold():
@@ -1935,8 +2103,15 @@ def phasefoldplot_wrapper(plotframe,
     thread.start()
 
 
+def varvalidation(var):
+    try:
+        return float(var.get())
+    except:
+        return 1.0
+
+
 def phasefold(analysis, gaia_id):
-    pf_window = tk.Toplevel()
+    pf_window = tk.Toplevel(analysis)
     try:
         if os.name == "nt":
             pf_window.iconbitmap("favicon.ico")
@@ -1962,17 +2137,39 @@ def phasefold(analysis, gaia_id):
     vels = rvdata["culum_fit_RV"].to_numpy()
     verrs = rvdata["u_culum_fit_RV"].to_numpy()
     mjd = rvdata["mjd"].to_numpy()
+    dataarray = {"RV": [mjd, vels, verrs]}
 
     if os.path.isfile(f"output/{gaia_id}/gaia_lc.txt") and os.path.isfile(f"output/{gaia_id}/gaia_lc_periodogram.txt"):
         gaia_lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
         # "TimeBP", "FG", "e_FG", "FBP", "e_FBP", "FRP", "e_FRP"
+
         gaia_t = gaia_lcdata[:, 0]
-        gaia_g_flx = gaia_lcdata[:, 1]
-        gaia_g_flx_err = gaia_lcdata[:, 2]
-        gaia_bp_flx = gaia_lcdata[:, 3]
-        gaia_bp_flx_err = gaia_lcdata[:, 4]
+        gaia_g_flx = gaia_lcdata[:, 3]
+        gaia_g_flx_err = gaia_lcdata[:, 6]
+        gaia_bp_t = gaia_lcdata[:, 1]
+        gaia_bp_flx = gaia_lcdata[:, 4]
+        gaia_bp_flx_err = gaia_lcdata[:, 7]
+        gaia_rp_t = gaia_lcdata[:, 2]
         gaia_rp_flx = gaia_lcdata[:, 5]
-        gaia_rp_flx_err = gaia_lcdata[:, 6]
+        gaia_rp_flx_err = gaia_lcdata[:, 8]
+
+        gaia_t = gaia_t[~np.isnan(gaia_t)]
+        gaia_g_flx = gaia_g_flx[~np.isnan(gaia_g_flx)]
+        gaia_g_flx_err = gaia_g_flx_err[~np.isnan(gaia_g_flx_err)]
+        gaia_bp_t = gaia_bp_t[~np.isnan(gaia_bp_t)]
+        gaia_bp_flx = gaia_bp_flx[~np.isnan(gaia_bp_flx)]
+        gaia_bp_flx_err = gaia_bp_flx_err[~np.isnan(gaia_bp_flx_err)]
+        gaia_rp_t = gaia_rp_t[~np.isnan(gaia_rp_t)]
+        gaia_rp_flx = gaia_rp_flx[~np.isnan(gaia_rp_flx)]
+        gaia_rp_flx_err = gaia_rp_flx_err[~np.isnan(gaia_rp_flx_err)]
+
+        gaia_t += 2455197.5
+        gaia_bp_t += 2455197.5
+        gaia_rp_t += 2455197.5
+
+        gaia_t = Time(gaia_t, format="jd").mjd
+        gaia_bp_t = Time(gaia_bp_t, format="jd").mjd
+        gaia_rp_t = Time(gaia_rp_t, format="jd").mjd
 
         gaia_g_flx_err /= np.nanmedian(gaia_g_flx)
         gaia_g_flx /= np.nanmedian(gaia_g_flx)
@@ -1985,24 +2182,21 @@ def phasefold(analysis, gaia_id):
         gaia_periods = gaia_pgram_data[:, 0]
         gaia_power = gaia_pgram_data[:, 1]
 
+        dataarray["GAIA"] = [
+            [gaia_t, gaia_g_flx, gaia_g_flx_err],
+            [gaia_bp_t, gaia_bp_flx, gaia_bp_flx_err],
+            [gaia_rp_t, gaia_rp_flx, gaia_rp_flx_err]
+        ]
+
         gaia_maxp = gaia_periods[np.argmax(gaia_power)]
         del gaia_lcdata, gaia_pgram_data
     else:
-        gaia_t = None
-        gaia_g_flx = None
-        gaia_g_flx_err = None
-        gaia_bp_flx = None
-        gaia_bp_flx_err = None
-        gaia_rp_flx = None
-        gaia_rp_flx_err = None
-
-        gaia_periods = None
-        gaia_power = None
         gaia_maxp = None
+        dataarray["GAIA"] = None
 
     if os.path.isfile(f"output/{gaia_id}/tess_lc.txt") and os.path.isfile(f"output/{gaia_id}/tess_lc_periodogram.txt"):
         tess_lcdata = np.genfromtxt(f"output/{gaia_id}/tess_lc.txt", delimiter=",")
-        tess_t = tess_lcdata[:, 0]
+        tess_t = Time(tess_lcdata[:, 0] + 2457000, format="jd").mjd  # TESS BJD to MJD
         tess_flx = tess_lcdata[:, 1]
         tess_flx_err = tess_lcdata[:, 2]
 
@@ -2011,30 +2205,75 @@ def phasefold(analysis, gaia_id):
         tess_power = tess_pgram_data[:, 1]
         tess_maxp = tess_periods[np.argmax(tess_power)]
 
+        dataarray["TESS"] = [tess_t, tess_flx, tess_flx_err]
+
         del tess_lcdata, tess_pgram_data
     else:
-        tess_t = None
-        tess_flx = None
-        tess_flx_err = None
-        tess_periods = None
-        tess_power = None
-        tess_maxp = 1
+        tess_maxp = None
+        dataarray["TESS"] = None
 
-    startperiod = tess_maxp if tess_maxp is not None else 1
-    phasefoldplot_wrapper(plotframe, startperiod, 0, np.mean(vels), np.ptp(vels) / 2,
-                          mjd, vels, verrs,
-                          gaia_t, gaia_g_flx, gaia_g_flx_err,
-                          gaia_bp_flx, gaia_bp_flx_err, gaia_rp_flx, gaia_rp_flx_err,
-                          tess_t, tess_flx, tess_flx_err, finetune=False)
+    if os.path.isfile(f"output/{gaia_id}/ztf_lc.txt") and os.path.isfile(f"output/{gaia_id}/ztf_lc_periodogram.txt"):
+        ztf_lcdata = pd.read_csv(f"output/{gaia_id}/ztf_lc.txt", delimiter=",")
+        numdata = ztf_lcdata[ztf_lcdata.columns[:3]].to_numpy()
+        ztf_t = numdata[:, 0]
+        ztf_flx = numdata[:, 1]
+        ztf_flx_err = numdata[:, 2]
+        filter = ztf_lcdata[ztf_lcdata.columns[-1]].to_numpy()
 
-    periods_dict = {"RV": None, "GAIA": gaia_maxp, "TESS": tess_maxp}
+        gmask = filter == "zg"
+        imask = filter == "zi"
+        rmask = filter == "zr"
+
+        ztf_g_t = ztf_t[gmask]
+        ztf_i_t = ztf_t[imask]
+        ztf_r_t = ztf_t[rmask]
+        ztf_g_flx = ztf_flx[gmask]
+        ztf_i_flx = ztf_flx[imask]
+        ztf_r_flx = ztf_flx[rmask]
+        ztf_g_flx_err = ztf_flx_err[gmask]
+        ztf_i_flx_err = ztf_flx_err[imask]
+        ztf_r_flx_err = ztf_flx_err[rmask]
+
+        ztf_g_flx_err /= np.nanmedian(ztf_g_flx)
+        ztf_g_flx /= np.nanmedian(ztf_g_flx)
+        ztf_i_flx_err /= np.nanmedian(ztf_i_flx)
+        ztf_i_flx /= np.nanmedian(ztf_i_flx)
+        ztf_r_flx_err /= np.nanmedian(ztf_r_flx)
+        ztf_r_flx /= np.nanmedian(ztf_r_flx)
+
+        ztf_pgram_data = np.genfromtxt(f"output/{gaia_id}/ztf_lc_periodogram.txt", delimiter=",")
+        ztf_periods = ztf_pgram_data[:, 0]
+        ztf_power = ztf_pgram_data[:, 1]
+        ztf_maxp = ztf_periods[np.argmax(ztf_power)]
+
+        dataarray["ZTF"] = [
+            [ztf_g_t, ztf_g_flx, ztf_g_flx_err],
+            [ztf_i_t, ztf_i_flx, ztf_i_flx_err],
+            [ztf_r_t, ztf_r_flx, ztf_r_flx_err]
+        ]
+
+        del ztf_lcdata, ztf_pgram_data
+    else:
+        dataarray["ZTF"] = None
+        ztf_maxp = None
+
+    startperiod = tess_maxp
+    phasefoldplot_wrapper(plotframe, startperiod, 1, 0, np.mean(vels), np.ptp(vels) / 2,
+                          dataarray, finetune=False)
+
+    periods_dict = {"RV": None, "GAIA": gaia_maxp, "TESS": tess_maxp, "ZTF": ztf_maxp}
 
     peaksource_selector_frame = tk.Frame(plotctl)
     peaksource_label = tk.Label(peaksource_selector_frame, text="Get Period from ")
     peaksource_var = tk.StringVar(value="TESS")
-    peaksource_selector = tk.OptionMenu(peaksource_selector_frame, peaksource_var, "RV", "TESS", "GAIA", "Slider")
+    peaksource_selector = tk.OptionMenu(peaksource_selector_frame, peaksource_var, "RV", "TESS", "GAIA", "ZTF", "Slider")
     peaksource_label.pack(side=tk.LEFT)
     peaksource_selector.pack(side=tk.LEFT)
+    peaksource_label_two = tk.Label(peaksource_selector_frame, text=" x")
+    peaksource_label_two.pack(side=tk.LEFT)
+    peaksource_timesentry_var = tk.StringVar(value="1")
+    peaksource_timesentry = tk.Entry(peaksource_selector_frame, textvariable=peaksource_timesentry_var, width=4)
+    peaksource_timesentry.pack(side=tk.LEFT)
     peaksource_selector_frame.grid(column=0, row=0, sticky="w")
 
     tessbin_frame = tk.Frame(plotctl)
@@ -2049,13 +2288,13 @@ def phasefold(analysis, gaia_id):
     pslider_frame = tk.Frame(plotctl)
     pslider_label = tk.Label(pslider_frame, text="Modify Period:")
     pslider_slider = tk.Scale(pslider_frame,
-                              from_=tess_maxp + p_amt_whole_phase,
-                              to=tess_maxp - p_amt_whole_phase,
+                              from_=periods_dict[peaksource_var.get()] * varvalidation(peaksource_timesentry_var) + p_amt_whole_phase,
+                              to=periods_dict[peaksource_var.get()] * varvalidation(peaksource_timesentry_var) - p_amt_whole_phase,
                               resolution=p_amt_whole_phase / 10000,
                               tickinterval=p_amt_whole_phase / 2,
                               length=300,
                               orient=tk.HORIZONTAL)
-    pslider_slider.set(periods_dict[peaksource_var.get()])
+    pslider_slider.set(periods_dict[peaksource_var.get()] * varvalidation(peaksource_timesentry_var))
     pslider_label.grid(column=0, row=0)
     pslider_slider.grid(column=0, row=1)
     pslider_frame.grid(column=0, row=4, sticky="w")
@@ -2069,7 +2308,7 @@ def phasefold(analysis, gaia_id):
                                 tickinterval=100,
                                 length=300,
                                 orient=tk.HORIZONTAL)
-    ampslider_slider.set(np.ptp(vels)/2)
+    ampslider_slider.set(np.ptp(vels) / 2)
     ampslider_label.grid(column=0, row=0)
     ampslider_slider.grid(column=0, row=1)
     ampslider_frame.grid(column=0, row=5, sticky="w")
@@ -2093,7 +2332,7 @@ def phasefold(analysis, gaia_id):
     shiftslider_slider = tk.Scale(shiftslider_frame,
                                   from_=0,
                                   to=1,
-                                  resolution=1/100,
+                                  resolution=1 / 100,
                                   tickinterval=0.25,
                                   length=300,
                                   orient=tk.HORIZONTAL)
@@ -2107,11 +2346,8 @@ def phasefold(analysis, gaia_id):
     finetune = tk.Checkbutton(plotctl, variable=ftvar, text="Finetune RV fit")
     finetune.grid(column=0, row=8)
 
-    refold = tk.Button(plotctl, text="Redo Phasefold", command=lambda: phasefoldplot_wrapper(plotframe, periods_dict[peaksource_var.get()], shiftslider_slider.get(), offslider_slider.get(), ampslider_slider.get(),
-                                                                                             mjd, vels, verrs,
-                                                                                             gaia_t, gaia_g_flx, gaia_g_flx_err,
-                                                                                             gaia_bp_flx, gaia_bp_flx_err, gaia_rp_flx, gaia_rp_flx_err,
-                                                                                             tess_t, tess_flx, tess_flx_err, tessbin=int(tessbin_var.get()),
+    refold = tk.Button(plotctl, text="Redo Phasefold", command=lambda: phasefoldplot_wrapper(plotframe, periods_dict[peaksource_var.get()], varvalidation(peaksource_timesentry_var), shiftslider_slider.get(), offslider_slider.get(), ampslider_slider.get(),
+                                                                                             dataarray, tessbin=int(tessbin_var.get()),
                                                                                              finetune=bool(ftvar.get())))
     refold.grid(column=0, row=10, sticky="se")
 
@@ -2121,11 +2357,8 @@ def phasefold(analysis, gaia_id):
         pf_window.wm_attributes('-topmost', 1)
         folder_selected = filedialog.askdirectory(initialdir=f"./output/{gaia_id}", parent=pf_window, title="Load Save")
 
-        phasefoldplot_wrapper(plotframe, periods_dict[peaksource_var.get()], shiftslider_slider.get(), offslider_slider.get(), ampslider_slider.get(),
-                              mjd, vels, verrs,
-                              gaia_t, gaia_g_flx, gaia_g_flx_err,
-                              gaia_bp_flx, gaia_bp_flx_err, gaia_rp_flx, gaia_rp_flx_err,
-                              tess_t, tess_flx, tess_flx_err, tessbin=int(tessbin_var.get()),
+        phasefoldplot_wrapper(plotframe, periods_dict[peaksource_var.get()], varvalidation(peaksource_timesentry_var), shiftslider_slider.get(), offslider_slider.get(), ampslider_slider.get(),
+                              dataarray, tessbin=int(tessbin_var.get()),
                               finetune=bool(ftvar.get()))
 
     # def savesave(savename):
@@ -2136,7 +2369,6 @@ def phasefold(analysis, gaia_id):
     savelabel = tk.Label(text="Save name:")
 
     saveloadframe.grid(column=0, row=12)
-
 
     plotctl.grid_configure(rowspan=2)
     plotframe.grid(row=0, column=0, pady=10, padx=10)
@@ -2464,7 +2696,7 @@ def analysis_tab(analysis, queue):
         except KeyError:
             flags = []
 
-        detail_window = tk.Toplevel()
+        detail_window = tk.Toplevel(analysis)
         try:
             if os.name == "nt":
                 detail_window.iconbitmap("favicon.ico")
@@ -2589,7 +2821,7 @@ def analysis_tab(analysis, queue):
         view_lc = tk.Button(buttonframe, text="Phasefold", command=lambda: phasefold(analysis, gaia_id))
         view_lc.grid(row=14, column=1)
 
-        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (gaia_id,)]))
+        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (analysis, gaia_id,)]))
         view_cmd.grid(row=16, column=1)
 
         view_note = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
@@ -2605,7 +2837,7 @@ def analysis_tab(analysis, queue):
     sheet.popup_menu_add_command("Add to observation list", add_to_observation_list)
     sheet.popup_menu_add_command("Remove from observation list", remove_from_observation_list)
     sheet.popup_menu_add_command("View detail window", view_detail_window)
-    sheet.popup_menu_add_command("Create master spectrum", lambda: master_spectrum_window(queue, None, sheet=sheet))
+    sheet.popup_menu_add_command("Create master spectrum", lambda: master_spectrum_window(analysis, queue, None, sheet=sheet))
     sheet.popup_menu_add_command("Reload System", reload_system)
 
     if "known_category" in interesting_dataframe.columns.tolist():
@@ -2985,9 +3217,13 @@ if __name__ == "__main__":
             proc = threading.Thread(target=interactive_main, args=[configs, progress_queue])
             proc.start()
         elif item[0] == "execute_function":
-            if isinstance(item[2], dict):
-                item[1](**item[2])
-            elif len(item) == 3:
-                item[1](*item[2])
-            else:
-                item[1](*item[2], **item[3])
+            try:
+                if isinstance(item[2], dict):
+                    item[1](**item[2])
+                elif len(item) == 3:
+                    item[1](*item[2])
+                else:
+                    item[1](*item[2], **item[3])
+            except Exception as e:
+                print("Exception encountered!:", e)
+                print(traceback.format_exc())

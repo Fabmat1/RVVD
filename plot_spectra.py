@@ -53,7 +53,7 @@ def get_params_from_filename(paramtable: pd.DataFrame, gaia_id, subspec_ind):
 
 
 def normalize_spectrum(wl, flx, std=None):
-    wl_step = np.abs(np.median(np.diff(wl)))
+    wl_step = np.abs(np.median(np.diff(wl)[np.diff(wl) != 0]))
     true_med_size = int(np.floor(MED_WINDOW / wl_step))
     true_max_size = int(np.floor(MAX_WINDOW / wl_step))
     if true_max_size == 0 or true_med_size == 0:
