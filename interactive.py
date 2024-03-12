@@ -219,9 +219,12 @@ def cell_colors(sheet, row_indices_full, row_indices_part, col_ind, colors):
         sheet.highlight_cells(cells=candidatecell_positions, bg=colors[1])
 
 
-def load_or_create_image(window, file_name, size, creation_func=None, remake=False, *args, **kwargs):
+def load_or_create_image(window, file_name, size, queue, creation_func=None, remake=False, *args, **kwargs):
     if not os.path.isfile(file_name):
-        creation_func(*args, **kwargs)
+        returnqueue = man.Queue()
+        queue.put(["execute_function_with_return", creation_func, (returnqueue, *args), kwargs])
+        finished = returnqueue.get()
+
     # transformation matrix we can apply on pages
     if ".pdf" in file_name:
         doc = fitz.open(file_name)
@@ -1509,17 +1512,19 @@ def getztflc(gaia_id):
 
     # try:
     lcq = lightcurve.LCQuery().from_position((coord.ra * u.deg).value, (coord.dec * u.deg).value, 1)
+    mask = lcq.data["catflags"] == 0
 
-    dates = lcq.data["mjd"].to_numpy()
+    data = lcq.data[mask]
+    dates = data["mjd"].to_numpy()
 
     if len(dates) == 0:
         with open(f"output/{gaia_id}/ztf_lc.txt", "w") as file:
             file.write("NaN, NaN, NaN, NaN, NaN, NaN, NaN")
         return False
 
-    mags = lcq.data["mag"].to_numpy()
-    mag_err = lcq.data["magerr"].to_numpy()
-    filters = lcq.data["filtercode"].to_numpy()
+    mags = data["mag"].to_numpy()
+    mag_err = data["magerr"].to_numpy()
+    filters = data["filtercode"].to_numpy()
 
     flx = magtoflux(mags)
     flx_err = magerr_to_fluxerr(mags, mag_err)
@@ -1896,12 +1901,17 @@ def create_master_spectrum(queue, gaia_id, assoc_files, custom_name=None, custom
             global_flx_stds[-1] += np.sqrt(np.sum(flx_stds[wls < bins[-1]] ** 2))
         else:
             mask = np.logical_and(wls >= bin, wls < bins[i + 1])
+            if np.sum(mask) == 0:
+                continue
             flx_between = flxs[mask]
             flx_std_between = flx_stds[mask]
             wls_between = wls[mask]
-            np.delete(flx_between, flx_std_between.argmax())
-            np.delete(wls_between, flx_std_between.argmax())
-            np.delete(flx_std_between, flx_std_between.argmax())
+
+            if np.sum(mask) > 1:
+                np.delete(flx_between, flx_std_between.argmax())
+                np.delete(wls_between, flx_std_between.argmax())
+                np.delete(flx_std_between, flx_std_between.argmax())
+
             frac_to_next_bin = (wls_between - bin) / (bins[i + 1] - bin)
             global_flxs[i] += np.sum(flx_between * (1 - frac_to_next_bin)) / len(flx_between)
             global_flxs[i + 1] += np.sum(flx_between * frac_to_next_bin) / len(flx_between)
@@ -1944,48 +1954,55 @@ def phsin(x, period, offset, amplitude, shift):
     return offset + amplitude * np.sin((x - shift) * 2 * np.pi / period)
 
 
+def make_subplot(ind, d, a, offset, amplitude, shift, nplot, data, tessbin, **kwargs):
+    a.grid(True)
+    if d["name"] == "RV":
+        a.set_ylabel("Radial Velocity [km/s]")
+        sinspace = np.linspace(-1, 1, 1000)
+        a.plot(sinspace, phsin(sinspace, 1, offset, amplitude, 0), color="darkred", zorder=3)
+    else:
+        a.set_ylabel("Relative Flux [arb. unit]")
+    if ind == nplot - 1:
+        a.set_xlabel("Period")
+    else:
+        a.set_xticklabels([])
+    if d["name"] == "TESS":
+        a.scatter(d["time"][::100], d["flux"][::100], color="lightgray", zorder=5, alpha=0.1)
+        a.errorbar(d["time"][::100], d["flux"][::100], yerr=d["flux_error"][::100], linestyle='', color="lightgray", capsize=3, zorder=4, alpha=0.01)
+        mask = np.argsort(d["time"])
+
+        d["time"] = d["time"][mask]
+        d["flux"] = d["flux"][mask]
+        d["flux_error"] = d["flux_error"][mask]
+
+        if tessbin % 2 != 0:
+            tessbin += 1
+
+        meanfilter = np.convolve(d["flux"], np.ones(tessbin) / tessbin, mode='valid')
+        a.plot(d["time"][int(tessbin / 2):-int(tessbin / 2 - 1)], meanfilter, color="darkred", zorder=5)
+        a.set_ylim(meanfilter.min() - 0.05 * np.ptp(meanfilter), meanfilter.max() + 0.05 * np.ptp(meanfilter))
+    elif d["name"] == "RV":
+        a.scatter(d["time"], d["flux"], color="navy", zorder=5)
+        a.errorbar(d["time"], d["flux"], yerr=d["flux_error"], linestyle='', color="navy", capsize=3, zorder=4)
+    elif d["name"] == "GAIA":
+        for c, i in zip(["darkgreen", "navy", "darkred"], range(3)):
+            a.scatter(d[f"time{i}"], d[f"flux{i}"], color=c, zorder=5)
+            a.errorbar(d[f"time{i}"], d[f"flux{i}"], yerr=d[f"flux_error{i}"], linestyle='', color=c, capsize=3, zorder=4)
+    elif d["name"] == "ZTF":
+        for c, i in zip(["darkgreen", "red", "darkred"], range(3)):
+            a.scatter(d[f"time{i}"], d[f"flux{i}"], color=c, zorder=5)
+            a.errorbar(d[f"time{i}"], d[f"flux{i}"], yerr=d[f"flux_error{i}"], linestyle='', color=c, capsize=3, zorder=4)
+    a.legend([d["name"]], loc="upper right")
+
+
 def phasefoldplot(resultqueue, offset, amplitude, shift, nplot, data, tessbin=100, **kwargs):
     fig, axs = plt.subplots(nrows=nplot, ncols=1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8, sharex=True)
 
-    for ind, [d, a] in enumerate(zip(data, axs)):
-        a.grid(True)
-        if d["name"] == "RV":
-            a.set_ylabel("Radial Velocity [km/s]")
-            sinspace = np.linspace(-1, 1, 1000)
-            a.plot(sinspace, phsin(sinspace, 1, offset, amplitude, 0), color="darkred", zorder=3)
-        else:
-            a.set_ylabel("Relative Flux [arb. unit]")
-        if ind == len(axs) - 1:
-            a.set_xlabel("Period")
-        else:
-            a.set_xticklabels([])
-        if d["name"] == "TESS":
-            a.scatter(d["time"][::100], d["flux"][::100], color="lightgray", zorder=5, alpha=0.1)
-            a.errorbar(d["time"][::100], d["flux"][::100], yerr=d["flux_error"][::100], linestyle='', color="lightgray", capsize=3, zorder=4, alpha=0.01)
-            mask = np.argsort(d["time"])
-
-            d["time"] = d["time"][mask]
-            d["flux"] = d["flux"][mask]
-            d["flux_error"] = d["flux_error"][mask]
-
-            if tessbin % 2 != 0:
-                tessbin += 1
-
-            meanfilter = np.convolve(d["flux"], np.ones(tessbin) / tessbin, mode='valid')
-            a.plot(d["time"][int(tessbin / 2):-int(tessbin / 2 - 1)], meanfilter, color="darkred", zorder=5)
-            a.set_ylim(meanfilter.min() - 0.05 * np.ptp(meanfilter), meanfilter.max() + 0.05 * np.ptp(meanfilter))
-        elif d["name"] == "RV":
-            a.scatter(d["time"], d["flux"], color="navy", zorder=5)
-            a.errorbar(d["time"], d["flux"], yerr=d["flux_error"], linestyle='', color="navy", capsize=3, zorder=4)
-        elif d["name"] == "GAIA":
-            for c, i in zip(["darkgreen", "navy", "darkred"], range(3)):
-                a.scatter(d[f"time{i}"], d[f"flux{i}"], color=c, zorder=5)
-                a.errorbar(d[f"time{i}"], d[f"flux{i}"], yerr=d[f"flux_error{i}"], linestyle='', color=c, capsize=3, zorder=4)
-        elif d["name"] == "ZTF":
-            for c, i in zip(["darkgreen", "red", "darkred"], range(3)):
-                a.scatter(d[f"time{i}"], d[f"flux{i}"], color=c, zorder=5)
-                a.errorbar(d[f"time{i}"], d[f"flux{i}"], yerr=d[f"flux_error{i}"], linestyle='', color=c, capsize=3, zorder=4)
-        a.legend([d["name"]], loc="upper right")
+    if not isinstance(axs, plt.Axes):
+        for ind, [d, a] in enumerate(zip(data, axs)):
+            make_subplot(ind, d, a, offset, amplitude, shift, nplot, data, tessbin, **kwargs)
+    else:
+        make_subplot(0, data[0], axs, offset, amplitude, shift, nplot, data, tessbin, **kwargs)
     fig.subplots_adjust(wspace=0)
     resultqueue.put(fig)
 
@@ -2191,7 +2208,7 @@ def phasefold(analysis, gaia_id):
         gaia_maxp = gaia_periods[np.argmax(gaia_power)]
         del gaia_lcdata, gaia_pgram_data
     else:
-        gaia_maxp = None
+        gaia_maxp = 1
         dataarray["GAIA"] = None
 
     if os.path.isfile(f"output/{gaia_id}/tess_lc.txt") and os.path.isfile(f"output/{gaia_id}/tess_lc_periodogram.txt"):
@@ -2209,7 +2226,7 @@ def phasefold(analysis, gaia_id):
 
         del tess_lcdata, tess_pgram_data
     else:
-        tess_maxp = None
+        tess_maxp = 1
         dataarray["TESS"] = None
 
     if os.path.isfile(f"output/{gaia_id}/ztf_lc.txt") and os.path.isfile(f"output/{gaia_id}/ztf_lc_periodogram.txt"):
@@ -2261,7 +2278,7 @@ def phasefold(analysis, gaia_id):
     phasefoldplot_wrapper(plotframe, startperiod, 1, 0, np.mean(vels), np.ptp(vels) / 2,
                           dataarray, finetune=False)
 
-    periods_dict = {"RV": None, "GAIA": gaia_maxp, "TESS": tess_maxp, "ZTF": ztf_maxp}
+    periods_dict = {"RV": 1, "GAIA": gaia_maxp, "TESS": tess_maxp, "ZTF": ztf_maxp}
 
     peaksource_selector_frame = tk.Frame(plotctl)
     peaksource_label = tk.Label(peaksource_selector_frame, text="Get Period from ")
@@ -2720,11 +2737,13 @@ def analysis_tab(analysis, queue):
 
         rvplot = load_or_create_image(main_frame,
                                       f"output/{gaia_id}/RV_variation_broken_axis.pdf",
-                                      imsize)
+                                      imsize,
+                                      queue)
         rvplot.grid(row=1, column=1, sticky="news")
 
         visplot = load_or_create_image(main_frame, f"output/{gaia_id}/visibility.pdf",
                                        imsize,
+                                       queue,
                                        quick_visibility,
                                        ra=ra,
                                        dec=dec,
@@ -2735,6 +2754,7 @@ def analysis_tab(analysis, queue):
         spoverview = load_or_create_image(main_frame,
                                           f"output/{gaia_id}/spoverview.pdf",
                                           imsize,
+                                          queue,
                                           plot_system_from_ind,
                                           ind=str(gaia_id),
                                           savepath=f"output/{gaia_id}/spoverview.pdf",
@@ -3227,3 +3247,18 @@ if __name__ == "__main__":
             except Exception as e:
                 print("Exception encountered!:", e)
                 print(traceback.format_exc())
+        elif item[0] == "execute_function_with_return":
+            returnq = item[2][0]
+            item[2] = item[2][1:]
+            try:
+                if isinstance(item[2], dict):
+                    item[1](**item[2])
+                elif len(item) == 3:
+                    item[1](*item[2])
+                else:
+                    item[1](*item[2], **item[3])
+            except Exception as e:
+                print("Exception encountered!:", e)
+                print(traceback.format_exc())
+            finally:
+                returnq.put(True)
