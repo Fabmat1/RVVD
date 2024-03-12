@@ -9,15 +9,14 @@ from ztfquery import lightcurve
 import astroquery.exceptions
 import itertools
 import json
-import multiprocessing
+from multiprocessing import cpu_count, Manager, active_children
 import pprint
 import subprocess
 import threading
 import tkinter as tk
 import webbrowser
 from idlelib.tooltip import Hovertip
-from multiprocessing.pool import ThreadPool
-from queue import Empty, Queue
+from queue import Empty
 from shutil import which
 from tkinter import ttk, filedialog
 from mpl_scatter_density import ScatterDensityArtist
@@ -1044,17 +1043,6 @@ def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error,
     if nsamp <= 5:
         nsamp = 5
 
-    mask = np.logical_and(np.logical_and(~np.isnan(times), ~np.isnan(flux)), ~np.isnan(flux_error))
-    times = times[mask]
-    flux = flux[mask]
-    flux_error = flux_error[mask]
-
-    sorted_indices = np.argsort(times)
-    times = times[sorted_indices]
-    flux = flux[sorted_indices]
-    flux_error = flux_error[sorted_indices]
-    np.savetxt(f"output/{gaia_id}/tess_lc.txt", np.vstack((times, flux, flux_error)).T, delimiter=",")
-
     # adding the subplot
     plot1 = axs[0]
     periodogram = axs[1]
@@ -1437,7 +1425,7 @@ def opentessfile(flist):
         return np.array([]), np.array([]), np.array([]), np.nan
 
 
-def gettesslc(tic):
+def gettesslc(tic, gaia_id):
     obsTable = Observations.query_criteria(dataproduct_type="timeseries",
                                            project="TESS",
                                            target_name=tic)
@@ -1471,10 +1459,21 @@ def gettesslc(tic):
         flux_errors.append(ef2)
         crowdsaps.append(cs2)
 
-    if len(times) > 0:
-        return np.concatenate(times), np.concatenate(fluxes), np.concatenate(flux_errors), np.mean(np.concatenate(crowdsaps))
-    else:
-        return None
+    times = np.concatenate(times)
+    flux = np.concatenate(times)
+    flux_error = np.concatenate(flux_errors)
+
+    mask = np.logical_and(np.logical_and(~np.isnan(times), ~np.isnan(flux)), ~np.isnan(flux_error))
+    times = times[mask]
+    flux = flux[mask]
+    flux_error = flux_error[mask]
+
+    sorted_indices = np.argsort(times)
+    times = times[sorted_indices]
+    flux = flux[sorted_indices]
+    flux_error = flux_error[sorted_indices]
+    np.savetxt(f"output/{gaia_id}/tess_lc.txt", np.vstack((times, flux, flux_error)).T, delimiter=",")
+
 
 
 def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, lcframe, queue):
@@ -1483,13 +1482,15 @@ def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, lcfram
     progress_bar.start()
 
     def starttessthread():
-        pool = ThreadPool(processes=1)
-        async_result = pool.apply_async(gettesslc, (tic,))
-        lc_data = async_result.get()
+        thread = threading.Thread(target=lambda: gettesslc(tic))
+        thread.start()
+        thread.join()
+
+        lcdata = np.genfromtxt(f"output/{gaia_id}/tess_lc.txt", delimiter=",")
 
         progress_bar.destroy()
-        if lc_data is not None:
-            drawlcplot(lc_data, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, "TESS", None)
+        if lcdata is not None:
+            drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, "TESS", None)
         else:
             btntip.destroy()
             notfoundlabel = tk.Label(lcframe, text="No TESS Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
@@ -3152,7 +3153,7 @@ def gui_window(queue, p_queue):
     preprocess(prep, queue)
 
     # Calculate the number of rows needed to display the progress bars in a grid with two columns
-    num_cores = multiprocessing.cpu_count()
+    num_cores = cpu_count()
 
     # Create a progress bar for each subprocess
     subprocess_progress = [overall]
@@ -3213,6 +3214,8 @@ def gui_window(queue, p_queue):
     def on_closing():
         if os.path.isdir("./mastDownload/TESS"):
             shutil.rmtree("./mastDownload/TESS")
+        for prc in active_children():
+            prc.terminate()
         os._exit(0)
 
     window.protocol("WM_DELETE_WINDOW", on_closing)
@@ -3223,7 +3226,7 @@ def gui_window(queue, p_queue):
 
 
 if __name__ == "__main__":
-    man = multiprocessing.Manager()
+    man = Manager()
     queue = man.Queue()
     progress_queue = man.Queue()
     gui_main = threading.Thread(None, gui_window, args=[queue, progress_queue])
