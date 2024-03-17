@@ -10,7 +10,6 @@ import astroquery.exceptions
 import itertools
 import json
 from multiprocessing import cpu_count, Manager, active_children
-import pprint
 import subprocess
 import threading
 import tkinter as tk
@@ -19,7 +18,6 @@ from idlelib.tooltip import Hovertip
 from queue import Empty
 from shutil import which
 from tkinter import ttk, filedialog
-from mpl_scatter_density import ScatterDensityArtist
 
 import _thread
 import matplotlib.pyplot as plt
@@ -43,8 +41,19 @@ from get_interesting_stars import quick_visibility
 from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis, open_spec_files, load_spectrum
 from plot_spectra import plot_system_from_ind
 from preprocessing import *
-
 import matplotlib
+import screeninfo
+
+
+def get_monitor_from_coord(x, y):
+    monitors = screeninfo.get_monitors()
+
+    for m in reversed(monitors):
+        if m.x <= x <= m.width + m.x and m.y <= y <= m.height + m.y:
+            return [m.width, m.height]
+
+    return [monitors[0].width, monitors[0].height]
+
 
 matplotlib.use('QtAgg')
 
@@ -773,8 +782,8 @@ def create_CMD_plot(gaia_id):
     plt.close()
 
 
-def show_CMD_window(analysis, gaia_id):
-    cmd_window = tk.Toplevel(analysis)
+def show_CMD_window(gaia_id):
+    cmd_window = tk.Toplevel()
     cmd_window.title(f"CMD for Gaia DR3 {gaia_id}")
     cmd_window.geometry("500x500+0+0")
     cmd_frame = tk.Frame(cmd_window)
@@ -1169,7 +1178,7 @@ def plotlc_async(queue, gaia_id, frame, pgramdata, lctype, *args, **kwargs):
 
 def getgaialc(gaia_id):
     photquery = Vizier(
-        columns=["Source", "TimeG", "TimeBP", "TimeRP", "FG", "FBP", "FRP", "e_FG", "e_FBP", "e_FRP"]
+        columns=["Source", "TimeG", "TimeBP", "TimeRP", "FG", "FBP", "FRP", "e_FG", "e_FBP", "e_FRP", "noisyFlag"]
     ).query_region(
         SkyCoord.from_name(f'GAIA DR3 {gaia_id}'),
         radius=1 * u.arcsec,
@@ -1178,6 +1187,8 @@ def getgaialc(gaia_id):
 
     if len(photquery) != 0:
         table = photquery[0].to_pandas()
+        table = table[table["noisyFlag"] != 1]
+        table = table.drop(columns=["noisyFlag"])
         table.columns = ["Source", "TimeG", "TimeBP", "TimeRP", "FG", "FBP", "FRP", "e_FG", "e_FBP", "e_FRP"]
         table = table[table["Source"] == gaia_id]
         table = table.drop(columns=["Source"])
@@ -1203,14 +1214,14 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
         rp_flx = lcdata[:, 5]
         rp_flx_err = lcdata[:, 8]
         btntip.destroy()
-        thread = plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, [tg, tbp, trp], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
+        plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, [tg, tbp, trp], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err])
     elif lctype == "TESS":
-        t = lcdata[0]
-        tess_flx = lcdata[1]
-        tess_flx_err = lcdata[2]
+        t = lcdata[:, 0]
+        tess_flx = lcdata[:, 1]
+        tess_flx_err = lcdata[:, 2]
         #        crowdsap = lcdata[3]
         btntip.destroy()
-        thread = plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, t, tess_flx, tess_flx_err)
+        plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, t, tess_flx, tess_flx_err)
     elif lctype == "ZTF":
         gmask = lcdata[:, -1] == 1.
         imask = lcdata[:, -1] == 2.
@@ -1224,7 +1235,7 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
             flxs.append(lcdata[:, 1][mask])
             flx_errs.append(lcdata[:, 2][mask])
 
-        thread = plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, times, flxs, flx_errs)
+        plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, times, flxs, flx_errs)
 
     filterframe = tk.Frame(plotctl)
     checknoisevar = tk.IntVar(value=0)
@@ -1328,14 +1339,14 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
             trp = lcdata[:, 1]
             rp_flx = lcdata[:, 5]
             rp_flx_err = lcdata[:, 8]
-            thread = plotlc_async(queue, gaia_id, plotframe, None, lctype, [tg, tbp, trp], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err], nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+            plotlc_async(queue, gaia_id, plotframe, None, lctype, [tg, tbp, trp], [g_flx, bp_flx, rp_flx], [g_flx_err, bp_flx_err, rp_flx_err], nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
         elif lctype == "TESS":
-            t = lcdata[0]
-            tess_flx = lcdata[1]
-            tess_flx_err = lcdata[2]
+            t = lcdata[:, 0]
+            tess_flx = lcdata[:, 1]
+            tess_flx_err = lcdata[:, 2]
             #            crowdsap = lcdata[3]
             btntip.destroy()
-            thread = plotlc_async(queue, gaia_id, plotframe, None, lctype, t, tess_flx, tess_flx_err, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+            plotlc_async(queue, gaia_id, plotframe, None, lctype, t, tess_flx, tess_flx_err, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
         elif lctype == "ZTF":
             gmask = lcdata[:, -1] == 1.
             imask = lcdata[:, -1] == 2.
@@ -1348,8 +1359,7 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
                 times.append(lcdata[:, 0][mask])
                 flxs.append(lcdata[:, 1][mask])
                 flx_errs.append(lcdata[:, 2][mask])
-            print("Redoing ztf")
-            thread = plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, times, flxs, flx_errs, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+            plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, times, flxs, flx_errs, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
 
     redoperiodogrambtn = tk.Button(plotctl, text="Redo Periodogram", command=drawplotwrapper)
 
@@ -1364,8 +1374,7 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
 
 
 def getgaiawrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper, queue):
-    print("gaia button press")
-    progress_bar = ttk.Progressbar(lcframe, mode='indeterminate', length=300)
+    progress_bar = ttk.Progressbar(plotwrapper, mode='indeterminate', length=300)
     progress_bar.pack()
     progress_bar.start()
 
@@ -1426,6 +1435,7 @@ def opentessfile(flist):
 
 
 def gettesslc(tic, gaia_id):
+    print(f"[{gaia_id}] Getting MAST data...")
     obsTable = Observations.query_criteria(dataproduct_type="timeseries",
                                            project="TESS",
                                            target_name=tic)
@@ -1433,12 +1443,15 @@ def gettesslc(tic, gaia_id):
     try:
         data = Observations.get_product_list(obsTable)
     except InvalidQueryError:
-        return None
+        with open(f"output/{gaia_id}/tess_lc.txt", "w") as file:
+            file.write("NaN, NaN, NaN, NaN, NaN, NaN, NaN")
+
     times = []
     fluxes = []
     flux_errors = []
     crowdsaps = []
 
+    print(f"[{gaia_id}] Looking for long cadence data...")
     long_c_lc = Observations.download_products(data, productSubGroupDescription="LC")
 
     if long_c_lc is not None:
@@ -1449,6 +1462,7 @@ def gettesslc(tic, gaia_id):
         flux_errors.append(ef1)
         crowdsaps.append(cs1)
 
+    print(f"[{gaia_id}] Looking for short cadence data...")
     short_c_lc = Observations.download_products(data, productSubGroupDescription="FAST-LC")
 
     if short_c_lc is not None:
@@ -1460,36 +1474,48 @@ def gettesslc(tic, gaia_id):
         crowdsaps.append(cs2)
 
     times = np.concatenate(times)
-    flux = np.concatenate(times)
+    flux = np.concatenate(fluxes)
     flux_error = np.concatenate(flux_errors)
+    print(f"[{gaia_id}] Got {len(times)} datapoints")
 
-    mask = np.logical_and(np.logical_and(~np.isnan(times), ~np.isnan(flux)), ~np.isnan(flux_error))
-    times = times[mask]
-    flux = flux[mask]
-    flux_error = flux_error[mask]
+    if len(times) > 0:
+        mask = np.logical_and(np.logical_and(~np.isnan(times), ~np.isnan(flux)), ~np.isnan(flux_error))
+        times = times[mask]
+        flux = flux[mask]
+        flux_error = flux_error[mask]
 
-    sorted_indices = np.argsort(times)
-    times = times[sorted_indices]
-    flux = flux[sorted_indices]
-    flux_error = flux_error[sorted_indices]
-    np.savetxt(f"output/{gaia_id}/tess_lc.txt", np.vstack((times, flux, flux_error)).T, delimiter=",")
-
+        sorted_indices = np.argsort(times)
+        times = times[sorted_indices]
+        flux = flux[sorted_indices]
+        flux_error = flux_error[sorted_indices]
+        np.savetxt(f"output/{gaia_id}/tess_lc.txt", np.vstack((times, flux, flux_error)).T, delimiter=",")
+    else:
+        with open(f"output/{gaia_id}/tess_lc.txt", "w") as file:
+            file.write("NaN, NaN, NaN, NaN, NaN, NaN, NaN")
 
 
 def gettesswrapper(gaia_id, tic, btntip, plotframe, plotctl, plotwrapper, lcframe, queue):
     progress_bar = ttk.Progressbar(lcframe, mode='indeterminate', length=300)
     progress_bar.pack()
     progress_bar.start()
+    print(f"[{gaia_id}] Getting TESS LC...")
 
     def starttessthread():
-        thread = threading.Thread(target=lambda: gettesslc(tic))
+        thread = threading.Thread(target=lambda: gettesslc(tic, gaia_id))
         thread.start()
         thread.join()
-
-        lcdata = np.genfromtxt(f"output/{gaia_id}/tess_lc.txt", delimiter=",")
+        print(f"[{gaia_id}] Beginning Plotting...")
+        try:
+            lcdata = np.genfromtxt(f"output/{gaia_id}/tess_lc.txt", delimiter=",")
+        except FileNotFoundError:
+            btntip.destroy()
+            notfoundlabel = tk.Label(lcframe, text="No TESS Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel.pack()
+            return
 
         progress_bar.destroy()
-        if lcdata is not None:
+
+        if lcdata.ndim != 1:
             drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, "TESS", None)
         else:
             btntip.destroy()
@@ -1532,15 +1558,13 @@ def getztflc(gaia_id):
 
     table = pd.DataFrame({"mjd": dates, "flx": flx, "flx_err": flx_err, "filter": filters})
 
-    print(dates, flx, flx_err, filters)
-
     table.to_csv(f"output/{gaia_id}/ztf_lc.txt", index=False, header=False)
 
     return True
 
 
 def getztfwrapper(gaia_id, tiplabel, lcframe, ctlframe, plotwrapper, queue):
-    progress_bar = ttk.Progressbar(lcframe, mode='indeterminate', length=300)
+    progress_bar = ttk.Progressbar(plotwrapper, mode='indeterminate', length=300)
     progress_bar.pack()
     progress_bar.start()
 
@@ -1640,9 +1664,10 @@ def viewlc(window, gaia_id, tic, queue):
             if lcdata.ndim == 2:
                 lcdata = [lcdata[:, 0], lcdata[:, 1], lcdata[:, 2]]
                 pgramdata = np.genfromtxt(f"output/{gaia_id}/tess_lc_periodogram.txt", delimiter=",")
+                lcplottab(lcdata, tesslc, "TESS", gaia_id, tic, queue, pgramdata)
             else:
-                pgramdata = None
-            lcplottab(lcdata, tesslc, "TESS", gaia_id, tic, queue, pgramdata)
+                notfoundlabel = tk.Label(tesslc, text="No TESS Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+                notfoundlabel.pack()
         except FileNotFoundError:
             lcplottab(None, tesslc, "TESS", gaia_id, tic, queue, None)
     else:
@@ -1653,9 +1678,11 @@ def viewlc(window, gaia_id, tic, queue):
             lcdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc.txt", delimiter=",")
             if lcdata.ndim == 2:
                 pgramdata = np.genfromtxt(f"output/{gaia_id}/gaia_lc_periodogram.txt", delimiter=",")
+                lcplottab(lcdata, gaialc, "GAIA", gaia_id, tic, queue, pgramdata)
             else:
                 pgramdata = None
-            lcplottab(lcdata, gaialc, "GAIA", gaia_id, tic, queue, pgramdata)
+                notfoundlabel = tk.Label(gaialc, text="No GAIA Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+                notfoundlabel.pack()
         except FileNotFoundError:
             lcplottab(None, gaialc, "GAIA", gaia_id, tic, queue, None)
     else:
@@ -1679,9 +1706,11 @@ def viewlc(window, gaia_id, tic, queue):
                 pgramdata = None
             lcplottab(lcdata, ztflc, "ZTF", gaia_id, tic, queue, pgramdata)
         except FileNotFoundError:
-            lcplottab(None, ztflc, "ZTF", gaia_id, tic, queue, None)
+            notfoundlabel = tk.Label(ztflc, text="No ZTF Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel.pack()
         except pd.errors.EmptyDataError:
-            lcplottab(None, ztflc, "ZTF", gaia_id, tic, queue, None)
+            notfoundlabel = tk.Label(ztflc, text="No ZTF Lightcurve was found for this Star!", fg="red", font=('Segoe UI', 25))
+            notfoundlabel.pack()
     else:
         lcplottab(None, ztflc, "ZTF", gaia_id, tic, queue, None)
 
@@ -1968,8 +1997,6 @@ def make_subplot(ind, d, a, offset, amplitude, shift, nplot, data, tessbin, **kw
     else:
         a.set_xticklabels([])
     if d["name"] == "TESS":
-        a.scatter(d["time"][::100], d["flux"][::100], color="lightgray", zorder=5, alpha=0.1)
-        a.errorbar(d["time"][::100], d["flux"][::100], yerr=d["flux_error"][::100], linestyle='', color="lightgray", capsize=3, zorder=4, alpha=0.01)
         mask = np.argsort(d["time"])
 
         d["time"] = d["time"][mask]
@@ -1979,9 +2006,22 @@ def make_subplot(ind, d, a, offset, amplitude, shift, nplot, data, tessbin, **kw
         if tessbin % 2 != 0:
             tessbin += 1
 
-        meanfilter = np.convolve(d["flux"], np.ones(tessbin) / tessbin, mode='valid')
-        a.plot(d["time"][int(tessbin / 2):-int(tessbin / 2 - 1)], meanfilter, color="darkred", zorder=5)
-        a.set_ylim(meanfilter.min() - 0.05 * np.ptp(meanfilter), meanfilter.max() + 0.05 * np.ptp(meanfilter))
+        # meanfilter = np.convolve(d["flux"], np.ones(tessbin) / tessbin, mode='valid')
+        n = len(d["flux"] // tessbin)
+        excess = len(d["flux"]) % tessbin
+        if excess > 0:
+            d["time"] = d["time"][:-excess]
+            d["flux"] = d["flux"][:-excess]
+            d["flux_error"] = d["flux_error"][:-excess]
+        binned_time = np.mean(d["time"][:n * tessbin].reshape(-1, tessbin), axis=1)
+        binned_flux = np.mean(d["flux"][:n * tessbin].reshape(-1, tessbin), axis=1)
+        binned_error = np.sqrt(np.sum(d["flux_error"][:n * tessbin].reshape(-1, tessbin) ** 2, axis=1)) / tessbin
+
+        a.scatter(binned_time, binned_flux, color="darkred", zorder=5)
+        a.errorbar(binned_time, binned_flux, yerr=binned_error, linestyle='', color="darkred", capsize=3, zorder=4)
+
+        # a.set_ylim(meanfilter.min() - 0.05 * np.ptp(meanfilter), meanfilter.max() + 0.05 * np.ptp(meanfilter))
+        a.set_ylim(binned_flux.min() - 0.05 * np.ptp(binned_flux), binned_flux.max() + 0.05 * np.ptp(binned_flux))
     elif d["name"] == "RV":
         a.scatter(d["time"], d["flux"], color="navy", zorder=5)
         a.errorbar(d["time"], d["flux"], yerr=d["flux_error"], linestyle='', color="navy", capsize=3, zorder=4)
@@ -2029,14 +2069,11 @@ def phasefoldplot_wrapper(plotframe, period, multiplier, shift, offset, amplitud
                                      [period, offset, amplitude, shift],
                                      dataarray["RV"][2], maxfev=100000,
                                      bounds=[
-                                         [period - p_amt_whole_phase, offset * .5, amplitude * .5, -1],
-                                         [period + p_amt_whole_phase, offset * 2, amplitude * 2, 2]
+                                         [period - p_amt_whole_phase, offset * .5, amplitude * .5, 0],
+                                         [period + p_amt_whole_phase, offset * 2, amplitude * 2, 1]
                                      ])
             period, offset, amplitude, shift = params
-            if shift > 1:
-                shift -= 1
-            elif shift < 0:
-                shift += 1
+            shift = 1 - shift
         except RuntimeError as e:
             pass
 
@@ -2227,6 +2264,7 @@ def phasefold(analysis, gaia_id):
 
         del tess_lcdata, tess_pgram_data
     else:
+        tess_t = None
         tess_maxp = 1
         dataarray["TESS"] = None
 
@@ -2277,7 +2315,7 @@ def phasefold(analysis, gaia_id):
 
     startperiod = tess_maxp
     phasefoldplot_wrapper(plotframe, startperiod, 1, 0, np.mean(vels), np.ptp(vels) / 2,
-                          dataarray, finetune=False)
+                          dataarray, finetune=False, tessbin=int(np.sqrt(len(tess_t if tess_t is not None else [0]))))
 
     periods_dict = {"RV": 1, "GAIA": gaia_maxp, "TESS": tess_maxp, "ZTF": ztf_maxp}
 
@@ -2296,7 +2334,11 @@ def phasefold(analysis, gaia_id):
 
     tessbin_frame = tk.Frame(plotctl)
     tessbin_label = tk.Label(tessbin_frame, text="TESS binning ")
-    tessbin_var = tk.StringVar(value="100")
+    if tess_t is not None:
+        binvar = str(int(np.sqrt(len(tess_t))))
+    else:
+        binvar = "0"
+    tessbin_var = tk.StringVar(value=binvar)
     tessbin = tk.Entry(tessbin_frame, textvariable=tessbin_var)
     tessbin_label.pack(side=tk.LEFT)
     tessbin.pack(side=tk.LEFT)
@@ -2733,8 +2775,8 @@ def analysis_tab(analysis, queue):
 
         main_frame = tk.Frame(detail_window)
         main_frame.pack(fill="both", expand=1)
-
-        imsize = (int(detail_window.winfo_screenwidth() // 2.25), int(detail_window.winfo_screenheight() // 2.25))
+        width, height = get_monitor_from_coord(detail_window.winfo_x(), detail_window.winfo_y())
+        imsize = (int(width // 2.25), int(height // 2.25))
 
         rvplot = load_or_create_image(main_frame,
                                       f"output/{gaia_id}/RV_variation_broken_axis.pdf",
@@ -2842,7 +2884,7 @@ def analysis_tab(analysis, queue):
         view_lc = tk.Button(buttonframe, text="Phasefold", command=lambda: phasefold(analysis, gaia_id))
         view_lc.grid(row=14, column=1)
 
-        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (analysis, gaia_id,)]))
+        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (gaia_id,)]))
         view_cmd.grid(row=16, column=1)
 
         view_note = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
@@ -3265,3 +3307,4 @@ if __name__ == "__main__":
                 print(traceback.format_exc())
             finally:
                 returnq.put(True)
+        queue.task_done()

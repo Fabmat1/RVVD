@@ -2,9 +2,11 @@ import ast
 import os
 import shutil
 import urllib.parse
+
+import astropy.coordinates
 from itertools import repeat
 from multiprocessing import Pool
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord, Galactic, Galactocentric
 from astropy.time import Time
 from astropy.coordinates import get_body, get_sun
 import astropy.units as u
@@ -660,38 +662,83 @@ def get_visibility_for_night(ra, dec, sid, date, utc_offset):
     return obs_conditions
 
 
-def calculate_spatial_velocity(rv, pmra, pmdec, parallax, rv_err=None, pmra_err=None, pmdec_err=None, parallax_err=None):
+def calculate_spatial_velocity(ra, dec, rv, pmra, pmdec, parallax, rv_err=None, pmra_err=None, pmdec_err=None, parallax_err=None):
     if not all([isinstance(k, float) for k in [rv, pmra, pmdec, parallax, rv_err, pmra_err, pmdec_err, parallax_err]]):
         return np.nan, np.nan
 
-    parallax = np.abs(parallax/1000)
-    parallax_err /= 1000
-    distance = 1 / parallax
+    if parallax > 0:
+        coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg,
+                         distance=1 / (parallax / 1000) * u.pc,
+                         radial_velocity=rv * u.km / u.s,
+                         pm_ra_cosdec=pmra * u.mas / u.yr,
+                         pm_dec=pmdec * u.mas / u.yr)
+        galcen_frame = Galactocentric()
+        galactic = coord.transform_to(galcen_frame)
+        spatial_vel = np.sqrt(galactic.v_x ** 2 + galactic.v_y ** 2 + galactic.v_z ** 2)
 
-    ra_speed = pmra * np.pi/648000000 * distance * 978462  # pc/yr to km/s
-    dec_speed = pmdec * np.pi/648000000 * distance * 978462  # pc/yr to km/s
+        if parallax > parallax_err:
 
-    spatial_vel = np.sqrt(rv ** 2 + ra_speed ** 2 + dec_speed ** 2)
+            lower_plx = parallax - parallax_err
+            upper_dist = 1/(lower_plx/1000)
+            upper_plx = parallax + parallax_err
+            lower_dist = 1/(upper_plx/1000)
 
-    if parallax_err < parallax / 2:
-        distance_err = parallax_err / parallax ** 2
-        ra_speed_err = np.sqrt((distance_err * distance * np.pi/648000000 * 978462) ** 2 + (pmra_err * pmra * np.pi/648000000 * 978462) ** 2)
-        dec_speed_err = np.sqrt((distance_err * distance * np.pi/648000000 * 978462) ** 2 + (pmdec_err * pmdec * np.pi/648000000 * 978462) ** 2)
+            velocities = []
+            for d in [lower_dist, upper_dist]:
+                for r in [rv+rv_err, rv-rv_err]:
+                    for pmr in [pmra+pmra_err, pmra-pmra_err]:
+                        for pmd in [pmdec+pmdec_err, pmdec-pmdec_err]:
+                            c = SkyCoord(ra=ra * u.deg, dec=dec * u.deg,
+                                                 distance=d * u.pc,
+                                                 radial_velocity=r * u.km/u.s,
+                                                 pm_ra_cosdec=pmr * u.mas/u.yr,
+                                                 pm_dec=pmd * u.mas/u.yr)
+                            t = c.transform_to(galcen_frame)
+                            velocities.append(np.sqrt(t.v_x ** 2 + t.v_y ** 2 + t.v_z ** 2).value)
+            velocities = np.array(velocities)
 
-        spatial_vel_err = np.sqrt((rv_err * rv / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2 +
-                                  (ra_speed_err * ra_speed / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2 +
-                                  (dec_speed_err * dec_speed / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2)
-        return spatial_vel, spatial_vel_err
+            upper_spatial_vel = velocities.max()
+            lower_spatial_vel = velocities.min()
+            # print(lower_spatial_vel, spatial_vel, upper_spatial_vel)
+            # print(((spatial_vel.value-lower_spatial_vel.value), (upper_spatial_vel.value-spatial_vel.value)))
+            # print((upper_spatial_vel.value-lower_spatial_vel.value)/2)
+            return spatial_vel.value, ((spatial_vel.value-lower_spatial_vel)+(upper_spatial_vel-spatial_vel.value))/2
+
+        else:
+            return spatial_vel.value, np.inf
+
     else:
-        parallax = np.abs(parallax) + parallax_err
-        distance = 1 / parallax
+        return np.nan, np.nan
 
-        ra_speed = pmra * distance * np.pi/648000000 * 978462  # pc/yr to km/s
-        dec_speed = pmdec * distance * np.pi/648000000 * 978462 # pc/yr to km/s
 
-        spatial_vel = np.sqrt(rv ** 2 + ra_speed ** 2 + dec_speed ** 2)
-
-        return spatial_vel, spatial_vel
+    # parallax = np.abs(parallax/1000)
+    # parallax_err /= 1000
+    # distance = 1 / parallax
+    # ra_speed = pmra * np.pi/648000000 * distance * 978462  # pc/yr to km/s
+    # dec_speed = pmdec * np.pi/648000000 * distance * 978462  # pc/yr to km/s
+    #
+    # spatial_vel = np.sqrt(rv ** 2 + ra_speed ** 2 + dec_speed ** 2)
+    #
+    # if parallax_err < parallax / 2:
+    #     distance_err = parallax_err / parallax ** 2
+    #     ra_speed_err = np.sqrt((distance_err * distance * np.pi/648000000 * 978462) ** 2 + (pmra_err * pmra * np.pi/648000000 * 978462) ** 2)
+    #     dec_speed_err = np.sqrt((distance_err * distance * np.pi/648000000 * 978462) ** 2 + (pmdec_err * pmdec * np.pi/648000000 * 978462) ** 2)
+    #
+    #     spatial_vel_err = np.sqrt((rv_err * rv / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2 +
+    #                               (ra_speed_err * ra_speed / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2 +
+    #                               (dec_speed_err * dec_speed / ((rv ** 2 + ra_speed ** 2 + dec_speed ** 2) ** (3 / 2))) ** 2)
+    #     print(spatial_vel)
+    #     return spatial_vel, spatial_vel_err
+    # else:
+    #     parallax = np.abs(parallax) + parallax_err
+    #     distance = 1 / parallax
+    #
+    #     ra_speed = pmra * distance * np.pi/648000000 * 978462  # pc/yr to km/s
+    #     dec_speed = pmdec * distance * np.pi/648000000 * 978462 # pc/yr to km/s
+    #
+    #     spatial_vel = np.sqrt(rv ** 2 + ra_speed ** 2 + dec_speed ** 2)
+    #     print(spatial_vel)
+    #     return spatial_vel, spatial_vel
 
 
 def add_useful_columns(res_params, catalogue, config):
@@ -902,7 +949,7 @@ def add_useful_columns(res_params, catalogue, config):
             out_df.at[ind, "known_category"] = known_category
             out_df.at[ind, "flags"] = flags
 
-    applied_thingy = pd.DataFrame(list(out_df.apply(lambda x: calculate_spatial_velocity(x['RVavg'],
+    applied_thingy = pd.DataFrame(list(out_df.apply(lambda x: calculate_spatial_velocity(x['ra'],x['dec'],x['RVavg'],
                                                                                                    x['pmra'],
                                                                                                    x['pmdec'],
                                                                                                    x['parallax'],
