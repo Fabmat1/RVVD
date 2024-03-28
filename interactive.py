@@ -422,7 +422,7 @@ def showimages_sed(gaia_id, frame, window):
     setCanvasSize(frame, window)
 
 
-def master_spectrum_window(window, queue, gaia_id, sheet=None):
+def master_spectrum_window(window, queue, gaia_id, button=None, sheet=None):
     if sheet is not None:
         gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
 
@@ -469,7 +469,8 @@ def master_spectrum_window(window, queue, gaia_id, sheet=None):
             create_master_spectrum(queue, gaia_id, assoc_files)
         else:
             create_master_spectrum(queue, gaia_id, assoc_files, custom_name_val.get(), float(custom_rv_val.get()), custom_sel_val.get())
-
+        if button is not None:
+            button["state"] = "normal"
     do_master_button = tk.Button(masspecframe, text="Create Master Spectrum", command=do_master_thing)
     do_master_button.grid(row=4, column=2)
     masspecframe.pack()
@@ -697,8 +698,8 @@ def fitsed(window, gaia_id):
     var = tk.IntVar()
     checkbox = tk.Checkbutton(fitinputframe, text='Fit a composite SED?', variable=var, command=enable_star_two_inputs)
 
-    star_one_frame.pack(anchor="nw", padx=10, pady=10)
-    star_two_frame.pack(anchor="nw", padx=10, pady=10)
+    star_one_frame.pack(anchor="nw", padx=10, pady=10, fill="x")
+    star_two_frame.pack(anchor="nw", padx=10, pady=10, fill="x")
     checkbox.pack()
 
     noresults = None
@@ -885,6 +886,20 @@ def fitmodel(window, gaia_id):
     gridlabel_one = tk.Label(star_one_frame, text="Select grid")
     grid_selector_one = tk.OptionMenu(star_one_frame, grid_one, *gridoptions)
 
+
+    for i, (label_name, entry, freezebox) in enumerate(zip(star_one_label_names, star_one_inputs, star_one_freezeboxes)):
+        ttk.Label(star_one_frame, text=label_name).grid(row=i, column=0)
+        entry.grid(row=i, column=1)
+        ttk.Label(star_one_frame, text="Freeze?").grid(row=i, column=2)
+        freezebox.grid(row=i, column=3)
+
+    gridlabel_one.grid(row=i + 1, column=0)
+    grid_selector_one.grid(row=i + 1, column=1)
+
+    star_one_frame.pack(anchor="nw", padx=10, pady=10, fill="x")
+
+    metaoptions = ttk.LabelFrame(fitinputframe, text="Advanced Options")
+
     def browse_model_dir(isisdir):
         if isisdir is None:
             return
@@ -897,28 +912,20 @@ def fitmodel(window, gaia_id):
         update_option_menu(grid_selector_one, grid_one, gridoptions)
         fitmodelwindow.wm_attributes('-topmost', 0)
 
-    miniframe = tk.Frame(fitinputframe)
-    ttk.Label(miniframe, text="ISIS Model directory").pack(side=tk.LEFT, padx=10, pady=10)
+    miniframe = tk.Frame(metaoptions)
+    ttk.Label(miniframe, text="ISIS Model directory").pack(side=tk.LEFT, padx=5)
     isis_dir = tk.StringVar(value=prefs["isisdir"])
-    tk.Entry(miniframe, textvariable=isis_dir, state="disabled").pack(side=tk.LEFT, pady=10)
-    tk.Button(miniframe, text="Browse Directories", command=lambda: browse_model_dir(isis_dir)).pack(side=tk.LEFT, pady=10)
-    miniframe.pack()
+    tk.Entry(miniframe, textvariable=isis_dir, state="disabled").pack(side=tk.LEFT, padx=5)
+    tk.Button(miniframe, text="Browse Directories", command=lambda: browse_model_dir(isis_dir)).pack(side=tk.LEFT, padx=5)
+    miniframe.grid(row=0, column=0, columnspan=3)
 
-    # TODO: enable selecting different master spectra
-    if not os.path.isfile(f"master_spectra/{gaia_id}_stacked.txt"):
-        create_master_spec_btn = tk.Button(fitinputframe, text="Create master spectrum", command=lambda: master_spectrum_window(window, queue, gaia_id))
-        create_master_spec_btn.pack(anchor="se", padx=5, pady=5)
+    resvar = tk.StringVar(value="3.2")
+    reslabel = tk.Label(metaoptions, text="Wavelength resolution Δλ")
+    resinput = ttk.Entry(metaoptions, textvariable=resvar, width=5)
+    reslabel.grid(row=1, column=0, sticky="w")
+    resinput.grid(row=1, column=1, sticky="w")
 
-    for i, (label_name, entry, freezebox) in enumerate(zip(star_one_label_names, star_one_inputs, star_one_freezeboxes)):
-        ttk.Label(star_one_frame, text=label_name).grid(row=i, column=0)
-        entry.grid(row=i, column=1)
-        ttk.Label(star_one_frame, text="Freeze?").grid(row=i, column=2)
-        freezebox.grid(row=i, column=3)
-
-    gridlabel_one.grid(row=i + 1, column=0)
-    grid_selector_one.grid(row=i + 1, column=1)
-
-    star_one_frame.pack(anchor="nw", padx=10, pady=10)
+    metaoptions.pack(anchor="nw", padx=10, pady=10, fill="x")
 
     if os.path.isdir(f"models/{gaia_id}"):
         showimages_model(gaia_id, fitoutputframe, fitmodelwindow)
@@ -949,10 +956,21 @@ def fitmodel(window, gaia_id):
         thread = threading.Thread(target=execute_function_after_process)
         thread.start()
 
+
     # TODO: fix up these variable names
-    domodelbtn = tk.Button(fitinputframe, text="Fit Model",
-                           command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/", f"/home/fabian/PycharmProjects/RVVD_plus_LAMOST/master_spectra/{gaia_id}_stacked.txt", 3.2))
-    domodelbtn.pack(anchor="se")
+
+    buttonsframe = tk.Frame(fitinputframe)
+    domodelbtn = tk.Button(buttonsframe, text="Fit Model",
+                           command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/", f"/home/fabian/PycharmProjects/RVVD_plus_LAMOST/master_spectra/{gaia_id}_stacked.txt", resvar.get()))
+
+    create_master_spec_btn = tk.Button(buttonsframe, text="Create master spectrum", command=lambda: master_spectrum_window(window, queue, gaia_id, button=domodelbtn))
+
+    if not os.path.isfile(f"master_spectra/{gaia_id}_stacked.txt"):
+        domodelbtn["state"] = "disabled"
+
+    domodelbtn.pack(side=tk.RIGHT)
+    create_master_spec_btn.pack(side=tk.RIGHT)
+    buttonsframe.pack(anchor="se")
 
     fitinputframe.pack(side=tk.LEFT, anchor="nw", padx=10, pady=10)
     separator = ttk.Separator(fitmodelframe, orient='vertical')
@@ -1359,7 +1377,7 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
                 times.append(lcdata[:, 0][mask])
                 flxs.append(lcdata[:, 1][mask])
                 flx_errs.append(lcdata[:, 2][mask])
-            plotlc_async(queue, gaia_id, plotframe, pgramdata, lctype, times, flxs, flx_errs, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
+            plotlc_async(queue, gaia_id, plotframe, None, lctype, times, flxs, flx_errs, nterms=nterms, nsamp=nsamp, min_p=min_p, max_p=max_p, noiseceil=noiseceil)
 
     redoperiodogrambtn = tk.Button(plotctl, text="Redo Periodogram", command=drawplotwrapper)
 
@@ -1837,17 +1855,20 @@ def create_master_spectrum(queue, gaia_id, assoc_files, custom_name=None, custom
             mjds = [float(l.strip()) for l in infile.readlines() if "#" not in l]
         flist = open_spec_files("spectra_processed", [f])
         for mjd, f in zip(mjds, flist):
-            mjddict[round(mjd, 4)] = f
+            mjddict[round(mjd, 3)] = f
 
     if not custom_select:
         for ind, row in rv_table.iterrows():
-            file = mjddict[round(row["mjd"], 4)]
+            file = mjddict[round(row["mjd"], 3)]
             wl, flx, _, flx_std = load_spectrum(file)
             wl = wlshift(wl, -row["culum_fit_RV"])
             s = wl.argsort()
             wl = wl[s]
             flx = flx[s]
             flx_std = flx_std[s]
+
+            flx_std /= np.nanmedian(flx)
+            flx /= np.nanmedian(flx)
 
             wls.append(wl)
             flxs.append(flx)
@@ -1878,7 +1899,7 @@ def create_master_spectrum(queue, gaia_id, assoc_files, custom_name=None, custom
         max_length = max(lengths)
         largest_group = groups[lengths.index(max_length)]
     else:
-        rv_table["mjd"] = rv_table["mjd"].round(4)
+        rv_table["mjd"] = rv_table["mjd"].round(3)
         for m, f in mjddict.items():
             wl, flx, _, flx_std = load_spectrum(f)
             if custom_rv is not None:
@@ -1938,9 +1959,17 @@ def create_master_spectrum(queue, gaia_id, assoc_files, custom_name=None, custom
             wls_between = wls[mask]
 
             if np.sum(mask) > 1:
-                np.delete(flx_between, flx_std_between.argmax())
-                np.delete(wls_between, flx_std_between.argmax())
-                np.delete(flx_std_between, flx_std_between.argmax())
+                if np.sum(mask) < 5:
+                    np.delete(flx_between, flx_std_between.argmax())
+                    np.delete(wls_between, flx_std_between.argmax())
+                    np.delete(flx_std_between, flx_std_between.argmax())
+                else:
+                    threshhold = np.nanmedian(flx_between)+3*np.std(flx_between)
+                    np.delete(flx_std_between, flx_between > threshhold)
+                    np.delete(wls_between, flx_between > threshhold)
+                    np.delete(flx_between, flx_between > threshhold)
+
+
 
             frac_to_next_bin = (wls_between - bin) / (bins[i + 1] - bin)
             global_flxs[i] += np.sum(flx_between * (1 - frac_to_next_bin)) / len(flx_between)
@@ -2846,48 +2875,48 @@ def analysis_tab(analysis, queue):
         buttonframe = tk.Frame(main_frame)
 
         addfunc = add_to_list_wrapper(gaia_id)
-        addobs = tk.Button(buttonframe, text="Add to observation list", command=addfunc)
+        addobs = tk.Button(buttonframe, text="Add to observation list", command=addfunc, width=20)
         addobs.grid(row=1, column=1)
 
         rmfunc = remove_from_list_wrapper(gaia_id)
-        rmobs = tk.Button(buttonframe, text="Remove from obs. list", command=rmfunc)
+        rmobs = tk.Button(buttonframe, text="Remove from obs. list", command=rmfunc, width=20)
         rmobs.grid(row=2, column=1)
 
         def simbad_link():
             return lambda: callback(f"https://simbad.cds.unistra.fr/simbad/sim-id?Ident=Gaia+DR3+{gaia_id}&submit=submit+id")
 
-        simbad_btn = tk.Button(buttonframe, text="SIMBAD", command=simbad_link())
+        simbad_btn = tk.Button(buttonframe, text="SIMBAD", command=simbad_link(), width=20)
         simbad_btn.grid(row=4, column=1)
 
         normalize = tk.BooleanVar(value=True)
-        normplot = tk.Checkbutton(buttonframe, text="Normalize", variable=normalize)
+        normplot = tk.Checkbutton(buttonframe, text="Normalize", variable=normalize, width=20)
         normplot.select()
         normplot.grid(row=6, column=1)
 
-        view_plot = tk.Button(buttonframe, text="View Plot", command=lambda: viewplot(queue, normalize.get(), gaia_id))
+        view_plot = tk.Button(buttonframe, text="View Plot", command=lambda: viewplot(queue, normalize.get(), gaia_id), width=20)
         view_plot.grid(row=7, column=1)
 
-        fit_sed = tk.Button(buttonframe, text="Fit SED", command=lambda: fitsed(analysis, gaia_id))
+        fit_sed = tk.Button(buttonframe, text="Fit SED", command=lambda: fitsed(analysis, gaia_id), width=20)
         fit_sed.grid(row=9, column=1)
 
-        fit_model = tk.Button(buttonframe, text="Fit Model", command=lambda: fitmodel(analysis, gaia_id))
+        fit_model = tk.Button(buttonframe, text="Fit Model", command=lambda: fitmodel(analysis, gaia_id), width=20)
         fit_model.grid(row=10, column=1)
 
-        fit_model = tk.Button(buttonframe, text="Calculate Galactic\nOrbit", command=lambda: galacticorbit_wrapper(interesting_dataframe, detail_window, gaia_id))
+        fit_model = tk.Button(buttonframe, text="Calculate Galactic\nOrbit", command=lambda: galacticorbit_wrapper(interesting_dataframe, detail_window, gaia_id), width=20)
         fit_model.grid(row=11, column=1)
         if np.isnan(rvavg) or np.isnan(parallax):
             fit_model["state"] = "disabled"
 
-        view_lc = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id, tic, queue))
+        view_lc = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id, tic, queue), width=20)
         view_lc.grid(row=13, column=1)
 
-        view_lc = tk.Button(buttonframe, text="Phasefold", command=lambda: phasefold(analysis, gaia_id))
+        view_lc = tk.Button(buttonframe, text="Phasefold", command=lambda: phasefold(analysis, gaia_id), width=20)
         view_lc.grid(row=14, column=1)
 
-        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (gaia_id,)]))
+        view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (gaia_id,)]), width=20)
         view_cmd.grid(row=16, column=1)
 
-        view_note = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id))
+        view_note = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id), width=20)
         view_note.grid(row=17, column=1)
 
         for i in range(16):
