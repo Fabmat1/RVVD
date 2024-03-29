@@ -471,6 +471,7 @@ def master_spectrum_window(window, queue, gaia_id, button=None, sheet=None):
             create_master_spectrum(queue, gaia_id, assoc_files, custom_name_val.get(), float(custom_rv_val.get()), custom_sel_val.get())
         if button is not None:
             button["state"] = "normal"
+
     do_master_button = tk.Button(masspecframe, text="Create Master Spectrum", command=do_master_thing)
     do_master_button.grid(row=4, column=2)
     masspecframe.pack()
@@ -886,7 +887,6 @@ def fitmodel(window, gaia_id):
     gridlabel_one = tk.Label(star_one_frame, text="Select grid")
     grid_selector_one = tk.OptionMenu(star_one_frame, grid_one, *gridoptions)
 
-
     for i, (label_name, entry, freezebox) in enumerate(zip(star_one_label_names, star_one_inputs, star_one_freezeboxes)):
         ttk.Label(star_one_frame, text=label_name).grid(row=i, column=0)
         entry.grid(row=i, column=1)
@@ -956,12 +956,12 @@ def fitmodel(window, gaia_id):
         thread = threading.Thread(target=execute_function_after_process)
         thread.start()
 
-
     # TODO: fix up these variable names
 
     buttonsframe = tk.Frame(fitinputframe)
     domodelbtn = tk.Button(buttonsframe, text="Fit Model",
-                           command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/", f"/home/fabian/PycharmProjects/RVVD_plus_LAMOST/master_spectra/{gaia_id}_stacked.txt", resvar.get()))
+                           command=lambda: calcmodelwrapper(gaia_id, [(a.get(), b.get(), c.get()) for a, b, c in c1vars], [grid_one.get()[1:]], isis_dir.get() + "/", f"/home/fabian/PycharmProjects/RVVD_plus_LAMOST/master_spectra/{gaia_id}_stacked.txt",
+                                                            resvar.get()))
 
     create_master_spec_btn = tk.Button(buttonsframe, text="Create master spectrum", command=lambda: master_spectrum_window(window, queue, gaia_id, button=domodelbtn))
 
@@ -1979,12 +1979,10 @@ def create_master_spectrum(queue, gaia_id, assoc_files, custom_name=None, custom
                     np.delete(wls_between, flx_std_between.argmax())
                     np.delete(flx_std_between, flx_std_between.argmax())
                 else:
-                    threshhold = np.nanmedian(flx_between)+3*np.std(flx_between)
+                    threshhold = np.nanmedian(flx_between) + 3 * np.std(flx_between)
                     np.delete(flx_std_between, flx_between > threshhold)
                     np.delete(wls_between, flx_between > threshhold)
                     np.delete(flx_between, flx_between > threshhold)
-
-
 
             frac_to_next_bin = (wls_between - bin) / (bins[i + 1] - bin)
             global_flxs[i] += np.sum(flx_between * (1 - frac_to_next_bin)) / len(flx_between)
@@ -2092,7 +2090,7 @@ def phasefoldplot(resultqueue, offset, amplitude, shift, nplot, data, tessbin=10
     resultqueue.put(fig)
 
 
-def phasefoldplot_wrapper(plotframe, period, multiplier, shift, offset, amplitude, dataarray, *args, **kwargs):
+def phasefoldplot_wrapper(plotframe, period, multiplier, shift, offset, amplitude, dataarray, textbox, *args, **kwargs):
     if period is None:
         period = 1
     elif isinstance(period, int):
@@ -2118,8 +2116,35 @@ def phasefoldplot_wrapper(plotframe, period, multiplier, shift, offset, amplitud
                                      ])
             period, offset, amplitude, shift = params
             shift = 1 - shift
+            if textbox is not None:
+                textbox.config(state=tk.NORMAL)
+                textbox.delete(1.0, tk.END)
+                textbox.insert(tk.END, "Current fit parameters:\n\n")
+                textbox.insert(tk.END, f"period={period}\n")
+                textbox.insert(tk.END, f"offset={offset}\n")
+                textbox.insert(tk.END, f"amplitude={amplitude}\n")
+                textbox.insert(tk.END, f"shift={shift}")
+                textbox.config(state=tk.DISABLED)
         except RuntimeError as e:
+            textbox.config(state=tk.NORMAL)
+            textbox.delete(1.0, tk.END)
+            textbox.insert(tk.END, "Current fit parameters:\n\n")
+            textbox.insert(tk.END, f"period={period}\n")
+            textbox.insert(tk.END, f"offset={offset}\n")
+            textbox.insert(tk.END, f"amplitude={amplitude}\n")
+            textbox.insert(tk.END, f"shift={shift}")
+            textbox.config(state=tk.DISABLED)
             pass
+    else:
+        if textbox is not None:
+            textbox.config(state=tk.NORMAL)
+            textbox.delete(1.0, tk.END)
+            textbox.insert(tk.END, "Current fit parameters:\n\n")
+            textbox.insert(tk.END, f"period={period}\n")
+            textbox.insert(tk.END, f"offset={offset}\n")
+            textbox.insert(tk.END, f"amplitude={amplitude}\n")
+            textbox.insert(tk.END, f"shift={shift}")
+            textbox.config(state=tk.DISABLED)
 
     vtimes = (((dataarray["RV"][0] + (shift * period)) % period) / period)
     vtimes[vtimes > 1] -= 1
@@ -2207,6 +2232,33 @@ def varvalidation(var):
         return float(var.get())
     except:
         return 1.0
+
+
+def extract_values(text_widget):
+    # Get the content of the text widget
+    content = text_widget.get("1.0", tk.END)
+
+    # Split the content into lines
+    lines = content.split("\n")
+
+    # Initialize variables
+    period = None
+    offset = None
+    amplitude = None
+    shift = None
+
+    # Parse each line to extract the values
+    for line in lines:
+        if line.startswith("period="):
+            period = float(line.split("=")[1])
+        elif line.startswith("offset="):
+            offset = float(line.split("=")[1])
+        elif line.startswith("amplitude="):
+            amplitude = float(line.split("=")[1])
+        elif line.startswith("shift="):
+            shift = float(line.split("=")[1])
+
+    return period, offset, amplitude, shift
 
 
 def phasefold(analysis, gaia_id):
@@ -2357,9 +2409,32 @@ def phasefold(analysis, gaia_id):
         dataarray["ZTF"] = None
         ztf_maxp = None
 
-    startperiod = tess_maxp
-    phasefoldplot_wrapper(plotframe, startperiod, 1, 0, np.mean(vels), np.ptp(vels) / 2,
-                          dataarray, finetune=False, tessbin=int(np.sqrt(len(tess_t if tess_t is not None else [0]))))
+    outputtext = tk.Text(plotctl, height=7, width=42)
+
+    if os.path.isfile(f"phasefolds/{gaia_id}/orbit.txt"):
+        with open(f"phasefolds/{gaia_id}/orbit.txt", "r") as file:
+            lines = file.readlines()
+
+            if len(lines) >= 2:
+                data = lines[1].split(",")
+                preload = True
+                startperiod, half_amp, offset, phase = [float(d) for d in data]
+            else:
+                print("File does not have a second line")
+                half_amp = np.ptp(vels) / 2
+                offset = np.mean(vels)
+                phase = 0
+                startperiod = tess_maxp
+                preload = False
+    else:
+        preload = False
+        half_amp = np.ptp(vels) / 2
+        offset = np.mean(vels)
+        phase = 0
+        startperiod = tess_maxp
+
+    phasefoldplot_wrapper(plotframe, startperiod, 1, phase, offset, half_amp,
+                          dataarray, outputtext, finetune=False, tessbin=int(np.sqrt(len(tess_t if tess_t is not None else [0]))))
 
     periods_dict = {"RV": 1, "GAIA": gaia_maxp, "TESS": tess_maxp, "ZTF": ztf_maxp}
 
@@ -2375,7 +2450,7 @@ def phasefold(analysis, gaia_id):
                               tickinterval=p_amt_whole_phase / 2,
                               length=300,
                               orient=tk.HORIZONTAL)
-    pslider_slider.set(periods_dict[peaksource_var.get()] * varvalidation(peaksource_timesentry_var))
+    pslider_slider.set(startperiod)
     pslider_label.grid(column=0, row=0)
     pslider_slider.grid(column=0, row=1)
     pslider_frame.grid(column=0, row=4, sticky="w")
@@ -2390,11 +2465,13 @@ def phasefold(analysis, gaia_id):
                                      tickinterval=p_amt_whole_phase / 2)
             pslider_slider.set(periods_dict[peaksource_var.get()] * varvalidation(peaksource_timesentry_var))
         else:
-            if force_high != force_low and force_high > force_low:
+            if source == "Slider":
+                return
+            elif force_high != force_low and force_high > force_low:
                 pslider_slider.configure(from_=force_low, to=force_high,
-                                         tickinterval=(force_high-force_low) / 2,
-                                         resolution=(force_high-force_low) / 10000)
-                pslider_slider.set((force_low+force_high)/2)
+                                         tickinterval=(force_high - force_low) / 2,
+                                         resolution=(force_high - force_low) / 10000)
+                pslider_slider.set((force_low + force_high) / 2)
             else:
                 pslider_slider.configure(from_=0.5, to=1.5,
                                          tickinterval=1 / 2,
@@ -2419,7 +2496,6 @@ def phasefold(analysis, gaia_id):
     periodinterlabel.grid(row=0, column=2)
     periodhientry.grid(row=0, column=3)
     periodsetbtn.grid(row=0, column=4)
-
 
     peaksource_selector_frame = tk.Frame(plotctl)
     peaksource_label = tk.Label(peaksource_selector_frame, text="Get Period from ")
@@ -2446,6 +2522,11 @@ def phasefold(analysis, gaia_id):
     tessbin.pack(side=tk.LEFT)
     tessbin_frame.grid(column=0, row=1, sticky="w")
 
+    ftvar = tk.IntVar(value=0)
+    finetune = tk.Checkbutton(plotctl, variable=ftvar, text="Finetune RV fit")
+    finetune.grid(column=0, row=2)
+    periodframe.grid(column=0, row=3)
+
     ampslider_frame = tk.Frame(plotctl)
     ampslider_label = tk.Label(ampslider_frame, text="Modify Half-Amplitude:")
     ampslider_slider = tk.Scale(ampslider_frame,
@@ -2455,7 +2536,7 @@ def phasefold(analysis, gaia_id):
                                 tickinterval=100,
                                 length=300,
                                 orient=tk.HORIZONTAL)
-    ampslider_slider.set(np.ptp(vels) / 2)
+    ampslider_slider.set(half_amp)
     ampslider_label.grid(column=0, row=0)
     ampslider_slider.grid(column=0, row=1)
     ampslider_frame.grid(column=0, row=5, sticky="w")
@@ -2469,7 +2550,7 @@ def phasefold(analysis, gaia_id):
                                 tickinterval=100,
                                 length=300,
                                 orient=tk.HORIZONTAL)
-    offslider_slider.set(np.mean(vels))
+    offslider_slider.set(offset)
     offslider_label.grid(column=0, row=0)
     offslider_slider.grid(column=0, row=1)
     offslider_frame.grid(column=0, row=6, sticky="w")
@@ -2485,41 +2566,31 @@ def phasefold(analysis, gaia_id):
                                   orient=tk.HORIZONTAL)
     shiftslider_label.grid(column=0, row=0)
     shiftslider_slider.grid(column=0, row=1)
+    shiftslider_slider.set(phase)
     shiftslider_frame.grid(column=0, row=7, sticky="w")
 
     periods_dict["Slider"] = pslider_slider
 
-    ftvar = tk.IntVar(value=0)
-    finetune = tk.Checkbutton(plotctl, variable=ftvar, text="Finetune RV fit")
-    finetune.grid(column=0, row=8)
-
     refold = tk.Button(plotctl, text="Redo Phasefold", command=lambda: phasefoldplot_wrapper(plotframe, periods_dict[peaksource_var.get()], varvalidation(peaksource_timesentry_var), shiftslider_slider.get(), offslider_slider.get(), ampslider_slider.get(),
-                                                                                             dataarray, tessbin=int(tessbin_var.get()),
+                                                                                             dataarray, outputtext, tessbin=int(tessbin_var.get()),
                                                                                              finetune=bool(ftvar.get())))
 
-    periodframe.grid(column=0, row=9)
-    refold.grid(column=0, row=11, sticky="se")
+    refold.grid(column=0, row=9, sticky="se")
 
-    def loadsave(isisdir):
-        if isisdir is None:
-            return
-        pf_window.wm_attributes('-topmost', 1)
-        folder_selected = filedialog.askdirectory(initialdir=f"./output/{gaia_id}", parent=pf_window, title="Load Save")
+    def savephfold():
+        if not os.path.isdir(f"phasefolds/{gaia_id}"):
+            os.mkdir(f"phasefolds/{gaia_id}")
+        period, offset, K, phase = extract_values(outputtext)
+        with open(f"phasefolds/{gaia_id}/orbit.txt", "w") as file:
+            file.write(f"period,half_amplitude,offset,phase\n{period},{K},{offset},{phase}")
 
-        phasefoldplot_wrapper(plotframe, periods_dict[peaksource_var.get()], varvalidation(peaksource_timesentry_var), shiftslider_slider.get(), offslider_slider.get(), ampslider_slider.get(),
-                              dataarray, tessbin=int(tessbin_var.get()),
-                              finetune=bool(ftvar.get()))
+    outputtext.config(state=tk.DISABLED)
+    outputtext.grid(column=0, row=11)
+    saveparams = tk.Button(plotctl, text="Save Parameters", command=savephfold)
+    saveparams.grid(column=0, row=12, sticky="se")
 
-    # def savesave(savename):
-    #     savearr = np.array([period])
-
-    saveloadframe = tk.Frame(plotctl)
-    loadlabel = tk.Button(text="Load previous fit:")
-    savelabel = tk.Label(text="Save name:")
-
-    saveloadframe.grid(column=0, row=12)
-
-    plotctl.grid_configure(rowspan=2)
+    for i in range(12):
+        plotctl.grid_rowconfigure(i, minsize=25)
     plotframe.grid(row=0, column=0, pady=10, padx=10)
     plotctl.grid(row=0, column=1, sticky="n", pady=10, padx=10)
     plotwrapper.pack()
