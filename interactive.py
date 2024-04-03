@@ -2530,8 +2530,8 @@ def phasefold(analysis, gaia_id):
     ampslider_frame = tk.Frame(plotctl)
     ampslider_label = tk.Label(ampslider_frame, text="Modify Half-Amplitude:")
     ampslider_slider = tk.Scale(ampslider_frame,
-                                from_=10,
-                                to=250,
+                                from_=0,
+                                to=500,
                                 resolution=1,
                                 tickinterval=100,
                                 length=300,

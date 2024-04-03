@@ -43,3 +43,8 @@ lightcurves/*
 /.RVVDprefs
 *.so
 lombscarglegpu.py
+models/*
+SEDs/*
+!/models/.gitkeep
+!/SEDs/.gitkeep
+!/lightcurves/.gitkeep
