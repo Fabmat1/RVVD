@@ -2785,12 +2785,6 @@ def analysis_tab(analysis, queue):
                     current_dataframe = current_dataframe[current_dataframe[sp[0]] != sp[1]].reset_index(drop=True)
                 else:
                     current_dataframe = current_dataframe[~pd.isnull(current_dataframe)].reset_index(drop=True)
-            elif "in" in k:            elif "!=" in k:
-                sp = prep_kstring(k)
-                if not pd.isnull(sp[1]):
-                    current_dataframe = current_dataframe[current_dataframe[sp[0]] != sp[1]].reset_index(drop=True)
-                else:
-                    current_dataframe = current_dataframe[~pd.isnull(current_dataframe)].reset_index(drop=True)
             elif "in" in k:
                 sp = prep_kstring(k)
                 current_dataframe = current_dataframe[current_dataframe[sp[1]].str.contains(sp[0])].reset_index(drop=True)
