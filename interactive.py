@@ -39,7 +39,7 @@ from analyse_results import vrad_pvalue
 from data_reduction import *
 from get_interesting_stars import quick_visibility
 from main import general_config, fit_config, plot_config, interactive_main, plot_rvcurve_brokenaxis, open_spec_files, load_spectrum
-from plot_spectra import plot_system_from_ind
+from plot_spectra import plot_system_from_ind, plot_system_from_file
 from preprocessing import *
 import matplotlib
 import screeninfo
@@ -2022,6 +2022,12 @@ def viewplot(q, n, gaia_id):
            {"ind": str(gaia_id), "use_ind_as_sid": True, "normalized": n}])
 
 
+def viewmasterplot(q, n, gaia_id):
+    q.put(["execute_function",
+           plot_system_from_file,
+           {"source_id": str(gaia_id), "normalized": n}])
+
+
 def phsin(x, period, offset, amplitude, shift):
     return offset + amplitude * np.sin((x - shift) * 2 * np.pi / period)
 
@@ -2717,6 +2723,7 @@ def analysis_tab(analysis, queue):
         kstring = kstring.replace("in", "=")
         kstring = kstring.replace("<", "")
         kstring = kstring.replace(">", "")
+        kstring = kstring.replace("!", "")
         sp = kstring.split("=")
 
         sp[0] = sp[0].strip()
@@ -2726,8 +2733,13 @@ def analysis_tab(analysis, queue):
                 sp[1] = float(sp[1])
             else:
                 sp[1] = int(sp[1])
+
         except:
             pass
+
+        if sp[1] == "nan":
+            sp[1] = np.nan
+
         return sp
 
     def update_sheet(*args):
@@ -2753,15 +2765,31 @@ def analysis_tab(analysis, queue):
 
         keywords = filter_kws.get().split(";")
         for k in keywords:
-            if "=" in k and "<=" not in k and ">=" not in k:
+            if "=" in k and "<=" not in k and ">=" not in k and "!=" not in k:
                 sp = prep_kstring(k)
-                current_dataframe = current_dataframe[current_dataframe[sp[0]] == sp[1]].reset_index(drop=True)
+                if not pd.isnull(sp[1]):
+                    current_dataframe = current_dataframe[current_dataframe[sp[0]] == sp[1]].reset_index(drop=True)
+                else:
+                    current_dataframe = current_dataframe[pd.isnull(current_dataframe)].reset_index(drop=True)
+
             elif "<=" in k:
                 sp = prep_kstring(k)
                 current_dataframe = current_dataframe[current_dataframe[sp[0]] <= sp[1]].reset_index(drop=True)
             elif ">=" in k:
                 sp = prep_kstring(k)
                 current_dataframe = current_dataframe[current_dataframe[sp[0]] >= sp[1]].reset_index(drop=True)
+            elif "!=" in k:
+                sp = prep_kstring(k)
+                if not pd.isnull(sp[1]):
+                    current_dataframe = current_dataframe[current_dataframe[sp[0]] != sp[1]].reset_index(drop=True)
+                else:
+                    current_dataframe = current_dataframe[~pd.isnull(current_dataframe)].reset_index(drop=True)
+            elif "in" in k:            elif "!=" in k:
+                sp = prep_kstring(k)
+                if not pd.isnull(sp[1]):
+                    current_dataframe = current_dataframe[current_dataframe[sp[0]] != sp[1]].reset_index(drop=True)
+                else:
+                    current_dataframe = current_dataframe[~pd.isnull(current_dataframe)].reset_index(drop=True)
             elif "in" in k:
                 sp = prep_kstring(k)
                 current_dataframe = current_dataframe[current_dataframe[sp[1]].str.contains(sp[0])].reset_index(drop=True)
@@ -3027,32 +3055,35 @@ def analysis_tab(analysis, queue):
         view_plot = tk.Button(buttonframe, text="View Plot", command=lambda: viewplot(queue, normalize.get(), gaia_id), width=20)
         view_plot.grid(row=7, column=1)
 
+        view_plot = tk.Button(buttonframe, text="View Master Plot", command=lambda: viewmasterplot(queue, normalize.get(), gaia_id), width=20)
+        view_plot.grid(row=8, column=1)
+
         fit_sed = tk.Button(buttonframe, text="Fit SED", command=lambda: fitsed(analysis, gaia_id), width=20)
-        fit_sed.grid(row=9, column=1)
+        fit_sed.grid(row=10, column=1)
 
         fit_model = tk.Button(buttonframe, text="Fit Model", command=lambda: fitmodel(analysis, gaia_id), width=20)
-        fit_model.grid(row=10, column=1)
+        fit_model.grid(row=11, column=1)
 
         fit_model = tk.Button(buttonframe, text="Calculate Galactic\nOrbit", command=lambda: galacticorbit_wrapper(interesting_dataframe, detail_window, gaia_id), width=20)
-        fit_model.grid(row=11, column=1)
+        fit_model.grid(row=12, column=1)
         if np.isnan(rvavg) or np.isnan(parallax):
             fit_model["state"] = "disabled"
 
         view_lc = tk.Button(buttonframe, text="View Lightcurve", command=lambda: viewlc(analysis, gaia_id, tic, queue), width=20)
-        view_lc.grid(row=13, column=1)
-
-        view_lc = tk.Button(buttonframe, text="Phasefold", command=lambda: phasefold(analysis, gaia_id), width=20)
         view_lc.grid(row=14, column=1)
 
+        view_lc = tk.Button(buttonframe, text="Phasefold", command=lambda: phasefold(analysis, gaia_id), width=20)
+        view_lc.grid(row=15, column=1)
+
         view_cmd = tk.Button(buttonframe, text="View CMD", command=lambda: queue.put(["execute_function", show_CMD_window, (gaia_id,)]), width=20)
-        view_cmd.grid(row=16, column=1)
+        view_cmd.grid(row=17, column=1)
 
         view_note = tk.Button(buttonframe, text="View Note", command=lambda: viewnote(analysis, gaia_id), width=20)
-        view_note.grid(row=17, column=1)
+        view_note.grid(row=18, column=1)
 
         for i in range(16):
             buttonframe.grid_rowconfigure(i + 1, minsize=25)
-        buttonframe.grid(row=1, column=3, sticky="news", rowspan=2)
+        buttonframe.grid(row=1, column=3, sticky="news", rowspan=2, padx=10, pady=10)
 
     sheet.enable_bindings()
     sheet.headers(newheaders=interesting_dataframe.columns.tolist())

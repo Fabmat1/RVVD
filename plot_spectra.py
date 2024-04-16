@@ -89,10 +89,38 @@ def comprehend_lstr(lstr):
     return l
 
 
-def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=True, savepath=None, custom_xlim=None, use_ind_as_sid=False, normalized=NORMALIZE):
+def plot_system_from_file(source_id=None, normalized=False):
+    if source_id is None:
+        return
+    data = np.genfromtxt(f"master_spectra/{source_id}_stacked.txt")
+
+    wl = data[:, 0]
+    flx = data[:, 1]
+    p = wl.argsort()
+    wl = wl[p]
+    flx = flx[p]
+
+    if normalized:
+        wl, flx, norm = normalize_spectrum(wl, flx)
+        plt.plot(wl, flx, color="navy", zorder=5, linewidth=.5)
+        for line in lines_to_fit.values():
+            plt.axvline(line, color="darkgrey", linestyle="--", linewidth=.5, zorder=4)
+        plt.ylim(0, 1.2)
+    else:
+        plt.plot(wl, flx, color="navy", zorder=5, linewidth=.5)
+        for line in lines_to_fit.values():
+            plt.axvline(line, color="darkgrey", linestyle="--", linewidth=.5, zorder=4)
+
+    plt.ylabel("Normalized Flux + Offset")
+    plt.xlabel("Wavelength [Å]")
+    plt.tight_layout()
+    plt.show()
+    return
+
+
+def plot_system_from_ind(ind=INDEX_TO_PLOT, outdir="output", verbose=False, savepath=None, custom_xlim=None, use_ind_as_sid=False, normalized=NORMALIZE):
     global RES_PARAMETER_LIST
 
-    print(threading.current_thread() == threading.main_thread())
     if isinstance(RES_PARAMETER_LIST, str):
         try:
             RES_PARAMETER_LIST = pd.read_csv(RES_PARAMETER_LIST)
