@@ -55,7 +55,8 @@ def get_monitor_from_coord(x, y):
     return [monitors[0].width, monitors[0].height]
 
 
-matplotlib.use('QtAgg')
+if os.name != "nt":
+    matplotlib.use('QtAgg')
 
 
 def callback(url):
