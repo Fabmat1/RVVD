@@ -2791,6 +2791,8 @@ def analysis_tab(analysis, queue):
             elif "obslist" in k:
                 sids = pd.read_csv("observation_list.csv")["source_id"].to_list()
                 current_dataframe = current_dataframe[current_dataframe["source_id"].isin(sids)]
+            elif "nobhb" in k:
+                current_dataframe = current_dataframe[~current_dataframe["bibcodes"].str.contains("2021A&A...654A.107C")].reset_index(drop=True)
 
         colname = sortset.get()
 
