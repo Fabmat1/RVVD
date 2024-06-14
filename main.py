@@ -76,12 +76,12 @@ mpl.rcParams['figure.dpi'] = plot_config["FIG_DPI"]
 # Lines that can potentially be used in fitting:
 lines_to_fit = {
     "H_alpha": 6562.79,
-    "H_beta": 4861.35,
+    "H_beta":  4861.35,
     "H_gamma": 4340.472,
     "H_delta": 4101.734,
     # "H_epsilon": 3970.075,
-    # "H_zeta": 3888.052,
-    # "H_eta": 3835.387,
+    # "H_zeta":    3888.052,
+    # "H_eta":     3835.387,
     # "He_I_4100": 4100.0,
     # "He_I_4339": 4338.7,
     # "He_I_4859": 4859.35,
