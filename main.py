@@ -843,8 +843,11 @@ def single_spec_shift(filepath, wl, flx, flx_std, gaia_id, subspec_ind):
     return complete_v_shift, v_std, output_table
 
 
-def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[]):
-    wavelengthdata, fluxdata, time, flux_stddata = load_spectrum(file)
+def process_spectrum(file, gaia_id, subspec_ind, exclude_lines=[], debug_list=None):
+    if debug_list is not None:
+        wavelengthdata, fluxdata, time, flux_stddata = debug_list
+    else:
+        wavelengthdata, fluxdata, time, flux_stddata = load_spectrum(file)
     linelist = []
     paramlist = []
     cr_inds = []

@@ -509,7 +509,7 @@ def showimages_model(gaia_id, frame, window):
             image_label.image = img_tk
             image_label.pack()
             images.append(image_label)
-        except fitz.fitz.FileNotFoundError:
+        except:
             noresults = tk.Label(scroll_frame,
                                  font=('Segoe UI', 25),
                                  fg='#ff0000',

@@ -50,3 +50,5 @@ galpy >= 1.9.1
 ztfquery>=1.26.1
 screeninfo>=0.8.1
 aotsAPI>=0.0.4
+opencv-python>=4.9.0.80
+sv_ttk>=2.6.0

@@ -73,23 +73,120 @@ double loadMJD(const string& filename) {
     return value;
 }
 
+vector<double> linspace(double start, double end, int num) {
+    vector<double> result;
+    if (num <= 0) {
+        return result;
+    }
+
+    if (num == 1) {
+        result.push_back(start);
+        return result;
+    }
+
+    double step = (end - start) / (num - 1);
+
+    for (int i = 0; i < num; ++i) {
+        result.push_back(start + step * i);
+    }
+
+    return result;
+}
+
+
+vector<double> loadLines(const string& filename) {
+    vector<double> doubles;
+    ifstream file(filename);
+
+    if (!file.is_open()) {
+        cerr << "Error opening file: " << filename << endl;
+        return doubles;
+    }
+
+    double value;
+    while (file >> value) {
+        doubles.push_back(value);
+    }
+
+    if (file.bad()) {
+        cerr << "Error reading file: " << filename << endl;
+    }
+
+    file.close();
+    return doubles;
+}
+
+
+double interpolate1d(const vector<double>& x_vec, const vector<double>& y_vec, const vector<double>& x_of_interest){
+    double sum = 0.;
+    int j;
+    double y;
+    double x0;
+    double x1;
+    double y0;
+    double y1;
+
+    for (double xi: x_of_interest) {
+        if (xi < x_vec[0] || xi > x_vec[x_vec.size() - 1]) { continue; }
+
+        auto it = lower_bound(x_vec.begin(), x_vec.end(), xi);
+        j = distance(x_vec.begin(), it);
+
+        if (j == 0) {
+            y = 0;
+        } else if (j == x_vec.size() - 1) {
+            y = 0;
+        } else {
+            x0 = x_vec[j - 1];
+            x1 = x_vec[j];
+            y0 = y_vec[j - 1];
+            y1 = y_vec[j];
+            y = y0 + (y1 - y0) * ((xi - x0) / (x1 - x0));
+        }
+//                            #pragma omp atomic
+        sum += y;
+    }
+
+    return sum;
+}
+
+
+
 int main(){
     auto start = chrono::high_resolution_clock::now();
-    cout << "Hello World" << endl;
-    auto end = chrono::high_resolution_clock::now();
 
-    vector<vector<double>> data = loadFromFile("spectra_processed/0148_2_gaia_dr3_1746_930_01.txt");
-    double mjd = loadMJD("spectra_processed/0148_2_gaia_dr3_1746_930_mjd.txt");
+    lines_to_fit = loadLines("H_sd_lines.txt");
+
+    vector<vector<double>> data = loadFromFile("spectra_processed/0780_9_Gaia_444485_930_01.txt");
+    double mjd = loadMJD("spectra_processed/0780_9_Gaia_444485_930_mjd.txt");
     vector<double> x = data[0];
     vector<double> y = data[1];
     vector<double> z = data[2];
 
-    for (int i = 0; i < x.size(); ++i) {
-        cout << x[i] << "," << y[i] << "," <<  z[i] << endl;
-    }
+//    for (int i = 0; i < x.size(); ++i) {
+//        cout << x[i] << "," << y[i] << "," <<  z[i] << endl;
+//    }
     cout << "MJD: " << mjd << endl;
     cout << "Delta_wl: " << radvel(5000, 10) << endl;
 
+
+    vector<double> velspace = linspace(-1000., 1000, 10000);
+    vector<double> velspace_y;
+
+
+    for (double vel: velspace) {
+        vector<double> these_lines(lines_to_fit.size());
+        for (int k = 0; k < lines_to_fit.size(); ++k) {
+            these_lines[k] = lines_to_fit[k]+radvel(lines_to_fit[k], vel);
+        }
+        velspace_y.push_back(interpolate1d(x, y, these_lines));
+    }
+
+    for (int i = 0; i < velspace.size(); ++i) {
+        cout << velspace[i] << "," << velspace_y[i] << endl;
+    }
+    auto end = chrono::high_resolution_clock::now();
     cout << "Program took " << chrono::duration_cast<chrono::milliseconds>(end-start).count()/1000 << "s to execute." << endl;
+
     return 0;
 }
