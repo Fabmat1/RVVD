@@ -1025,7 +1025,7 @@ def plotgzflightcurve(resultqueue, gaia_id, pgramdata, lctype, bandnames, bandco
 
         if min_p is None:
             min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
-        elif max_p is None:
+        if max_p is None:
             max_p = np.ptp(mashedtimes) / 2
 
         if nsamp is None:
@@ -1095,7 +1095,7 @@ def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error,
 
         if min_p is None:
             min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
-        elif max_p is None:
+        if max_p is None:
             max_p = np.ptp(times) / 2
 
         if nsamp is None:
