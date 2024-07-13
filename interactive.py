@@ -423,6 +423,13 @@ def showimages_sed(gaia_id, frame, window):
     setCanvasSize(frame, window)
 
 
+def calcpgramsamples(x_ptp, min_p, max_p):
+    n = np.ceil(x_ptp / min_p)
+    R_p = (x_ptp / (n - 1) - x_ptp / n) / 5
+
+    df = 1 / min_p - (1 / (min_p + R_p))
+    return int(np.ceil((1 / min_p - 1 / max_p) / df))
+
 def master_spectrum_window(window, queue, gaia_id, button=None, sheet=None):
     if sheet is not None:
         gaia_id = sheet.data[list(sheet.get_selected_cells())[0][0]][0]
@@ -980,12 +987,9 @@ def fitmodel(window, gaia_id):
     fitmodelframe.pack(fill="both", expand=1)
 
 
-def plotgzflightcurve(resultqueue, gaia_id, pgramdata, lctype, bandnames, bandcolors, times, fluxes, flux_errors, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
+def plotgzflightcurve(resultqueue, gaia_id, pgramdata, lctype, bandnames, bandcolors, times, fluxes, flux_errors, nterms=1, nsamp=None, min_p=None, max_p=None, noiseceil=None):
     # the figure that will contain the plot
     fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8)
-
-    if nsamp <= 5:
-        nsamp = 5
 
     # adding the subplot
     plot1 = axs[0]
@@ -1019,20 +1023,17 @@ def plotgzflightcurve(resultqueue, gaia_id, pgramdata, lctype, bandnames, bandco
                                   np.full((len(fluxes[2]), 1), bandnames[2])]))
         tdiffs = np.diff(mashedtimes)
 
-        if min_p is None and max_p is None:
-            freqs = np.linspace(2 / np.ptp(mashedtimes), 1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])), nsamp)
-            pgram = model.score_frequency_grid(2 / np.ptp(mashedtimes), (1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])) - 2 / np.ptp(mashedtimes)) / nsamp, nsamp)
-        else:
-            if min_p is None:
-                min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
-                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
-            elif max_p is None:
-                max_p = np.ptp(mashedtimes) / 2
-                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
-            else:
-                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
+        if min_p is None:
+            min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
+        elif max_p is None:
+            max_p = np.ptp(mashedtimes) / 2
 
-            freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
+        if nsamp is None:
+            nsamp = calcpgramsamples(np.ptp(mashedtimes), min_p, max_p)
+
+        pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
+
+        freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
         ps = 1 / freqs
         if not os.path.isdir(f"lightcurves/{gaia_id}"):
             os.mkdir(f"lightcurves/{gaia_id}")
@@ -1066,11 +1067,9 @@ def plotgzflightcurve(resultqueue, gaia_id, pgramdata, lctype, bandnames, bandco
     resultqueue.put([fig, axs])
 
 
-def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error, nterms=1, nsamp=50000, min_p=None, max_p=None, noiseceil=None):
+def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error, nterms=1, nsamp=None, min_p=None, max_p=None, noiseceil=None):
     # the figure that will contain the plot
     fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8), dpi=90 * 9 / 4.8)
-    if nsamp <= 5:
-        nsamp = 5
 
     # adding the subplot
     plot1 = axs[0]
@@ -1094,20 +1093,17 @@ def plottesslightcurve(resultqueue, gaia_id, pgramdata, times, flux, flux_error,
 
         tdiffs = np.diff(times)
 
-        if min_p is None and max_p is None:
-            freqs = np.linspace(2 / np.ptp(times), 1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])), nsamp)
-            pgram = model.score_frequency_grid(2 / np.ptp(times), (1 / (np.max([np.min(tdiffs[tdiffs > 0]), 0.01])) - 2 / np.ptp(times)) / nsamp, nsamp)
-        else:
-            if min_p is None:
-                min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
-                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
-            elif max_p is None:
-                max_p = np.ptp(times) / 2
-                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
-            else:
-                pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
+        if min_p is None:
+            min_p = np.max([np.min(tdiffs[tdiffs > 0]), 0.01])
+        elif max_p is None:
+            max_p = np.ptp(times) / 2
 
-            freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
+        if nsamp is None:
+            nsamp = calcpgramsamples(np.ptp(times), min_p, max_p)
+
+        pgram = model.score_frequency_grid(1 / max_p, (1 / min_p - 1 / max_p) / nsamp, nsamp)
+
+        freqs = np.linspace(1 / max_p, 1 / min_p, nsamp)
         ps = 1 / freqs
         if not os.path.isdir(f"lightcurves/{gaia_id}"):
             os.mkdir(f"lightcurves/{gaia_id}")
@@ -2963,10 +2959,32 @@ def analysis_tab(analysis, queue):
         width, height = get_monitor_from_coord(detail_window.winfo_x(), detail_window.winfo_y())
         imsize = (int(width // 2.25), int(height // 2.25))
 
+        if not os.path.isfile(f"output/{gaia_id}/RV_variation_broken_axis.pdf"):
+            if os.path.isfile(f"output/{gaia_id}/RV_variation.csv"):
+                rvdata = np.loadtxt(f"output/{gaia_id}/RV_variation.csv", delimiter=",", skiprows=1)
+                rvs = rvdata[:, 0]
+                rv_errs = rvdata[:, 1]
+                mjds = rvdata[:, 2]
+            else:
+                rvs = []
+                rv_errs = []
+                mjds = []
+        else:
+            rvs = []
+            rv_errs = []
+            mjds = []
+
         rvplot = load_or_create_image(main_frame,
                                       f"output/{gaia_id}/RV_variation_broken_axis.pdf",
                                       imsize,
-                                      queue)
+                                      queue,
+                                      plot_rvcurve_brokenaxis,
+                                      False,
+                                      rvs,
+                                      rv_errs,
+                                      mjds,
+                                      gaia_id,)
+
         rvplot.grid(row=1, column=1, sticky="news")
 
         visplot = load_or_create_image(main_frame, f"output/{gaia_id}/visibility.pdf",
@@ -3491,7 +3509,7 @@ if __name__ == "__main__":
                 else:
                     item[1](*item[2], **item[3])
             except Exception as e:
-                print("Exception encountered!:", e)
+                print("Exception encountered:", e)
                 print(traceback.format_exc())
             finally:
                 returnq.put(True)
