@@ -425,10 +425,10 @@ def showimages_sed(gaia_id, frame, window):
 
 def calcpgramsamples(x_ptp, min_p, max_p):
     n = np.ceil(x_ptp / min_p)
-    R_p = (x_ptp / (n - 1) - x_ptp / n) / 5
+    R_p = (x_ptp / (n - 1) - x_ptp / n)
 
     df = 1 / min_p - (1 / (min_p + R_p))
-    return int(np.ceil((1 / min_p - 1 / max_p) / df))
+    return int(np.ceil((1 / min_p - 1 / max_p) / df))*10
 
 def master_spectrum_window(window, queue, gaia_id, button=None, sheet=None):
     if sheet is not None:
