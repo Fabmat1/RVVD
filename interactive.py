@@ -1326,9 +1326,9 @@ def drawlcplot(lcdata, gaia_id, plotframe, plotctl, plotwrapper, btntip, queue, 
             try:
                 nsamp = int(nsamp)
             except ValueError:
-                nsamp = 50000
+                nsamp = None
         else:
-            nsamp = 50000
+            nsamp = None
         if checkredovar.get() == 1:
             min_p = loperiodvar.get()
             max_p = hiperiodvar.get()
